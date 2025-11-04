@@ -179,6 +179,16 @@ var StatusIndicatorsController = class StatusIndicatorsController  {
 	_extensionStateChanged() {
 		this._findAvailableIndicators();
         this.transferIndicators();
+        // Ensure mirrored indicators are positioned correctly (e.g., Vitals)
+        try {
+            const panels = getMMPanelArray();
+            if (panels) {
+                for (const p of panels) {
+                    if (p && typeof p._ensureVitalsMirrorRightSide === 'function')
+                        p._ensureVitalsMirrorRightSide();
+                }
+            }
+        } catch (e) {}
 	}
 
 	_updateSessionIndicators() {
@@ -750,10 +760,12 @@ class MultiMonitorsPanel extends St.Widget {
             let constructor = MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS[role];
             console.log('[Multi Monitors Add-On] constructor for', role, ':', constructor ? 'found' : 'NOT FOUND');
             if (!constructor) {
-                // For indicators not implemented here, optionally mirror specific ones like Vitals
+                // For indicators not implemented here, mirror specific core/extension roles
+                // Supported mirrors: quickSettings (system tray) and Vitals (regex)
                 const isVitals = /vitals/i.test(role);
+                const isQuickSettings = role === 'quickSettings';
                 const mainIndicator = Main.panel.statusArea[role];
-                if (isVitals && mainIndicator) {
+                if ((isVitals || isQuickSettings) && mainIndicator) {
                     console.log('[Multi Monitors Add-On] Creating mirrored indicator for role:', role);
                     try {
                         indicator = new MirroredIndicatorButton(this, role);
