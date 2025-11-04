@@ -38,11 +38,18 @@ function getMMPanelArray() {
 
 export class MultiMonitorsPanelBox {
     constructor(monitor) {
-        this.panelBox = new St.BoxLayout({ name: 'panelBox', vertical: true, clip_to_allocation: true });
+        this.panelBox = new St.BoxLayout({
+            name: 'panelBox',
+            vertical: true,
+            clip_to_allocation: true,
+            visible: true,
+            style: 'background-color: rgba(0, 255, 0, 0.3);'  // TEMP: Green background for debugging
+        });
         Main.layoutManager.addChrome(this.panelBox, { affectsStruts: true, trackFullscreen: true });
         this.panelBox.set_position(monitor.x, monitor.y);
         this.panelBox.set_size(monitor.width, -1);
         Main.uiGroup.set_child_below_sibling(this.panelBox, Main.layoutManager.panelBox);
+        console.log('[PANEL BOX DEBUG] Created panel box at', monitor.x, monitor.y, 'size', monitor.width, 'visible:', this.panelBox.visible);
     }
 
     destroy() {
@@ -209,12 +216,22 @@ export class MultiMonitorsLayoutManager {
 	}
 
 	_pushPanel(i, monitor) {
+		console.log('[Multi Monitors Add-On] _pushPanel: creating panel for monitor', i);
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor);
-		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox);
+		console.log('[Multi Monitors Add-On] _pushPanel: mmPanelBox created');
+		
+		let panel;
+		try {
+			panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox);
+			console.log('[Multi Monitors Add-On] _pushPanel: panel created successfully');
+		} catch (e) {
+			console.error('[Multi Monitors Add-On] _pushPanel: Error creating panel:', String(e));
+			return;
+		}
 
 		// Use helper function to get mmPanel array
 		const mmPanelRef = getMMPanelArray();
-		console.log('[Multi Monitors Add-On] _pushPanel: mmPanelRef is', mmPanelRef, 'Main.mmPanel is', ('mmPanel' in Main) ? 'defined' : 'undefined', '_mmPanelArrayRef is', _mmPanelArrayRef);
+		console.log('[Multi Monitors Add-On] _pushPanel: mmPanelRef type:', typeof mmPanelRef);
 		if (mmPanelRef) {
 			mmPanelRef.push(panel);
 		} else {
@@ -231,7 +248,9 @@ export class MultiMonitorsLayoutManager {
 			this.statusIndicatorsController.transferBack(panel);
 		}
 		let mmPanelBox = this.mmPanelBox.pop();
-		mmPanelBox.destroy();
+		if (mmPanelBox) {
+			mmPanelBox.destroy();
+		}
     }
 
 	_changeMainPanelAppMenuButton(appMenuButton) {

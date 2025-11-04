@@ -607,14 +607,26 @@ var MultiMonitorsMessagesIndicator  = (() => {
 var MultiMonitorsDateMenuButton  = (() => {
     let MultiMonitorsDateMenuButton = class MultiMonitorsDateMenuButton extends PanelMenu.Button {
     _init() {
+        console.log('[DATETIME CONSTRUCTOR] MultiMonitorsDateMenuButton._init() START');
         let hbox;
         let vbox;
 
-        super._init(0.5);
+        try {
+            super._init(0.5);
+            console.log('[DATETIME CONSTRUCTOR] super._init done');
+        } catch (e) {
+            console.error('[DATETIME CONSTRUCTOR] Error in super._init:', e, e.stack);
+            throw e;
+        }
 
-        this._clockDisplay = new St.Label({ style_class: 'clock' });
+        this._clockDisplay = new St.Label({
+            style_class: 'clock',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        console.log('[Multi Monitors Add-On] _clockDisplay created');
         this._clockDisplay.clutter_text.y_align = Clutter.ActorAlign.CENTER;
         this._clockDisplay.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        console.log('[Multi Monitors Add-On] _clockDisplay configured');
 
         this._indicator = new MultiMonitorsMessagesIndicator();
 
@@ -627,7 +639,10 @@ var MultiMonitorsDateMenuButton  = (() => {
             coordinate: Clutter.BindCoordinate.SIZE,
         }));
 
-        let box = new St.BoxLayout({ style_class: 'clock-display-box' });
+        let box = new St.BoxLayout({
+            style_class: 'clock-display-box',
+            visible: true
+        });
         box.add_child(indicatorPad);
         box.add_child(this._clockDisplay);
         box.add_child(this._indicator);
@@ -635,6 +650,17 @@ var MultiMonitorsDateMenuButton  = (() => {
         this.label_actor = this._clockDisplay;
         this.add_child(box);
         this.add_style_class_name('clock-display');
+
+        // Force visibility
+        this.visible = true;
+        this.show();
+        box.show();
+        this._clockDisplay.show();
+
+        console.log('[DATETIME CONSTRUCTOR] After adding box, button visible:', this.visible);
+        console.log('[DATETIME CONSTRUCTOR] box visible:', box.visible);
+        console.log('[DATETIME CONSTRUCTOR] clockDisplay visible:', this._clockDisplay.visible);
+        console.log('[DATETIME CONSTRUCTOR] button width/height:', this.width, this.height);
 
         // Prefer the upstream FreezableBinLayout when available. Some GNOME
         // versions don't export it, so fall back to a plain BinLayout and add
@@ -717,7 +743,10 @@ var MultiMonitorsDateMenuButton  = (() => {
         displaysBox.add_child(this._eventsItem);
 
         this._clock = new GnomeDesktop.WallClock();
+        console.log('[Multi Monitors Add-On] Creating WallClock, initial clock value:', this._clock.clock);
         this._clock.bind_property('clock', this._clockDisplay, 'text', GObject.BindingFlags.SYNC_CREATE);
+        console.log('[Multi Monitors Add-On] After bind_property, clockDisplay.text:', this._clockDisplay.text);
+        console.log('[Multi Monitors Add-On] clockDisplay visible:', this._clockDisplay.visible);
         this._clockNotifyTimezoneId = this._clock.connect('notify::timezone', this._updateTimeZone.bind(this));
 
     this._sessionModeUpdatedId = MainRef.sessionMode.connect('updated', this._sessionUpdated.bind(this));
@@ -744,8 +773,9 @@ var MultiMonitorsDateMenuButton  = (() => {
     }
 };
 
-    if (DateMenu.DateMenuButton)
-        MultiMonitors.copyClass(DateMenu.DateMenuButton, MultiMonitorsDateMenuButton);
+    // Don't copyClass for DateMenuButton as our custom _init would be overwritten
+    // if (DateMenu.DateMenuButton)
+    //     MultiMonitors.copyClass(DateMenu.DateMenuButton, MultiMonitorsDateMenuButton);
     let RegisteredClass = GObject.registerClass(MultiMonitorsDateMenuButton);
     // Apply GNOME 46 compatibility after registration
     MultiMonitors.patchAddActorMethod(RegisteredClass.prototype);

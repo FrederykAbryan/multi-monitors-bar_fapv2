@@ -15,12 +15,15 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, visit https://www.gnu.org/licenses/.
 */
 
+console.log('[Multi Monitors Add-On] mmpanel.js loaded - VERSION TEST 123');
+
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
 import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
+import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
@@ -28,6 +31,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as CtrlAltTab from 'resource:///org/gnome/shell/ui/ctrlAltTab.js';
 import * as ExtensionSystem from 'resource:///org/gnome/shell/ui/extensionSystem.js';
+import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
 import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as MultiMonitors from './extension.js';
@@ -410,8 +414,20 @@ const MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS = {
 const MultiMonitorsPanel = GObject.registerClass(
 class MultiMonitorsPanel extends St.Widget {
     _init(monitorIndex, mmPanelBox) {
-        super._init({ name: 'panel',
-                      reactive: true });
+        console.log('[Multi Monitors Add-On] MultiMonitorsPanel._init called for monitor', monitorIndex);
+        console.log('[Multi Monitors Add-On] MultiMonitorsPanel._init mmPanelBox type:', typeof mmPanelBox);
+
+        if (!mmPanelBox) {
+            console.error('[Multi Monitors Add-On] ERROR: mmPanelBox is undefined in _init!');
+            throw new Error('mmPanelBox parameter is required but was undefined');
+        }
+
+        super._init({
+            name: 'panel',
+            reactive: true,
+            style_class: 'panel',
+            style: 'background-color: rgba(255, 0, 0, 0.5);'  // TEMP: Red background for debugging
+        });
 
         this.monitorIndex = monitorIndex;
 
@@ -423,12 +439,35 @@ class MultiMonitorsPanel extends St.Widget {
 
         this.menuManager = new PopupMenu.PopupMenuManager(this);
 
-        this._leftBox = new St.BoxLayout({ name: 'panelLeft' });
+        // GNOME 46 FIX: Create boxes with proper expansion and alignment
+        // Left box should expand and fill available space
+        this._leftBox = new St.BoxLayout({
+            name: 'panelLeft',
+            x_expand: true,
+            y_expand: false,
+            x_align: Clutter.ActorAlign.START
+        });
         this.add_child(this._leftBox);
-        this._centerBox = new St.BoxLayout({ name: 'panelCenter' });
+
+        // Center box should be centered
+        this._centerBox = new St.BoxLayout({
+            name: 'panelCenter',
+            x_expand: true,
+            y_expand: false,
+            x_align: Clutter.ActorAlign.CENTER
+        });
         this.add_child(this._centerBox);
-        this._rightBox = new St.BoxLayout({ name: 'panelRight' });
+
+        // Right box should align to the end
+        this._rightBox = new St.BoxLayout({
+            name: 'panelRight',
+            x_expand: true,
+            y_expand: false,
+            x_align: Clutter.ActorAlign.END
+        });
         this.add_child(this._rightBox);
+
+        console.log('[Multi Monitors Add-On] MultiMonitorsPanel boxes created');
 
         this._showingId = Main.overview.connect('showing', () => {
             this.add_style_pseudo_class('overview');
@@ -437,14 +476,15 @@ class MultiMonitorsPanel extends St.Widget {
             this.remove_style_pseudo_class('overview');
         });
 
+        console.log('[Multi Monitors Add-On] About to add panel to panelBox');
         mmPanelBox.panelBox.add_child(this);
+        console.log('[Multi Monitors Add-On] MultiMonitorsPanel added to panelBox');
         Main.ctrlAltTabManager.addGroup(this, _("Top Bar"), 'focus-top-bar-symbolic',
                                         { sortGroup: CtrlAltTab.SortGroup.TOP });
 
         this._updatedId = Main.sessionMode.connect('updated', this._updatePanel.bind(this));
 
         this._workareasChangedId = global.display.connect('workareas-changed', () => this.queue_relayout());
-        this._updatePanel();
 
         this._settings = Convenience.getSettings();
         this._showActivitiesId = this._settings.connect('changed::'+SHOW_ACTIVITIES_ID,
@@ -460,6 +500,15 @@ class MultiMonitorsPanel extends St.Widget {
         this._showDateTime();
 
         this.connect('destroy', this._onDestroy.bind(this));
+    }
+
+    vfunc_map() {
+        super.vfunc_map();
+        // Defer panel update until the panel is mapped and part of the scene graph.
+        // This is the correct way to handle UI construction in modern GNOME.
+        this._updatePanel();
+        // Re-show datetime after _updatePanel to ensure it's visible
+        this._showDateTime();
     }
 
     _onDestroy() {
@@ -478,24 +527,53 @@ class MultiMonitorsPanel extends St.Widget {
     _showActivities() {
         let name = 'activities';
         if (this._settings.get_boolean(SHOW_ACTIVITIES_ID)) {
+            if (!this.statusArea[name]) {
+                let indicator = this._ensureIndicator(name);
+                if (indicator) {
+                    let box = this._leftBox;
+                    this._addToPanelBox(name, indicator, 0, box);
+                }
+            }
             if (this.statusArea[name])
                 this.statusArea[name].visible = true;
-        }
-        else {
-            if (this.statusArea[name])
-                this.statusArea[name].visible = false;
+        } else {
+            if (this.statusArea[name]) {
+                let indicator = this.statusArea[name];
+                if (indicator.menu)
+                    this.menuManager.removeMenu(indicator.menu);
+                indicator.destroy();
+                delete this.statusArea[name];
+            }
         }
     }
 
     _showDateTime() {
         let name = 'dateMenu';
+        console.log('[DATETIME DEBUG] _showDateTime called, setting:', this._settings.get_boolean(SHOW_DATE_TIME_ID));
+        console.log('[DATETIME DEBUG] statusArea[dateMenu] exists?', !!this.statusArea[name]);
         if (this._settings.get_boolean(SHOW_DATE_TIME_ID)) {
-            if (this.statusArea[name])
+            if (!this.statusArea[name]) {
+                console.log('[DATETIME DEBUG] Creating new dateMenu indicator');
+                let indicator = this._ensureIndicator(name);
+                console.log('[DATETIME DEBUG] _ensureIndicator returned:', !!indicator);
+                if (indicator) {
+                    let box = this._centerBox;
+                    console.log('[DATETIME DEBUG] centerBox children before add:', box.get_n_children());
+                    this._addToPanelBox(name, indicator, 0, box);
+                    console.log('[DATETIME DEBUG] centerBox children after add:', box.get_n_children());
+                }
+            }
+            if (this.statusArea[name]) {
+                console.log('[DATETIME DEBUG] Setting dateMenu visible');
                 this.statusArea[name].visible = true;
-        }
-        else {
-            if (this.statusArea[name])
-                this.statusArea[name].visible = false;
+            }
+        } else {
+            if (this.statusArea[name]) {
+                let indicator = this.statusArea[name];
+                this.menuManager.removeMenu(indicator.menu);
+                indicator.destroy();
+                delete this.statusArea[name];
+            }
         }
     }
 
@@ -522,32 +600,96 @@ class MultiMonitorsPanel extends St.Widget {
     vfunc_get_preferred_width(forHeight) {
         if (Main.layoutManager.monitors.length>this.monitorIndex)
             return [0, Main.layoutManager.monitors[this.monitorIndex].width];
-        
+
         return [0,  0];
     }
 
+    vfunc_allocate(box) {
+        this.set_allocation(box);
+
+        const themeNode = this.get_theme_node();
+        const contentBox = themeNode.get_content_box(box);
+
+        const leftMinWidth = this._leftBox.get_preferred_width(-1)[0];
+        const centerMinWidth = this._centerBox.get_preferred_width(-1)[0];
+        const rightMinWidth = this._rightBox.get_preferred_width(-1)[0];
+
+        const allocWidth = contentBox.get_width();
+        const allocHeight = contentBox.get_height();
+
+        // Allocate the left box
+        const leftNaturalWidth = Math.min(this._leftBox.get_preferred_width(-1)[1], allocWidth / 3);
+        const leftChildBox = new Clutter.ActorBox();
+        leftChildBox.x1 = contentBox.x1;
+        leftChildBox.y1 = contentBox.y1;
+        leftChildBox.x2 = contentBox.x1 + leftNaturalWidth;
+        leftChildBox.y2 = contentBox.y2;
+        this._leftBox.allocate(leftChildBox);
+
+        // Allocate the right box
+        const rightNaturalWidth = Math.min(this._rightBox.get_preferred_width(-1)[1], allocWidth / 3);
+        const rightChildBox = new Clutter.ActorBox();
+        rightChildBox.x1 = contentBox.x2 - rightNaturalWidth;
+        rightChildBox.y1 = contentBox.y1;
+        rightChildBox.x2 = contentBox.x2;
+        rightChildBox.y2 = contentBox.y2;
+        this._rightBox.allocate(rightChildBox);
+
+        // Allocate the center box in the remaining space
+        const centerChildBox = new Clutter.ActorBox();
+        centerChildBox.x1 = leftChildBox.x2;
+        centerChildBox.y1 = contentBox.y1;
+        centerChildBox.x2 = rightChildBox.x1;
+        centerChildBox.y2 = contentBox.y2;
+        this._centerBox.allocate(centerChildBox);
+    }
+
     _hideIndicators() {
+        console.log('[Multi Monitors Add-On] _hideIndicators called, statusArea keys:', Object.keys(this.statusArea));
         for (let role in MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS) {
             let indicator = this.statusArea[role];
+            console.log('[Multi Monitors Add-On] _hideIndicators: checking role', role, 'indicator exists?', !!indicator);
             if (!indicator)
                 continue;
+            console.log('[Multi Monitors Add-On] _hideIndicators: hiding container for role', role);
             indicator.container.hide();
         }
     }
 
     _ensureIndicator(role) {
+        console.log('[Multi Monitors Add-On] _ensureIndicator called for role:', role);
         let indicator = this.statusArea[role];
         if (indicator) {
+            console.log('[Multi Monitors Add-On] indicator already exists for', role, ', showing container');
             indicator.container.show();
-            return null;
+            // CRITICAL FIX: Return the existing indicator instead of null!
+            return indicator;
         }
         else {
             let constructor = MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS[role];
+            console.log('[Multi Monitors Add-On] constructor for', role, ':', constructor ? 'found' : 'NOT FOUND');
             if (!constructor) {
-                // This icon is not implemented (this is a bug)
+                // For system indicators not in our implementations, clone from main panel
+                let mainIndicator = Main.panel.statusArea[role];
+                if (mainIndicator) {
+                    console.log('[Multi Monitors Add-On] Cloning indicator from main panel for role:', role);
+                    // Create a simple reference/proxy to the main panel indicator
+                    // We can't truly clone complex indicators, so we skip them for now
+                    // This is expected behavior - not all indicators can be duplicated
+                    return null;
+                }
+                // This icon is not implemented and not in main panel
                 return null;
             }
-            indicator = new constructor(this);
+            console.log('[Multi Monitors Add-On] About to call new constructor for', role);
+            try {
+                indicator = new constructor(this);
+            } catch (e) {
+                // Don't log the error object directly as it may contain circular references
+                console.error('[Multi Monitors Add-On] Error creating indicator for', role, ':', String(e));
+                throw e;
+            }
+            console.log('[Multi Monitors Add-On] Constructor returned successfully for', role);
             this.statusArea[role] = indicator;
         }
         return indicator;
@@ -570,50 +712,86 @@ class MultiMonitorsPanel extends St.Widget {
     }
 
     _addToPanelBox(role, indicator, position, box) {
+        console.log('[Multi Monitors Add-On] _addToPanelBox called for role:', role, 'position:', position);
+
+        // Exactly mimic the main Panel._addToPanelBox behavior
         let container = indicator;
-        if (indicator instanceof St.Widget) {
-            container = new St.Bin({ child: indicator });
-            container.y_align = Clutter.ActorAlign.FILL;
-        } else if (indicator.container) {
+        if (indicator.container) {
             container = indicator.container;
         }
 
-        container.set_x_expand(true);
-        container.set_y_expand(true);
+        console.log('[Multi Monitors Add-On] _addToPanelBox: container type:', container.constructor.name);
+        console.log('[Multi Monitors Add-On] _addToPanelBox: container parent before:', container.get_parent() ? 'HAS PARENT' : 'NO PARENT');
 
         this.statusArea[role] = indicator;
-        let destroyId = indicator.connect('destroy', () => {
+
+        // Connect signals (like main Panel does)
+        indicator.connect('destroy', () => {
             delete this.statusArea[role];
         });
+
+        // Handle menu-set signal
         indicator.connect('menu-set', () => {
             if (!indicator.menu)
                 return;
             this.menuManager.addMenu(indicator.menu);
         });
 
+        // Critical: Remove from existing parent BEFORE adding (like main Panel)
+        const parent = container.get_parent();
+        if (parent)
+            parent.remove_child(container);
+
+        // Show container BEFORE adding (like main Panel)
+        container.show();
+
+        // Add to box at position
         box.insert_child_at_index(container, position);
+
+        console.log('[Multi Monitors Add-On] _addToPanelBox: added to box, box has', box.get_n_children(), 'children');
+        console.log('[Multi Monitors Add-On] _addToPanelBox: container parent after:', container.get_parent() ? 'HAS PARENT' : 'NO PARENT');
+        console.log('[Multi Monitors Add-On] _addToPanelBox: container visible?', container.visible, 'width/height:', container.width, container.height);
+
+        // Add menu if it exists
         if (indicator.menu)
             this.menuManager.addMenu(indicator.menu);
     }
 
     _updatePanel() {
+        console.log('[Multi Monitors Add-On] _updatePanel called for monitor', this.monitorIndex);
+        console.log('[Multi Monitors Add-On] Main.sessionMode.panel:', JSON.stringify(Main.sessionMode.panel));
         this._hideIndicators();
         this._updateBox(Main.sessionMode.panel.left, this._leftBox);
         this._updateBox(Main.sessionMode.panel.center, this._centerBox);
         this._updateBox(Main.sessionMode.panel.right, this._rightBox);
+        console.log('[Multi Monitors Add-On] statusArea after update:', Object.keys(this.statusArea));
     }
 
     _updateBox(elements, box) {
-        if (!elements)
+        if (!elements) {
+            console.log('[Multi Monitors Add-On] _updateBox: elements is null/undefined');
             return;
+        }
 
+        console.log('[Multi Monitors Add-On] _updateBox: elements =', elements);
         let nChildren = box.get_n_children();
 
         for (let i = 0; i < elements.length; i++) {
             let role = elements[i];
-            let indicator = this._ensureIndicator(role);
-            if (indicator)
-                this._addToPanelBox(role, indicator, i + nChildren, box);
+            console.log('[Multi Monitors Add-On] _updateBox: processing role', role);
+            try {
+                let indicator = this._ensureIndicator(role);
+                console.log('[Multi Monitors Add-On] _updateBox: _ensureIndicator returned', indicator ? 'truthy' : 'falsy', 'for role', role);
+                if (indicator) {
+                    console.log('[Multi Monitors Add-On] _updateBox: about to call _addToPanelBox for role', role);
+                    this._addToPanelBox(role, indicator, i + nChildren, box);
+                    console.log('[Multi Monitors Add-On] _updateBox: _addToPanelBox returned for role', role);
+                } else {
+                    console.log('[Multi Monitors Add-On] _updateBox: no indicator returned for role', role);
+                }
+            } catch (e) {
+                console.error('[Multi Monitors Add-On] _updateBox: ERROR for role', role, ':', e, e.stack);
+            }
         }
     }
 });

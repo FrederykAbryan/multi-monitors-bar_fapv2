@@ -74,6 +74,10 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
 
         this._contents = new Clutter.Actor();
         this.add_child(this._contents);
+        
+        // Initialize _viewport for GNOME 46 compatibility
+        this._viewport = new Clutter.Actor();
+        this._contents.add_child(this._viewport);
 
         this.connect('destroy', this._onDestroy.bind(this));
 
