@@ -516,8 +516,7 @@ class MultiMonitorsPanel extends St.Widget {
         super._init({
             name: 'panel',
             reactive: true,
-            style_class: 'panel',
-            style: 'background-color: rgba(255, 0, 0, 0.5);'  // TEMP: Red background for debugging
+            style_class: 'panel'
         });
 
         this.monitorIndex = monitorIndex;

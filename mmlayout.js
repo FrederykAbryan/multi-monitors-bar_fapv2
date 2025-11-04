@@ -38,13 +38,12 @@ function getMMPanelArray() {
 
 export class MultiMonitorsPanelBox {
     constructor(monitor) {
-        this.panelBox = new St.BoxLayout({
-            name: 'panelBox',
-            vertical: true,
-            clip_to_allocation: true,
-            visible: true,
-            style: 'background-color: rgba(0, 255, 0, 0.3);'  // TEMP: Green background for debugging
-        });
+		this.panelBox = new St.BoxLayout({
+			name: 'panelBox',
+			vertical: true,
+			clip_to_allocation: true,
+			visible: true
+		});
         Main.layoutManager.addChrome(this.panelBox, { affectsStruts: true, trackFullscreen: true });
         this.panelBox.set_position(monitor.x, monitor.y);
         this.panelBox.set_size(monitor.width, -1);
