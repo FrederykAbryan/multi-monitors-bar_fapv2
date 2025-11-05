@@ -6,7 +6,7 @@
 
 1. Open a terminal in the extension directory:
    ```bash
-   cd /home/frederyk/Documents/Extension/multi-monitors-add-on-master/multi-monitors-add-on@spin83
+   cd /home/frederyk/Documents/Extension/multi-monitors-add-on-master/multi-monitors-bar@frederykabryan
    ```
 
 2. Run the install script:
@@ -22,17 +22,17 @@ If you prefer to install manually:
 
 ```bash
 # 1. Copy extension to GNOME extensions directory
-cp -r multi-monitors-add-on@spin83 ~/.local/share/gnome-shell/extensions/
+cp -r multi-monitors-bar@frederykabryan ~/.local/share/gnome-shell/extensions/
 
 # 2. Compile the GSettings schema
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/multi-monitors-add-on@spin83/schemas/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/multi-monitors-bar@frederykabryan/schemas/
 
 # 3. Restart GNOME Shell
 #    X11: Press Alt+F2, type 'r', press Enter
 #    Wayland: Log out and log back in
 
 # 4. Enable the extension
-gnome-extensions enable multi-monitors-add-on@spin83
+gnome-extensions enable multi-monitors-bar@frederykabryan
 ```
 
 ## Verification
@@ -43,19 +43,19 @@ After installation, verify the extension is installed:
 gnome-extensions list | grep multi-monitors
 ```
 
-You should see: `multi-monitors-add-on@spin83`
+You should see: `multi-monitors-bar@frederykabryan`
 
 Check extension status:
 
 ```bash
-gnome-extensions info multi-monitors-add-on@spin83
+gnome-extensions info multi-monitors-bar@frederykabryan
 ```
 
 ## First-Time Setup
 
 1. **Open Extension Preferences:**
    ```bash
-   gnome-extensions prefs multi-monitors-add-on@spin83
+   gnome-extensions prefs multi-monitors-bar@frederykabryan
    ```
    Or use the GNOME Extensions application
 
@@ -105,7 +105,7 @@ To update the extension:
 
 1. Disable the current version:
    ```bash
-   gnome-extensions disable multi-monitors-add-on@spin83
+   gnome-extensions disable multi-monitors-bar@frederykabryan
    ```
 
 2. Run the install script again:
@@ -123,10 +123,10 @@ To completely remove the extension:
 
 ```bash
 # 1. Disable the extension
-gnome-extensions disable multi-monitors-add-on@spin83
+gnome-extensions disable multi-monitors-bar@frederykabryan
 
 # 2. Remove extension files
-rm -rf ~/.local/share/gnome-shell/extensions/multi-monitors-add-on@spin83
+rm -rf ~/.local/share/gnome-shell/extensions/multi-monitors-bar@frederykabryan
 
 # 3. Restart GNOME Shell
 #    X11: Alt+F2, type 'r', press Enter
@@ -144,7 +144,7 @@ If you encounter issues:
 
 2. Get extension information:
    ```bash
-   gnome-extensions info multi-monitors-add-on@spin83
+   gnome-extensions info multi-monitors-bar@frederykabryan
    ```
 
 3. See README.md for detailed troubleshooting
