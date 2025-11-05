@@ -275,16 +275,27 @@ class MirroredIndicatorButton extends PanelMenu.Button {
 
         // For activities, create the same visual appearance as the main panel
         if (role === 'activities') {
-            // Create the activities label just like the main panel does
+            // Create the activities indicator with hot corner style
             this.accessible_role = Atk.Role.TOGGLE_BUTTON;
             this.name = 'mmPanelActivities';
+            this.add_style_class_name('panel-button');
 
-            const label = new St.Label({
-                text: _("Activities"),
-                y_align: Clutter.ActorAlign.CENTER
+            // Create a container for the activities indicator
+            const container = new St.BoxLayout({
+                style_class: 'panel-status-menu-box',
+                y_align: Clutter.ActorAlign.CENTER,
             });
-            this.add_child(label);
-            this.label_actor = label;
+
+            // Create the activities icon/dot indicator
+            const icon = new St.Widget({
+                style_class: 'activities-icon',
+                y_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.CENTER,
+            });
+            container.add_child(icon);
+
+            this.add_child(container);
+            this.label_actor = icon;
 
             // Sync with overview state
             this._showingId = Main.overview.connect('showing', () => {
@@ -296,7 +307,7 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                 this.remove_accessible_state(Atk.StateType.CHECKED);
             });
 
-            console.log('[Multi Monitors Add-On] Created activities button with label');
+            console.log('[Multi Monitors Add-On] Created activities button with icon');
             this._sourceIndicator = null;
         } else {
             // For other indicators, find them in statusArea and clone

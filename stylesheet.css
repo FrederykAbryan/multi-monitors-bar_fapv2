@@ -49,3 +49,36 @@
 .clock {
     font-size: 11pt;
 }
+
+/* Activities button styling for external monitors */
+#mmPanelActivities {
+    border-radius: 99px;
+    padding: 0 12px;
+    margin: 3px 0;
+}
+
+#mmPanelActivities:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#mmPanelActivities:active,
+#mmPanelActivities:overview {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Activities icon/dot indicator */
+.activities-icon {
+    width: 10px;
+    height: 10px;
+    border-radius: 5px;
+    background-color: rgba(255, 255, 255, 0.8);
+}
+
+#mmPanelActivities:hover .activities-icon {
+    background-color: rgba(255, 255, 255, 1);
+}
+
+#mmPanelActivities:overview .activities-icon {
+    background-color: rgba(255, 255, 255, 1);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+}
