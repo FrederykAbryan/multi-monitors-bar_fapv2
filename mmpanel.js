@@ -272,7 +272,17 @@ class MirroredIndicatorButton extends PanelMenu.Button {
 
         this._role = role;
         this._panel = panel;
-        this._sourceIndicator = Main.panel.statusArea[role] || null;
+        
+        // For activities, we need to find the activities button differently since it's not in statusArea
+        if (role === 'activities') {
+            // Find the activities button in the main panel's left box
+            this._sourceIndicator = Main.panel._leftBox.get_children().find(child => {
+                return child.name === 'panelActivities' || 
+                       (child.accessible_role === Atk.Role.TOGGLE_BUTTON && child._delegate?.name === 'activities');
+            });
+        } else {
+            this._sourceIndicator = Main.panel.statusArea[role] || null;
+        }
 
         console.log('[Multi Monitors Add-On] MirroredIndicatorButton._init for role:', role);
 
@@ -357,6 +367,13 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         console.log('[Multi Monitors Add-On] this._sourceIndicator.menu:', !!this._sourceIndicator?.menu);
 
         try {
+            // Handle activities button specially - it toggles overview instead of showing a menu
+            if (this._role === 'activities') {
+                console.log('[Multi Monitors Add-On] Activities button pressed - toggling overview');
+                Main.overview.toggle();
+                return Clutter.EVENT_STOP;
+            }
+            
             if (this._sourceIndicator && this._sourceIndicator.menu) {
                 // Get the monitor index based on THIS BUTTON'S POSITION
                 const monitorIndex = Main.layoutManager.findIndexForActor(this);
@@ -672,7 +689,7 @@ class MultiMonitorsActivitiesButton extends PanelMenu.Button {
     });
 
 const MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS = {
-    'activities': MultiMonitorsActivitiesButton,
+    // activities is now mirrored instead of having its own implementation
     'appMenu': MultiMonitorsAppMenuButton,
     // dateMenu is now mirrored instead of having its own implementation
 };
@@ -799,6 +816,20 @@ class MultiMonitorsPanel extends St.Widget {
 
     _showActivities() {
         let name = 'activities';
+        // Don't show activities button on primary monitor - it already has one
+        if (this.monitorIndex === Main.layoutManager.primaryIndex) {
+            console.log('[Multi Monitors Add-On] Skipping activities button on primary monitor');
+            // Remove any existing activities button on primary monitor
+            if (this.statusArea[name]) {
+                let indicator = this.statusArea[name];
+                if (indicator.menu)
+                    this.menuManager.removeMenu(indicator.menu);
+                indicator.destroy();
+                delete this.statusArea[name];
+            }
+            return;
+        }
+
         if (this._settings.get_boolean(SHOW_ACTIVITIES_ID)) {
             if (!this.statusArea[name]) {
                 let indicator = this._ensureIndicator(name);
@@ -925,6 +956,13 @@ class MultiMonitorsPanel extends St.Widget {
 
     _ensureIndicator(role) {
         console.log('[Multi Monitors Add-On] _ensureIndicator called for role:', role);
+        
+        // CRITICAL FIX: Never create activities indicator on primary monitor
+        if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
+            console.log('[Multi Monitors Add-On] Blocking activities indicator creation on primary monitor');
+            return null;
+        }
+        
         let indicator = this.statusArea[role];
         if (indicator) {
             console.log('[Multi Monitors Add-On] indicator already exists for', role, ', showing container');
@@ -937,12 +975,25 @@ class MultiMonitorsPanel extends St.Widget {
             console.log('[Multi Monitors Add-On] constructor for', role, ':', constructor ? 'found' : 'NOT FOUND');
             if (!constructor) {
                 // For indicators not implemented here, mirror specific core/extension roles
-                // Supported mirrors: dateMenu, quickSettings (system tray) and Vitals (regex)
+                // Supported mirrors: activities, dateMenu, quickSettings (system tray) and Vitals (regex)
                 const isVitals = /vitals/i.test(role);
                 const isQuickSettings = role === 'quickSettings';
                 const isDateMenu = role === 'dateMenu';
+                const isActivities = role === 'activities';
                 const mainIndicator = Main.panel.statusArea[role];
-                if ((isVitals || isQuickSettings || isDateMenu) && mainIndicator) {
+                
+                // For activities, we need to mirror the main panel's activities functionality
+                if (isActivities) {
+                    console.log('[Multi Monitors Add-On] Creating mirrored activities indicator');
+                    try {
+                        indicator = new MirroredIndicatorButton(this, role);
+                        this.statusArea[role] = indicator;
+                        return indicator;
+                    } catch (e) {
+                        console.error('[Multi Monitors Add-On] Failed to create mirrored activities indicator:', String(e));
+                        return null;
+                    }
+                } else if ((isVitals || isQuickSettings || isDateMenu) && mainIndicator) {
                     console.log('[Multi Monitors Add-On] Creating mirrored indicator for role:', role);
                     try {
                         indicator = new MirroredIndicatorButton(this, role);
@@ -1041,6 +1092,7 @@ class MultiMonitorsPanel extends St.Widget {
 
     _updatePanel() {
         console.log('[Multi Monitors Add-On] _updatePanel called for monitor', this.monitorIndex);
+        console.log('[Multi Monitors Add-On] Primary monitor index:', Main.layoutManager.primaryIndex);
         console.log('[Multi Monitors Add-On] Main.sessionMode.panel:', JSON.stringify(Main.sessionMode.panel));
         this._hideIndicators();
         this._updateBox(Main.sessionMode.panel.left, this._leftBox);

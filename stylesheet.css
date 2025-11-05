@@ -13,7 +13,7 @@
 }
 
 .multimonitor-status-indicators-box {
-    spacing: 0px;
+    gap: 0px;
 }
 
 .multimonitor-status-icon {
@@ -28,17 +28,24 @@
     border-radius: 9px 0 0 9px;
 }
 
-/* Ensure mirrored clock displays match main panel font size */
-.clock {
-    font-size: inherit;
-    font-weight: inherit;
+/* Mirrored indicators should inherit styling from their cloned source.
+   The Clutter.Clone automatically scales content, ensuring proper font sizes. */
+
+/* Ensure datetime and all panel buttons use consistent, readable font size */
+#panel .panel-button {
+    font-size: 11pt;
 }
 
+/* Target the clock/datetime specifically */
 .clock-display {
-    font-size: inherit;
-    font-weight: inherit;
+    font-size: 11pt;
 }
 
 .clock-display-box {
-    spacing: 2px;
+    gap: 2px;
+}
+
+/* Ensure date menu text is readable */
+.clock {
+    font-size: 11pt;
 }
