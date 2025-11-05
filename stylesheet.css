@@ -25,5 +25,20 @@
 }
 
 .workspace-thumbnails-left:rtl {
-    border-radius: 9px 0 0 9px; 
+    border-radius: 9px 0 0 9px;
+}
+
+/* Ensure mirrored clock displays match main panel font size */
+.clock {
+    font-size: inherit;
+    font-weight: inherit;
+}
+
+.clock-display {
+    font-size: inherit;
+    font-weight: inherit;
+}
+
+.clock-display-box {
+    spacing: 2px;
 }

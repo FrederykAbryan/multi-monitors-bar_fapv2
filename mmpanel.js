@@ -282,11 +282,29 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                 // Clone the first child of the source indicator (the visual part)
                 const sourceChild = this._sourceIndicator.get_first_child();
                 if (sourceChild) {
-                    // Create a visual clone
+                    // Create a visual clone with proper sizing
                     const clone = new Clutter.Clone({
                         source: sourceChild,
                         y_align: Clutter.ActorAlign.CENTER
                     });
+
+                    // Apply the same style classes from the source indicator
+                    // This ensures proper font sizing and styling
+                    try {
+                        if (this._sourceIndicator.get_style_class_name) {
+                            const styleClasses = this._sourceIndicator.get_style_class_name();
+                            if (styleClasses) {
+                                this.set_style_class_name(styleClasses);
+                            }
+                        }
+                    } catch (e) {
+                        console.log('[Multi Monitors Add-On] Could not copy style classes:', String(e));
+                    }
+
+                    // Ensure clone scales properly with the panel
+                    // The clone should match the natural size of the source
+                    clone.set_size(-1, -1);  // Natural size
+
                     this.add_child(clone);
                     console.log('[Multi Monitors Add-On] Successfully cloned visual from source indicator');
                 } else {
