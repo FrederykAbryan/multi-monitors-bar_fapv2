@@ -261,12 +261,13 @@ After making changes to the extension code:
 This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
 
 ## Credits
+This repo structure and base is copied from spin83
 
 Original author: spin83
 
 Original repository: https://github.com/spin83/multi-monitors-add-on
 
-Updated by: Frederyk
+Updated by: Frederyk, Claude, Github Copilot. (Mostly done by AI though.I only use 45 hours of my time to debug,prompt,debug,prompt,frustrated and repeat) 
 
 ## Changelog
 
