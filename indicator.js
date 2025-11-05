@@ -53,7 +53,6 @@ class MultiMonitorsIndicator extends PanelMenu.Button {
 		this._mmStatusIcon.hide();
 		this.add_child(this._mmStatusIcon);
 		this._leftRightIcon = true;
-		this.menu.addAction(_("Preferences"), this._onPreferences.bind(this));
 		this._viewMonitorsId = Main.layoutManager.connect('monitors-changed', this._viewMonitors.bind(this));
 		this._viewMonitors();
 	}

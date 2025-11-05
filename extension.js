@@ -161,7 +161,9 @@ class MultiMonitorsAddOn {
     }
 
     _showIndicator() {
-		if(this._settings.get_boolean(SHOW_INDICATOR_ID)) {
+		// DISABLED: Don't show the MultiMonitorsAddOn indicator on main panel to avoid clutter
+		// The indicator was causing unused widgets on the main monitor
+		if(false && this._settings.get_boolean(SHOW_INDICATOR_ID)) {
 			if(!this.mmIndicator) {
 				this.mmIndicator = Main.panel.addToStatusArea('MultiMonitorsAddOn', new MMIndicator.MultiMonitorsIndicator());
 			}

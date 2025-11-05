@@ -1208,6 +1208,13 @@ class MultiMonitorsPanel extends St.Widget {
 
         for (let i = 0; i < elements.length; i++) {
             let role = elements[i];
+
+            // Skip activities button on primary monitor - it already has one
+            if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
+                console.log('[Multi Monitors Add-On] _updateBox: skipping activities role on primary monitor');
+                continue;
+            }
+
             console.log('[Multi Monitors Add-On] _updateBox: processing role', role);
             try {
                 let indicator = this._ensureIndicator(role);
