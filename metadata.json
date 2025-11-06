@@ -7,6 +7,6 @@
     "description": "Add multiple monitors overview and panel for gnome-shell. GNOME 46 compatibility updated.",
     "copied_from_url": "https://github.com/spin83/multi-monitors-add-on.git",
     "url": "https://github.com/FrederykAbryan/multi-monitors-bar_fapv2",
-    "version": 30,
-    "author": "Frederyk"
+    "version": 1,
+    "author": "Frederyk Abryan"
 }
