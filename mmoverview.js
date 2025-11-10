@@ -32,12 +32,9 @@ import * as SearchController from 'resource:///org/gnome/shell/ui/searchControll
 import * as LayoutManager from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as WorkspacesView from 'resource:///org/gnome/shell/ui/workspacesView.js';
-import * as MultiMonitors from './extension.js';
-import * as Convenience from './convenience.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-// Import gettext for translations
-import Gettext from 'gettext';
-const _ = Gettext.gettext;
+import * as MultiMonitors from './extension.js';
 
 // Store reference to mmPanel array set by extension.js
 let _mmPanelArrayRef = null;
@@ -143,7 +140,7 @@ export const MultiMonitorsWorkspaceThumbnail = GObject.registerClass({
 }, MultiMonitorsWorkspaceThumbnailClass);
 
 class MultiMonitorsThumbnailsBoxClass extends St.Widget {
-    _init(scrollAdjustment, monitorIndex) {
+    _init(scrollAdjustment, monitorIndex, settings) {
 
         super._init({ reactive: true,
                       style_class: 'workspace-thumbnails',
@@ -151,6 +148,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
 
         this._delegate = this;
         this._monitorIndex = monitorIndex;
+        this._settings = settings;
 
         let indicator = new St.Bin({ style_class: 'workspace-thumbnail-indicator' });
 
@@ -218,17 +216,12 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         }
 
         log('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
-        try {
-            this._settings = new Gio.Settings({ schema_id: mutterSchemaId });
-        } catch (e) {
-            // If creating Gio.Settings with the mutter schema fails,
-            // fall back to the extension's settings schema via Convenience
-            // (this uses the compiled schema object when available).
+        if (!this._settings) {
             try {
-                this._settings = Convenience.getSettings();
-            } catch (ee) {
-                // As a last resort, create a generic settings object for
-                // org.gnome.mutter (will still throw if unavailable).
+                this._settings = new Gio.Settings({ schema_id: mutterSchemaId });
+            } catch (e) {
+                // If creating Gio.Settings with the mutter schema fails,
+                // fall back to org.gnome.mutter as a last resort
                 this._settings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
             }
         }
@@ -432,8 +425,9 @@ var MultiMonitorsThumbnailsSlider = (() => {
 
 export const MultiMonitorsControlsManager = GObject.registerClass(
 class MultiMonitorsControlsManager extends St.Widget {
-    _init(index) {
+    _init(index, settings) {
         this._monitorIndex = index;
+        this._settings = settings;
         this._workspacesViews = null;
         this._spacer_height = 0;
         this._fixGeometry = 0;
@@ -458,7 +452,7 @@ class MultiMonitorsControlsManager extends St.Widget {
         this._workspaceAdjustment = Main.overview._overview._controls._workspaceAdjustment;
 
         this._thumbnailsBox =
-            new MultiMonitorsThumbnailsBox(this._workspaceAdjustment, this._monitorIndex);
+            new MultiMonitorsThumbnailsBox(this._workspaceAdjustment, this._monitorIndex, this._settings);
         //this._thumbnailsSlider = new MultiMonitorsThumbnailsSlider(this._thumbnailsBox);
 
         this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
@@ -491,8 +485,6 @@ class MultiMonitorsControlsManager extends St.Widget {
 
         this._group.add_child(this._searchController);
         //this._group.add_actor(this._thumbnailsSlider);
-
-        this._settings = Convenience.getSettings();
 
         this._monitorsChanged();
         //this._thumbnailsSlider.slideOut();
@@ -719,8 +711,9 @@ class MultiMonitorsControlsManager extends St.Widget {
 
 export const MultiMonitorsOverviewActor = GObject.registerClass(
 class MultiMonitorsOverviewActor extends St.BoxLayout {
-    _init(index) {
+    _init(index, settings) {
         this._monitorIndex = index;
+        this._settings = settings;
         super._init({
             name: 'mm-overview-'+index,
             /* Translators: This is the main view to select
@@ -753,7 +746,7 @@ class MultiMonitorsOverviewActor extends St.BoxLayout {
         this._spacer = new St.Widget();
         this.add_child(this._spacer);
 
-        this._controls = new MultiMonitorsControlsManager(this._monitorIndex);
+        this._controls = new MultiMonitorsControlsManager(this._monitorIndex, this._settings);
 
         // Add our same-line elements after the search entry
         this.add_child(this._controls);
@@ -762,11 +755,12 @@ class MultiMonitorsOverviewActor extends St.BoxLayout {
 
 
 export class MultiMonitorsOverview {
-    constructor(index) {
+    constructor(index, settings) {
         this.monitorIndex = index;
+        this._settings = settings;
 
         this._initCalled = true;
-        this._overview = new MultiMonitorsOverviewActor(this.monitorIndex);
+        this._overview = new MultiMonitorsOverviewActor(this.monitorIndex, this._settings);
         this._overview._delegate = this;
         this._overview.connect('destroy', this._onDestroy.bind(this));
         Main.layoutManager.overviewGroup.add_child(this._overview);

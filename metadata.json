@@ -1,10 +1,10 @@
 {
-    "shell-version": ["45", "46"],
+    "shell-version": ["45", "46", "47", "48","49"],
     "uuid": "multi-monitors-bar@frederykabryan",
     "name": "Multi Monitor Bar",
     "settings-schema": "org.gnome.shell.extensions.multi-monitors-add-on",
     "gettext-domain": "multi-monitors-add-on",
-    "description": "Add multiple monitors overview and panel for gnome-shell. GNOME 46 compatibility updated.",
+    "description": "Fork of spin83's Multi Monitors Add-On with GNOME 46 compatibility. Adds multiple monitors overview and panel for gnome-shell.",
     "copied_from_url": "https://github.com/spin83/multi-monitors-add-on.git",
     "url": "https://github.com/FrederykAbryan/multi-monitors-bar_fapv2",
     "version": 1,

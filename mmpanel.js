@@ -15,8 +15,6 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, visit https://www.gnu.org/licenses/.
 */
 
-console.log('[Multi Monitors Add-On] mmpanel.js loaded - VERSION TEST 123');
-
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
@@ -26,23 +24,16 @@ import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as Panel from 'resource:///org/gnome/shell/ui/panel.js';
 import * as CtrlAltTab from 'resource:///org/gnome/shell/ui/ctrlAltTab.js';
-import * as ExtensionSystem from 'resource:///org/gnome/shell/ui/extensionSystem.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as MultiMonitors from './extension.js';
-import * as Convenience from './convenience.js';
 import * as MMCalendar from './mmcalendar.js';
 
-// Import gettext for translations
-import Gettext from 'gettext';
-const _ = Gettext.gettext;
-
-// Provide Main module reference to mmcalendar to avoid direct import there
 MMCalendar.setMainRef(Main);
 
 // Store reference to mmPanel array set by extension.js
@@ -71,9 +62,9 @@ export const TRANSFER_INDICATORS_ID = 'transfer-indicators';
 export const EXCLUDE_INDICATORS_ID = 'exclude-indicators';
 
 var StatusIndicatorsController = class StatusIndicatorsController  {
-    constructor() {
+    constructor(settings) {
         this._transfered_indicators = [];
-        this._settings = Convenience.getSettings();
+        this._settings = settings;
 
         this._updatedSessionId = Main.sessionMode.connect('updated', this._updateSessionIndicators.bind(this));
         this._updateSessionIndicators();
@@ -362,52 +353,68 @@ class MirroredIndicatorButton extends PanelMenu.Button {
             console.log('[Multi Monitors Add-On] Created activities button with icon');
             this._sourceIndicator = null;
         } else {
-            // For other indicators, find them in statusArea and clone
+            // For other indicators, find them in statusArea and mirror their behavior
             this._sourceIndicator = Main.panel.statusArea[role] || null;
 
             console.log('[Multi Monitors Add-On] MirroredIndicatorButton._init for role:', role);
 
-            // Try to clone the visual representation from the source indicator
+            // Instead of cloning, recreate the visual structure to inherit proper styling
             if (this._sourceIndicator) {
                 try {
-                    // Clone the first child of the source indicator (the visual part)
+                    // Copy the structure from the source indicator
                     const sourceChild = this._sourceIndicator.get_first_child();
-                    if (sourceChild) {
-                        // Create a visual clone with proper sizing
+                    if (sourceChild && sourceChild instanceof St.BoxLayout) {
+                        // Recreate the box layout structure instead of cloning
+                        const container = new St.BoxLayout({
+                            style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                            y_align: Clutter.ActorAlign.CENTER,
+                        });
+
+                        // For dateMenu, get the actual clock label text
+                        if (role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
+                            // Create our own clock display that mirrors the main one
+                            const clockDisplay = new St.Label({
+                                style_class: 'clock',
+                                y_align: Clutter.ActorAlign.CENTER,
+                            });
+                            
+                            // Update clock text from the source
+                            const updateClock = () => {
+                                if (this._sourceIndicator._clockDisplay) {
+                                    clockDisplay.text = this._sourceIndicator._clockDisplay.text;
+                                }
+                            };
+                            
+                            // Update immediately and set up periodic updates
+                            updateClock();
+                            this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                                updateClock();
+                                return GLib.SOURCE_CONTINUE;
+                            });
+                            
+                            container.add_child(clockDisplay);
+                            this._clockDisplay = clockDisplay;
+                        } else {
+                            // For other indicators, use a clone as fallback
+                            const clone = new Clutter.Clone({
+                                source: sourceChild,
+                                y_align: Clutter.ActorAlign.CENTER
+                            });
+                            container.add_child(clone);
+                        }
+
+                        this.add_child(container);
+                        console.log('[Multi Monitors Add-On] Successfully created mirrored visual for', role);
+                    } else {
+                        // Fallback to simple clone
                         const clone = new Clutter.Clone({
                             source: sourceChild,
                             y_align: Clutter.ActorAlign.CENTER
                         });
-
-                        // Apply the same style classes from the source indicator
-                        // This ensures proper font sizing and styling
-                        try {
-                            if (this._sourceIndicator.get_style_class_name) {
-                                const styleClasses = this._sourceIndicator.get_style_class_name();
-                                if (styleClasses) {
-                                    this.set_style_class_name(styleClasses);
-                                }
-                            }
-                        } catch (e) {
-                            console.log('[Multi Monitors Add-On] Could not copy style classes:', String(e));
-                        }
-
-                        // Ensure clone scales properly with the panel
-                        // The clone should match the natural size of the source
-                        clone.set_size(-1, -1);  // Natural size
-
                         this.add_child(clone);
-                        console.log('[Multi Monitors Add-On] Successfully cloned visual from source indicator');
-                    } else {
-                        // Fallback to gear icon if no source child
-                        const label = new St.Label({
-                            text: '⚙',
-                            y_align: Clutter.ActorAlign.CENTER
-                        });
-                        this.add_child(label);
                     }
                 } catch (e) {
-                    console.error('[Multi Monitors Add-On] Failed to clone source indicator:', String(e));
+                    console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                     // Fallback to gear icon
                     const label = new St.Label({
                         text: '⚙',
@@ -474,6 +481,31 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                 // Store original state to restore later
                 const originalSourceActor = menu.sourceActor;
                 const originalBoxPointer = menu.box?._sourceActor;
+                
+                // Store the original setActive/add_style_pseudo_class methods to prevent active state
+                const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+                const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+                
+                // Temporarily override to prevent active state on main panel indicator
+                if (this._sourceIndicator.setActive) {
+                    this._sourceIndicator.setActive = () => {}; // No-op
+                }
+                if (this._sourceIndicator.add_style_pseudo_class) {
+                    const originalMethod = this._sourceIndicator.add_style_pseudo_class.bind(this._sourceIndicator);
+                    this._sourceIndicator.add_style_pseudo_class = (pseudoClass) => {
+                        // Prevent 'active' and 'checked' pseudo-classes
+                        if (pseudoClass !== 'active' && pseudoClass !== 'checked') {
+                            originalMethod(pseudoClass);
+                        }
+                    };
+                }
+
+                // Remove active/checked pseudo-class from the main panel indicator
+                // to prevent it from showing active state when external monitor button is clicked
+                if (this._sourceIndicator.remove_style_pseudo_class) {
+                    this._sourceIndicator.remove_style_pseudo_class('active');
+                    this._sourceIndicator.remove_style_pseudo_class('checked');
+                }
 
                 // Update the menu's sourceActor to point to this mirrored button
                 menu.sourceActor = this;
@@ -549,6 +581,25 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                         if (menu.box) {
                             menu.box._sourceActor = originalBoxPointer;
                         }
+                        
+                        // Restore original methods
+                        if (originalSetActive) {
+                            this._sourceIndicator.setActive = originalSetActive;
+                        }
+                        if (originalAddPseudoClass) {
+                            this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+                        }
+                        
+                        // Remove active/checked pseudo-class from both indicators when menu closes
+                        if (this._sourceIndicator && this._sourceIndicator.remove_style_pseudo_class) {
+                            this._sourceIndicator.remove_style_pseudo_class('active');
+                            this._sourceIndicator.remove_style_pseudo_class('checked');
+                        }
+                        if (this.remove_style_pseudo_class) {
+                            this.remove_style_pseudo_class('active');
+                            this.remove_style_pseudo_class('checked');
+                        }
+                        
                         menu.disconnect(openStateId);
                     }
                 });
@@ -566,7 +617,13 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    vfunc_destroy() {
+    destroy() {
+        // Cleanup clock update timer
+        if (this._clockUpdateId) {
+            GLib.source_remove(this._clockUpdateId);
+            this._clockUpdateId = null;
+        }
+        
         // Disconnect overview signals for activities button
         if (this._role === 'activities') {
             if (this._showingId) {
@@ -578,7 +635,7 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                 this._hidingId = null;
             }
         }
-        super.vfunc_destroy();
+        super.destroy();
     }
 });
 
@@ -593,10 +650,10 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	    	this._targetAppGroup = null;
 	    	this._lastFocusedWindow = null;
 
-	    	// Call parent init if Panel.AppMenuButton exists
-	    	if (Panel.AppMenuButton && Panel.AppMenuButton.prototype._init) {
-	    		Panel.AppMenuButton.prototype._init.call(this, panel);
-	    	} else {
+            // Call parent init if Panel.AppMenuButton exists
+            if (typeof Panel !== 'undefined' && Panel.AppMenuButton && Panel.AppMenuButton.prototype._init) {
+                Panel.AppMenuButton.prototype._init.call(this, panel);
+            } else {
 	    		super._init(0.0, null, false);
 	    		this._startingApps = [];
 	    		this._targetApp = null;
@@ -709,13 +766,13 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	    _sync() {
 	    	if (!this._switchWorkspaceNotifyId)
 	    		return;
-	    	// Call parent sync if Panel.AppMenuButton exists
-	    	if (Panel.AppMenuButton && Panel.AppMenuButton.prototype._sync) {
-	    		Panel.AppMenuButton.prototype._sync.call(this);
-	    	}
+            // Call parent sync if Panel.AppMenuButton exists
+            if (typeof Panel !== 'undefined' && Panel.AppMenuButton && Panel.AppMenuButton.prototype._sync) {
+                Panel.AppMenuButton.prototype._sync.call(this);
+            }
 	    }
 	    
-	    _onDestroy() {
+	    destroy() {
 	    	if (this._actionGroupNotifyId) {
 	            this._targetApp.disconnect(this._actionGroupNotifyId);
 	            this._actionGroupNotifyId = 0;
@@ -733,7 +790,7 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
                 this.menu._app.disconnect(this.menu._windowsChangedId);
                 this.menu._windowsChangedId = 0;
             }
-            super._onDestroy();
+            super.destroy();
 		}
 	});
 
@@ -778,10 +835,16 @@ class MultiMonitorsActivitiesButton extends PanelMenu.Button {
             return super.vfunc_event(event);
         }
 
-        _onDestroy() {
-            Main.overview.disconnect(this._showingId);
-            Main.overview.disconnect(this._hidingId);
-            super._onDestroy();
+        destroy() {
+            if (this._showingId) {
+                Main.overview.disconnect(this._showingId);
+                this._showingId = null;
+            }
+            if (this._hidingId) {
+                Main.overview.disconnect(this._hidingId);
+                this._hidingId = null;
+            }
+            super.destroy();
         }
     });
 
@@ -793,12 +856,8 @@ const MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS = {
 
 const MultiMonitorsPanel = GObject.registerClass(
 class MultiMonitorsPanel extends St.Widget {
-    _init(monitorIndex, mmPanelBox) {
-        console.log('[Multi Monitors Add-On] MultiMonitorsPanel._init called for monitor', monitorIndex);
-        console.log('[Multi Monitors Add-On] MultiMonitorsPanel._init mmPanelBox type:', typeof mmPanelBox);
-
+    _init(monitorIndex, mmPanelBox, settings) {
         if (!mmPanelBox) {
-            console.error('[Multi Monitors Add-On] ERROR: mmPanelBox is undefined in _init!');
             throw new Error('mmPanelBox parameter is required but was undefined');
         }
 
@@ -809,6 +868,7 @@ class MultiMonitorsPanel extends St.Widget {
         });
 
         this.monitorIndex = monitorIndex;
+        this._settings = settings;
 
         this.set_offscreen_redirect(Clutter.OffscreenRedirect.ALWAYS);
 
@@ -863,9 +923,7 @@ class MultiMonitorsPanel extends St.Widget {
             this.remove_style_pseudo_class('overview');
         });
 
-        console.log('[Multi Monitors Add-On] About to add panel to panelBox');
         mmPanelBox.panelBox.add_child(this);
-        console.log('[Multi Monitors Add-On] MultiMonitorsPanel added to panelBox');
         Main.ctrlAltTabManager.addGroup(this, _("Top Bar"), 'focus-top-bar-symbolic',
                                         { sortGroup: CtrlAltTab.SortGroup.TOP });
 
@@ -873,7 +931,6 @@ class MultiMonitorsPanel extends St.Widget {
 
         this._workareasChangedId = global.display.connect('workareas-changed', () => this.queue_relayout());
 
-        this._settings = Convenience.getSettings();
         this._showActivitiesId = this._settings.connect('changed::'+SHOW_ACTIVITIES_ID,
                                                             this._showActivities.bind(this));
         this._showActivities();
@@ -886,29 +943,49 @@ class MultiMonitorsPanel extends St.Widget {
                                                             this._showDateTime.bind(this));
         this._showDateTime();
 
-        this.connect('destroy', this._onDestroy.bind(this));
+        this.connect('destroy', this.destroy.bind(this));
     }
 
     vfunc_map() {
         super.vfunc_map();
-        // Defer panel update until the panel is mapped and part of the scene graph.
-        // This is the correct way to handle UI construction in modern GNOME.
         this._updatePanel();
-        // Re-show datetime after _updatePanel to ensure it's visible
         this._showDateTime();
     }
 
-    _onDestroy() {
-        global.display.disconnect(this._workareasChangedId);
-        Main.overview.disconnect(this._showingId);
-        Main.overview.disconnect(this._hidingId);
-
-        this._settings.disconnect(this._showActivitiesId);
-        this._settings.disconnect(this._showAppMenuId);
-        this._settings.disconnect(this._showDateTimeId);
+    destroy() {
+        if (this._workareasChangedId) {
+            global.display.disconnect(this._workareasChangedId);
+            this._workareasChangedId = null;
+        }
+        if (this._showingId) {
+            Main.overview.disconnect(this._showingId);
+            this._showingId = null;
+        }
+        if (this._hidingId) {
+            Main.overview.disconnect(this._hidingId);
+            this._hidingId = null;
+        }
+        if (this._showActivitiesId) {
+            this._settings.disconnect(this._showActivitiesId);
+            this._showActivitiesId = null;
+        }
+        if (this._showAppMenuId) {
+            this._settings.disconnect(this._showAppMenuId);
+            this._showAppMenuId = null;
+        }
+        if (this._showDateTimeId) {
+            this._settings.disconnect(this._showDateTimeId);
+            this._showDateTimeId = null;
+        }
 
         Main.ctrlAltTabManager.removeGroup(this);
-        Main.sessionMode.disconnect(this._updatedId);
+        
+        if (this._updatedId) {
+            Main.sessionMode.disconnect(this._updatedId);
+            this._updatedId = null;
+        }
+        
+        super.destroy();
     }
 
     _showActivities() {

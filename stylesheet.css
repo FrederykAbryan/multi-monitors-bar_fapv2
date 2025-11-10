@@ -31,25 +31,6 @@
 /* Mirrored indicators should inherit styling from their cloned source.
    The Clutter.Clone automatically scales content, ensuring proper font sizes. */
 
-/* Ensure datetime and all panel buttons use consistent, readable font size */
-#panel .panel-button {
-    font-size: 11pt;
-}
-
-/* Target the clock/datetime specifically */
-.clock-display {
-    font-size: 11pt;
-}
-
-.clock-display-box {
-    gap: 2px;
-}
-
-/* Ensure date menu text is readable */
-.clock {
-    font-size: 11pt;
-}
-
 /* Activities button styling for external monitors */
 #mmPanelActivities {
     border-radius: 99px;

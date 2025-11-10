@@ -1,18 +1,25 @@
-/**
- * New node file
- */
+/*
+Copyright (C) 2014  spin83
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, visit https://www.gnu.org/licenses/.
+*/
 
 import St from 'gi://St';
-import Meta from 'gi://Meta';
-import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
-
+import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PanelModule from 'resource:///org/gnome/shell/ui/panel.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
-import * as Config from 'resource:///org/gnome/shell/misc/config.js';
-
-import * as Convenience from './convenience.js';
 import * as MMPanel from './mmpanel.js';
 
 export const SHOW_PANEL_ID = 'show-panel';
@@ -62,14 +69,9 @@ export class MultiMonitorsPanelBox {
 }
 
 export class MultiMonitorsLayoutManager {
-	constructor() {
-		console.log('[Multi Monitors Add-On] MultiMonitorsLayoutManager constructor called');
-		this._settings = Convenience.getSettings();
-		this._desktopSettings = Convenience.getSettings("org.gnome.desktop.interface");
-
-		// Main.mmPanel is now initialized in extension.js constructor
-		// to avoid "read-only" errors with ES6 module imports
-		console.log('[Multi Monitors Add-On] MultiMonitorsLayoutManager constructor: Main.mmPanel is', typeof Main.mmPanel);
+	constructor(settings) {
+		this._settings = settings;
+		this._desktopSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
 
 		this._monitorIds = [];
 		this.mmPanelBox = [];
@@ -94,7 +96,7 @@ export class MultiMonitorsLayoutManager {
             }
 
             if (!this.statusIndicatorsController) {
-                this.statusIndicatorsController = new MMPanel.StatusIndicatorsController();
+                this.statusIndicatorsController = new MMPanel.StatusIndicatorsController(this._settings);
             }
 
             if (!this._layoutManager_updateHotCorners) {
@@ -143,7 +145,7 @@ export class MultiMonitorsLayoutManager {
 
 	hidePanel() {
 		if (this._changedEnableHotCornersId) {
-			global.settings.disconnect(this._changedEnableHotCornersId);
+			this._desktopSettings.disconnect(this._changedEnableHotCornersId);
 			this._changedEnableHotCornersId = null;
 		}
 		
@@ -171,39 +173,34 @@ export class MultiMonitorsLayoutManager {
 
 		let panels2remove = this._monitorIds.length;
 		for (let i = 0; i < panels2remove; i++) {
-			let monitorId = this._monitorIds.pop();
+			this._monitorIds.pop();
 			this._popPanel();
-			console.log("remove: "+monitorId);
 		}
 	}
 
-	_monitorsChanged () {
-		let monitorChange = Main.layoutManager.monitors.length - this._monitorIds.length -1;
-		if (monitorChange<0) {
-			for (let idx = 0; idx<-monitorChange; idx++) {
-				let monitorId = this._monitorIds.pop();
+	_monitorsChanged() {
+		let monitorChange = Main.layoutManager.monitors.length - this._monitorIds.length - 1;
+		if (monitorChange < 0) {
+			for (let idx = 0; idx < -monitorChange; idx++) {
+				this._monitorIds.pop();
 				this._popPanel();
-				console.log("remove: "+monitorId);
 			}
 		}
 		
 		let j = 0;
 		let tIndicators = false;
 		for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
-			if (i!=Main.layoutManager.primaryIndex) {
+			if (i != Main.layoutManager.primaryIndex) {
 				let monitor = Main.layoutManager.monitors[i];
 				let monitorId = "i"+i+"x"+monitor.x+"y"+monitor.y+"w"+monitor.width+"h"+monitor.height;
-				if (monitorChange>0 && j==this._monitorIds.length) {
+				if (monitorChange > 0 && j == this._monitorIds.length) {
 					this._monitorIds.push(monitorId);
 					this._pushPanel(i, monitor);
-					console.log("new: "+monitorId);
 					tIndicators = true;
 				}
-				else if (this._monitorIds[j]>monitorId || this._monitorIds[j]<monitorId) {
-					let oldMonitorId = this._monitorIds[j];
-					this._monitorIds[j]=monitorId;
+				else if (this._monitorIds[j] != monitorId) {
+					this._monitorIds[j] = monitorId;
 					this.mmPanelBox[j].updatePanel(monitor);
-					console.log("update: "+oldMonitorId+">"+monitorId);
 				}
 				j++;
 			}
@@ -215,38 +212,21 @@ export class MultiMonitorsLayoutManager {
 	}
 
 	_pushPanel(i, monitor) {
-		// CRITICAL: Never create panels for primary monitor
 		if (i === Main.layoutManager.primaryIndex) {
-			console.log('[Multi Monitors Add-On] _pushPanel: BLOCKED - refusing to create panel for primary monitor', i);
 			return;
 		}
 		
-		console.log('[Multi Monitors Add-On] _pushPanel: creating panel for monitor', i);
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor);
-		console.log('[Multi Monitors Add-On] _pushPanel: mmPanelBox created');
-		
-		let panel;
-		try {
-			panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox);
-			console.log('[Multi Monitors Add-On] _pushPanel: panel created successfully');
-		} catch (e) {
-			console.error('[Multi Monitors Add-On] _pushPanel: Error creating panel:', String(e));
-			return;
-		}
+		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox, this._settings);
 
-		// Use helper function to get mmPanel array
 		const mmPanelRef = getMMPanelArray();
-		console.log('[Multi Monitors Add-On] _pushPanel: mmPanelRef type:', typeof mmPanelRef);
 		if (mmPanelRef) {
 			mmPanelRef.push(panel);
-		} else {
-			console.error('[Multi Monitors Add-On] _pushPanel: mmPanelRef is null/undefined, cannot push panel!');
 		}
 		this.mmPanelBox.push(mmPanelBox);
 	}
 
 	_popPanel() {
-		// Use helper function to get mmPanel array
 		const mmPanelRef = getMMPanelArray();
 		let panel = mmPanelRef ? mmPanelRef.pop() : null;
 		if (panel && this.statusIndicatorsController) {
@@ -258,68 +238,11 @@ export class MultiMonitorsLayoutManager {
 		}
     }
 
-	_changeMainPanelAppMenuButton(appMenuButton) {
-		// Guard: AppMenuButton might not exist in GNOME 46
-		if (!appMenuButton) {
-			return;
-		}
-		
-		let role = "appMenu";
-		let panel = Main.panel;
-		let indicator = panel.statusArea[role];
-		
-		// Guard against undefined indicator
-		if (indicator) {
-			panel.menuManager.removeMenu(indicator.menu);
-			indicator.destroy();
-			if (indicator._actionGroupNotifyId) {
-				indicator._targetApp.disconnect(indicator._actionGroupNotifyId);
-				indicator._actionGroupNotifyId = 0;
-	        }
-	        if (indicator._busyNotifyId) {
-	        	indicator._targetApp.disconnect(indicator._busyNotifyId);
-	        	indicator._busyNotifyId = 0;
-	        }
-	        if (indicator.menu && indicator.menu._windowsChangedId) {
-	        	indicator.menu._app.disconnect(indicator.menu._windowsChangedId);
-	        	indicator.menu._windowsChangedId = 0;
-	        }
-		}
-		
-		indicator = new appMenuButton(panel);
-		panel.statusArea[role] = indicator;
-		let box = panel._leftBox;
-		panel._addToPanelBox(role, indicator, box.get_n_children()+1, box);
-	}
-
 	_showAppMenu() {
-		// Disabled: Don't modify main panel's app menu to keep it clean
-		// With Fildem global menu support, we don't need to change the main panel
-		// The extension will still create app menus on external monitors only
-		const mmPanelRef = getMMPanelArray();
-		if (this._settings.get_boolean(MMPanel.SHOW_APP_MENU_ID) && mmPanelRef && mmPanelRef.length>0) {
-			// Skip main panel modification - only external monitors get app menus
-			// if (!this.mmappMenu) {
-			// 	this._changeMainPanelAppMenuButton(MMPanel.MultiMonitorsAppMenuButton);
-			// 	this.mmappMenu = true;
-			// }
-		}
-		else {
-			this._hideAppMenu();
-		}
+		// No-op for GNOME 45+
 	}
 
 	_hideAppMenu() {
-		// Disabled: Since we don't modify main panel, no need to restore
-		// if (this.mmappMenu) {
-		// 	// Only restore if PanelModule.AppMenuButton exists (it doesn't in GNOME 46)
-		// 	if (PanelModule.AppMenuButton) {
-		// 		this._changeMainPanelAppMenuButton(PanelModule.AppMenuButton);
-		// 	}
-		// 	this.mmappMenu = false;
-		// 	if (Main.panel._updatePanel) {
-		// 		Main.panel._updatePanel();
-		// 	}
-		// }
+		// No-op for GNOME 45+
 	}
 }

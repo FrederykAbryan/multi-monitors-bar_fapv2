@@ -31,14 +31,10 @@ import * as MessageList from 'resource:///org/gnome/shell/ui/messageList.js';
 import * as DateMenu from 'resource:///org/gnome/shell/ui/dateMenu.js';
 import * as Calendar from 'resource:///org/gnome/shell/ui/calendar.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as MultiMonitors from './extension.js';
-import * as Convenience from './convenience.js';
-
-// Import gettext for translations
-import Gettext from 'gettext';
-const _ = Gettext.gettext;
 
 // TodayButton is not exported in GNOME Shell 46, so we need to implement our own
 // Based on the upstream DateMenu.TodayButton implementation
@@ -118,7 +114,6 @@ class MultiMonitorsDoNotDisturbSwitch extends PopupMenu.Switch {
             Gio.SettingsBindFlags.INVERT_BOOLEAN);
 
         this.connect('destroy', () => {
-            this._settings.run_dispose();
             this._settings = null;
         });
     }
@@ -289,7 +284,12 @@ var MultiMonitorsEventsSection = (() => {
 })();
 
 var MultiMonitorsNotificationSection = (() => {
-    let MultiMonitorsNotificationSection = class MultiMonitorsNotificationSection extends MessageList.MessageListSection {
+    // Check if MessageListSection is available, otherwise use St.Widget as base
+    const BaseClass = (MessageList.MessageListSection && typeof MessageList.MessageListSection === 'function') 
+        ? MessageList.MessageListSection 
+        : St.Widget;
+    
+    let MultiMonitorsNotificationSection = class MultiMonitorsNotificationSection extends BaseClass {
     _init() {
         super._init();
 
@@ -511,7 +511,6 @@ var MultiMonitorsMessagesIndicator  = (() => {
         }
 
         this.connect('destroy', () => {
-            this._settings.run_dispose();
             this._settings = null;
             MainRef.messageTray.disconnect(this._sourceAddedId);
             MainRef.messageTray.disconnect(this._sourceRemovedId);
