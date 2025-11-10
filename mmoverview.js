@@ -35,24 +35,10 @@ import * as WorkspacesView from 'resource:///org/gnome/shell/ui/workspacesView.j
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as MultiMonitors from './extension.js';
+import * as Constants from './mmPanelConstants.js';
 
-// Store reference to mmPanel array set by extension.js
-let _mmPanelArrayRef = null;
-
-// Helper function to set the mmPanel reference
-export function setMMPanelArrayRef(mmPanelArray) {
-	_mmPanelArrayRef = mmPanelArray;
-}
-
-// Helper function to safely access mmPanel array
-function getMMPanelArray() {
-	// First try Main.mmPanel if it exists
-	if ('mmPanel' in Main && Main.mmPanel) {
-		return Main.mmPanel;
-	}
-	// Fall back to stored reference
-	return _mmPanelArrayRef;
-}
+// Re-export for backward compatibility
+export const setMMPanelArrayRef = Constants.setMMPanelArrayRef;
 
 export const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 
@@ -75,8 +61,6 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         // Initialize _viewport for GNOME 46 compatibility
         this._viewport = new Clutter.Actor();
         this._contents.add_child(this._viewport);
-
-        this.connect('destroy', this._onDestroy.bind(this));
 
         this._createBackground();
 
@@ -255,11 +239,9 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
 
             this.queue_relayout();
         });
-
-        this.connect('destroy', this._onDestroy.bind(this));
     }
 
-    _onDestroy() {
+    destroy() {
         this._destroyThumbnails();
         this._scrollAdjustment.disconnect(this._scrollAdjustmentNotifyValueId);
         Main.overview.disconnect(this._showingId);
@@ -275,6 +257,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         this._settings.disconnect(this._changedDynamicWorkspacesId);
         Main.layoutManager.disconnect(this._monitorsChangedId);
         global.display.disconnect(this._workareasChangedPortholeId);
+        super.destroy();
     }
 
     addThumbnails(start, count) {
@@ -362,7 +345,6 @@ var MultiMonitorsSlidingControl = (() => {
         this._visible = true;
         this._inDrag = false;
 
-        this.connect('destroy', this._onDestroy.bind(this));
         this._hidingId = Main.overview.connect('hiding', this._onOverviewHiding.bind(this));
 
         this._itemDragBeginId = Main.overview.connect('item-drag-begin', this._onDragBegin.bind(this));
@@ -374,7 +356,7 @@ var MultiMonitorsSlidingControl = (() => {
         this._windowDragEndId = Main.overview.connect('window-drag-end', this._onWindowDragEnd.bind(this));
     }
 
-    _onDestroy() {
+    destroy() {
         Main.overview.disconnect(this._hidingId);
 
         Main.overview.disconnect(this._itemDragBeginId);
@@ -384,6 +366,7 @@ var MultiMonitorsSlidingControl = (() => {
         Main.overview.disconnect(this._windowDragBeginId);
         Main.overview.disconnect(this._windowDragCancelledId);
         Main.overview.disconnect(this._windowDragEndId);
+        super.destroy();
     }};
 
     MultiMonitors.copyClass(OverviewControls.SlidingControl, MultiMonitorsSlidingControl);
@@ -411,11 +394,11 @@ var MultiMonitorsThumbnailsSlider = (() => {
         this._thumbnailsBox.bind_property('visible', this, 'visible', GObject.BindingFlags.SYNC_CREATE);
     }
 
-    _onDestroy() {
+    destroy() {
         global.workspace_manager.disconnect(this._activeWorkspaceChangedId);
         global.workspace_manager.disconnect(this._notifyNWorkspacesId);
         Main.layoutManager.disconnect(this._monitorsChangedId);
-        super._onDestroy();
+        super.destroy();
     }};
 
     MultiMonitors.copyClass(OverviewControls.ThumbnailsSlider, MultiMonitorsThumbnailsSlider);
@@ -491,13 +474,12 @@ class MultiMonitorsControlsManager extends St.Widget {
         this._thumbnailsBox._updatePorthole();
 
         this.connect('notify::allocation', this._updateSpacerVisibility.bind(this));
-        this.connect('destroy', this._onDestroy.bind(this));
         //this._thumbnailsSelectSideId = this._settings.connect('changed::'+THUMBNAILS_SLIDER_POSITION_ID,
         //                                                this._thumbnailsSelectSide.bind(this));
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', this._monitorsChanged.bind(this));
     }
 
-    _onDestroy() {
+    destroy() {
         if (this._pageChangedId && Main.overview.searchController) {
             Main.overview.searchController.disconnect(this._pageChangedId);
         }
@@ -510,6 +492,7 @@ class MultiMonitorsControlsManager extends St.Widget {
         if (this._monitorsChangedId) {
             Main.layoutManager.disconnect(this._monitorsChangedId);
         }
+        super.destroy();
     }
 
     _monitorsChanged() {
@@ -599,7 +582,6 @@ class MultiMonitorsControlsManager extends St.Widget {
         }
         if (isNaN(geometry.x))
             return null;
-        //console.log("actualG+ i: "+this._monitorIndex+" x: "+geometry.x+" y: "+geometry.y+" width: "+geometry.width+" height: "+geometry.height);
         return geometry;
     }
 
@@ -726,7 +708,7 @@ class MultiMonitorsOverviewActor extends St.BoxLayout {
 
         this._panelGhost = null;
         // Use helper function to get mmPanel array
-        const mmPanelRef = getMMPanelArray();
+        const mmPanelRef = Constants.getMMPanelArray();
         if (mmPanelRef) {
             for (let idx in mmPanelRef) {
                 if (mmPanelRef[idx].monitorIndex !== this._monitorIndex)
@@ -762,7 +744,6 @@ export class MultiMonitorsOverview {
         this._initCalled = true;
         this._overview = new MultiMonitorsOverviewActor(this.monitorIndex, this._settings);
         this._overview._delegate = this;
-        this._overview.connect('destroy', this._onDestroy.bind(this));
         Main.layoutManager.overviewGroup.add_child(this._overview);
 
         this._showingId = Main.overview.connect('showing', this._show.bind(this));
@@ -771,14 +752,6 @@ export class MultiMonitorsOverview {
 
     getWorkspacesActualGeometry() {
         return this._overview._controls.getWorkspacesActualGeometry();
-    }
-
-    _onDestroy() {
-        Main.overview.disconnect(this._showingId);
-        Main.overview.disconnect(this._hidingId);
-
-        Main.layoutManager.overviewGroup.remove_child(this._overview);
-        this._overview._delegate = null;
     }
 
     _show() {
@@ -790,6 +763,11 @@ export class MultiMonitorsOverview {
     }
 
     destroy() {
+        Main.overview.disconnect(this._showingId);
+        Main.overview.disconnect(this._hidingId);
+
+        Main.layoutManager.overviewGroup.remove_child(this._overview);
+        this._overview._delegate = null;
         this._overview.destroy();
     }
 

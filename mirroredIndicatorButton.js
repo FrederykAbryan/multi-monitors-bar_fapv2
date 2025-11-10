@@ -1,0 +1,372 @@
+/*
+Copyright (C) 2014  spin83
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, visit https://www.gnu.org/licenses/.
+*/
+
+import St from 'gi://St';
+import Atk from 'gi://Atk';
+import Clutter from 'gi://Clutter';
+import GObject from 'gi://GObject';
+import GLib from 'gi://GLib';
+
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+
+// Lightweight mirrored indicator that visually clones an existing indicator
+// (e.g., Vitals) from the main panel and opens its menu anchored to this button.
+export const MirroredIndicatorButton = GObject.registerClass(
+class MirroredIndicatorButton extends PanelMenu.Button {
+    _init(panel, role) {
+        super._init(0.0, null, false);
+
+        this._role = role;
+        this._panel = panel;
+
+        if (role === 'activities') {
+            this._initActivitiesButton();
+        } else {
+            this._initGenericIndicator(role);
+        }
+    }
+
+    _initActivitiesButton() {
+        // Create the activities indicator with hot corner style
+        this.accessible_role = Atk.Role.TOGGLE_BUTTON;
+        this.name = 'mmPanelActivities';
+        this.add_style_class_name('panel-button');
+
+        const container = new St.BoxLayout({
+            style_class: 'panel-status-menu-box',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const iconContainer = new St.BoxLayout({
+            style_class: 'activities-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Create the pill shape (rounded rectangle representing 3 dots)
+        this._pill = new St.Widget({
+            style_class: 'activities-pill',
+            width: 18,
+            height: 6,
+            style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        // Create the single dot
+        this._dot = new St.Widget({
+            style_class: 'activities-dot',
+            width: 6,
+            height: 6,
+            style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        iconContainer.add_child(this._pill);
+        iconContainer.add_child(this._dot);
+        container.add_child(iconContainer);
+
+        this.add_child(container);
+        this.label_actor = iconContainer;
+
+        // Sync with overview state
+        this._showingId = Main.overview.connect('showing', () => {
+            this.add_style_pseudo_class('overview');
+            this.add_accessible_state(Atk.StateType.CHECKED);
+            this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
+            this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
+        });
+        
+        this._hidingId = Main.overview.connect('hiding', () => {
+            this.remove_style_pseudo_class('overview');
+            this.remove_accessible_state(Atk.StateType.CHECKED);
+            this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
+            this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
+        });
+
+        // Handle hover state
+        this.connect('notify::hover', () => {
+            if (this.hover) {
+                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
+                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
+            } else if (!Main.overview.visible) {
+                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
+                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
+            }
+        });
+
+        this._sourceIndicator = null;
+    }
+
+    _initGenericIndicator(role) {
+        this._sourceIndicator = Main.panel.statusArea[role] || null;
+
+        if (this._sourceIndicator) {
+            this._createIndicatorClone();
+        } else {
+            this._createFallbackIcon();
+        }
+    }
+
+    _createIndicatorClone() {
+        try {
+            const sourceChild = this._sourceIndicator.get_first_child();
+            if (sourceChild && sourceChild instanceof St.BoxLayout) {
+                const container = new St.BoxLayout({
+                    style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+
+                if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
+                    this._createClockDisplay(container);
+                } else {
+                    this._createSimpleClone(container, sourceChild);
+                }
+
+                this.add_child(container);
+            } else {
+                this._createSimpleClone(this, sourceChild);
+            }
+        } catch (e) {
+            console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
+            this._createFallbackIcon();
+        }
+    }
+
+    _createClockDisplay(container) {
+        const clockDisplay = new St.Label({
+            style_class: 'clock',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        
+        const updateClock = () => {
+            if (this._sourceIndicator._clockDisplay) {
+                clockDisplay.text = this._sourceIndicator._clockDisplay.text;
+            }
+        };
+        
+        updateClock();
+        this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            updateClock();
+            return GLib.SOURCE_CONTINUE;
+        });
+        
+        container.add_child(clockDisplay);
+        this._clockDisplay = clockDisplay;
+    }
+
+    _createSimpleClone(parent, source) {
+        const clone = new Clutter.Clone({
+            source: source,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        parent.add_child(clone);
+    }
+
+    _createFallbackIcon() {
+        const label = new St.Label({
+            text: '⚙',
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        this.add_child(label);
+    }
+
+    vfunc_button_press_event(buttonEvent) {
+        this._onButtonPress();
+        return Clutter.EVENT_STOP;
+    }
+
+    vfunc_event(event) {
+        if (event.type() === Clutter.EventType.BUTTON_PRESS) {
+            return this.vfunc_button_press_event(event);
+        }
+        return super.vfunc_event(event);
+    }
+
+    _onButtonPress() {
+        try {
+            if (this._role === 'activities') {
+                Main.overview.toggle();
+                return Clutter.EVENT_STOP;
+            }
+            
+            if (this._sourceIndicator && this._sourceIndicator.menu) {
+                return this._openMirroredMenu();
+            }
+        } catch (e) {
+            console.error('[Multi Monitors Add-On] Error opening mirrored menu:', String(e), e.stack);
+        }
+
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _openMirroredMenu() {
+        const monitorIndex = Main.layoutManager.findIndexForActor(this);
+        const menu = this._sourceIndicator.menu;
+
+        if (menu.isOpen) {
+            menu.close();
+            return Clutter.EVENT_STOP;
+        }
+
+        // Store original state
+        const originalSourceActor = menu.sourceActor;
+        const originalBoxPointer = menu.box?._sourceActor;
+        const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+        const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+        
+        // Prevent active state on main panel indicator
+        this._preventMainPanelActiveState(originalAddPseudoClass);
+        
+        // Add active style to THIS button
+        this.add_style_pseudo_class('active');
+
+        // Update menu's sourceActor
+        menu.sourceActor = this;
+
+        // Update BoxPointer positioning
+        if (menu.box) {
+            this._updateMenuPositioning(menu, monitorIndex);
+        }
+
+        // Setup cleanup on menu close
+        const openStateId = menu.connect('open-state-changed', (m, isOpen) => {
+            if (isOpen) {
+                this.add_style_pseudo_class('active');
+            } else {
+                this._restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass);
+                menu.disconnect(openStateId);
+            }
+        });
+
+        menu.open();
+        return Clutter.EVENT_STOP;
+    }
+
+    _preventMainPanelActiveState(originalAddPseudoClass) {
+        if (this._sourceIndicator.setActive) {
+            this._sourceIndicator.setActive = () => {};
+        }
+        
+        if (this._sourceIndicator.add_style_pseudo_class) {
+            const originalMethod = this._sourceIndicator.add_style_pseudo_class.bind(this._sourceIndicator);
+            this._sourceIndicator.add_style_pseudo_class = (pseudoClass) => {
+                if (pseudoClass !== 'active' && pseudoClass !== 'checked') {
+                    originalMethod(pseudoClass);
+                }
+            };
+        }
+
+        if (this._sourceIndicator.remove_style_pseudo_class) {
+            this._sourceIndicator.remove_style_pseudo_class('active');
+            this._sourceIndicator.remove_style_pseudo_class('checked');
+        }
+    }
+
+    _updateMenuPositioning(menu, monitorIndex) {
+        menu.box._sourceActor = this;
+        menu.box._sourceAllocation = null;
+
+        const monitor = Main.layoutManager.monitors[monitorIndex];
+
+        // Remove existing constraints
+        const constraints = menu.box.get_constraints();
+        for (let constraint of constraints) {
+            if (constraint.constructor.name === 'BindConstraint' ||
+                constraint.constructor.name === 'AlignConstraint') {
+                menu.box.remove_constraint(constraint);
+            }
+        }
+
+        // Override setPosition to keep menu within monitor bounds
+        try {
+            const oldSetPosition = menu.box.setPosition.bind(menu.box);
+            menu.box.setPosition = function(sourceActor, alignment) {
+                oldSetPosition(sourceActor, alignment);
+
+                const [x, y] = this.get_position();
+                const [w, h] = this.get_size();
+
+                if (x < monitor.x || x + w > monitor.x + monitor.width ||
+                    y < monitor.y || y + h > monitor.y + monitor.height) {
+                    
+                    const [btnX, btnY] = sourceActor.get_transformed_position();
+                    const [btnW, btnH] = sourceActor.get_transformed_size();
+
+                    let newX = btnX;
+                    let newY = btnY + btnH;
+
+                    if (newX + w > monitor.x + monitor.width) {
+                        newX = monitor.x + monitor.width - w;
+                    }
+                    if (newX < monitor.x) {
+                        newX = monitor.x;
+                    }
+                    if (newY + h > monitor.y + monitor.height) {
+                        newY = btnY - h;
+                    }
+
+                    this.set_position(newX, newY);
+                }
+            };
+        } catch (e) {
+            console.error('[Multi Monitors Add-On] Failed to override setPosition:', String(e));
+        }
+    }
+
+    _restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass) {
+        menu.sourceActor = originalSourceActor;
+        if (menu.box) {
+            menu.box._sourceActor = originalBoxPointer;
+        }
+        
+        if (originalSetActive) {
+            this._sourceIndicator.setActive = originalSetActive;
+        }
+        if (originalAddPseudoClass) {
+            this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+        }
+        
+        if (this._sourceIndicator && this._sourceIndicator.remove_style_pseudo_class) {
+            this._sourceIndicator.remove_style_pseudo_class('active');
+            this._sourceIndicator.remove_style_pseudo_class('checked');
+        }
+        if (this.remove_style_pseudo_class) {
+            this.remove_style_pseudo_class('active');
+            this.remove_style_pseudo_class('checked');
+        }
+    }
+
+    destroy() {
+        if (this._clockUpdateId) {
+            GLib.source_remove(this._clockUpdateId);
+            this._clockUpdateId = null;
+        }
+        
+        if (this._role === 'activities') {
+            if (this._showingId) {
+                Main.overview.disconnect(this._showingId);
+                this._showingId = null;
+            }
+            if (this._hidingId) {
+                Main.overview.disconnect(this._hidingId);
+                this._hidingId = null;
+            }
+        }
+        super.destroy();
+    }
+});

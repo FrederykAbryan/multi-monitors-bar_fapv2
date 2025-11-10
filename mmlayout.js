@@ -55,7 +55,6 @@ export class MultiMonitorsPanelBox {
         this.panelBox.set_position(monitor.x, monitor.y);
         this.panelBox.set_size(monitor.width, -1);
         Main.uiGroup.set_child_below_sibling(this.panelBox, Main.layoutManager.panelBox);
-        console.log('[PANEL BOX DEBUG] Created panel box at', monitor.x, monitor.y, 'size', monitor.width, 'visible:', this.panelBox.visible);
     }
 
     destroy() {

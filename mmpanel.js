@@ -33,617 +33,21 @@ import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js'
 
 import * as MultiMonitors from './extension.js';
 import * as MMCalendar from './mmcalendar.js';
+import * as Constants from './mmPanelConstants.js';
+import {StatusIndicatorsController} from './statusIndicatorsController.js';
+import {MirroredIndicatorButton} from './mirroredIndicatorButton.js';
 
 MMCalendar.setMainRef(Main);
 
-// Store reference to mmPanel array set by extension.js
-let _mmPanelArrayRef = null;
+// Re-export for backward compatibility
+export const setMMPanelArrayRef = Constants.setMMPanelArrayRef;
+export const SHOW_ACTIVITIES_ID = Constants.SHOW_ACTIVITIES_ID;
+export const SHOW_APP_MENU_ID = Constants.SHOW_APP_MENU_ID;
+export const SHOW_DATE_TIME_ID = Constants.SHOW_DATE_TIME_ID;
+export const AVAILABLE_INDICATORS_ID = Constants.AVAILABLE_INDICATORS_ID;
+export const TRANSFER_INDICATORS_ID = Constants.TRANSFER_INDICATORS_ID;
+export const EXCLUDE_INDICATORS_ID = Constants.EXCLUDE_INDICATORS_ID;
 
-// Helper function to set the mmPanel reference
-export function setMMPanelArrayRef(mmPanelArray) {
-	_mmPanelArrayRef = mmPanelArray;
-}
-
-// Helper function to safely access mmPanel array
-function getMMPanelArray() {
-	// First try Main.mmPanel if it exists
-	if ('mmPanel' in Main && Main.mmPanel) {
-		return Main.mmPanel;
-	}
-	// Fall back to stored reference
-	return _mmPanelArrayRef;
-}
-
-export const SHOW_ACTIVITIES_ID = 'show-activities';
-export const SHOW_APP_MENU_ID = 'show-app-menu';
-export const SHOW_DATE_TIME_ID = 'show-date-time';
-export const AVAILABLE_INDICATORS_ID = 'available-indicators';
-export const TRANSFER_INDICATORS_ID = 'transfer-indicators';
-export const EXCLUDE_INDICATORS_ID = 'exclude-indicators';
-
-var StatusIndicatorsController = class StatusIndicatorsController  {
-    constructor(settings) {
-        this._transfered_indicators = [];
-        this._settings = settings;
-
-        this._updatedSessionId = Main.sessionMode.connect('updated', this._updateSessionIndicators.bind(this));
-        this._updateSessionIndicators();
-        this._extensionStateChangedId = Main.extensionManager.connect('extension-state-changed', 
-                                            this._extensionStateChanged.bind(this));
-
-        this._transferIndicatorsId = this._settings.connect('changed::'+TRANSFER_INDICATORS_ID,
-                                                                        this.transferIndicators.bind(this));
-        this._excludeIndicatorsId = this._settings.connect('changed::'+EXCLUDE_INDICATORS_ID,
-                                                                        this._onExcludeIndicatorsChanged.bind(this));
-
-        // Note: Do not auto-transfer Vitals; user may want it on both panels.
-    }
-
-    _onExcludeIndicatorsChanged() {
-        this._findAvailableIndicators();
-        this.transferIndicators();
-    }
-
-    destroy() {
-        this._settings.disconnect(this._transferIndicatorsId);
-        this._settings.disconnect(this._excludeIndicatorsId);
-        Main.extensionManager.disconnect(this._extensionStateChangedId);
-        Main.sessionMode.disconnect(this._updatedSessionId);
-        this._settings.set_strv(AVAILABLE_INDICATORS_ID, []);
-        this._transferBack(this._transfered_indicators);
-    }
-
-	transferBack(panel) {
-		let transfer_back = this._transfered_indicators.filter((element) => {
-			return element.monitor==panel.monitorIndex;
-		});
-		
-		this._transferBack(transfer_back, panel);
-	}
-
-	transferIndicators() {
-		let boxs = ['_leftBox', '_centerBox', '_rightBox'];
-    	let transfers = this._settings.get_value(TRANSFER_INDICATORS_ID).deep_unpack();
-    	let show_app_menu = this._settings.get_value(SHOW_APP_MENU_ID);
-
-    	let transfer_back = this._transfered_indicators.filter((element) => {
-    		return !Object.prototype.hasOwnProperty.call(transfers, element.iname);
-		});
-
-    	this._transferBack(transfer_back);
-
-		for(let iname in transfers) {
-			if(Object.prototype.hasOwnProperty.call(transfers, iname) && Main.panel.statusArea[iname]) {
-				let monitor = transfers[iname];
-				
-				let indicator = Main.panel.statusArea[iname];
-				let panel = this._findPanel(monitor);
-				boxs.forEach((box) => {
-					if(Main.panel[box].contains(indicator.container) && panel) {
-						console.log('a '+box+ " > " + iname + " : "+ monitor);
-						this._transfered_indicators.push({iname:iname, box:box, monitor:monitor});
-						Main.panel[box].remove_child(indicator.container);
-						if (show_app_menu && box === '_leftBox')
-							panel[box].insert_child_at_index(indicator.container, 1);
-						else
-							panel[box].insert_child_at_index(indicator.container, 0);
-					}
-				});
-			}
-		}
-	}
-
-	_findPanel(monitor) {
-		// Use helper function to get mmPanel array
-		const mmPanelRef = getMMPanelArray();
-		if (!mmPanelRef) {
-			return null;
-		}
-		for (let i = 0; i < mmPanelRef.length; i++) {
-			if (mmPanelRef[i].monitorIndex == monitor) {
-				return mmPanelRef[i];
-			}
-		}
-		return null;
-	}
-
-	_transferBack(transfer_back, panel) {
-    	transfer_back.forEach((element) => {
-    		this._transfered_indicators.splice(this._transfered_indicators.indexOf(element));
-			if(Main.panel.statusArea[element.iname]) {
-				let indicator = Main.panel.statusArea[element.iname];
-				if(!panel) {
-					panel = this._findPanel(element.monitor);
-				}
-				if(panel && panel[element.box].contains(indicator.container)) {
-		    		console.log("r "+element.box+ " > " + element.iname + " : "+ element.monitor);
-		    		panel[element.box].remove_child(indicator.container);
-		    		
-		    		// IMPORTANT: Be more careful about insertion position to avoid extra widgets
-		    		if (element.box === '_leftBox') {
-		    			// For left box, try to insert after activities (if it exists) or at the end
-		    			let insertIndex = 1; // Default after activities
-		    			const leftBoxChildren = Main.panel[element.box].get_n_children();
-		    			if (leftBoxChildren > 1) {
-		    				insertIndex = leftBoxChildren; // Insert at end to avoid conflicts
-		    			}
-		    			Main.panel[element.box].insert_child_at_index(indicator.container, insertIndex);
-		    		} else {
-		    			Main.panel[element.box].insert_child_at_index(indicator.container, 0);
-		    		}
-				}
-			}
-		});
-	}
-
-	_extensionStateChanged() {
-		this._findAvailableIndicators();
-        this.transferIndicators();
-        // Ensure mirrored indicators are positioned correctly (e.g., Vitals)
-        try {
-            const panels = getMMPanelArray();
-            if (panels) {
-                for (const p of panels) {
-                    if (p && typeof p._ensureVitalsMirrorRightSide === 'function')
-                        p._ensureVitalsMirrorRightSide();
-                    if (p && typeof p._ensureQuickSettingsRightmost === 'function')
-                        p._ensureQuickSettingsRightmost();
-                }
-            }
-        } catch (e) {}
-	}
-
-	_updateSessionIndicators() {
-        let session_indicators = [];
-        session_indicators.push('MultiMonitorsAddOn');
-        let sessionPanel = Main.sessionMode.panel;
-        for (let sessionBox in sessionPanel){
-        	sessionPanel[sessionBox].forEach((sesionIndicator) => {
-        		session_indicators.push(sesionIndicator);
-            });
-        }
-        this._session_indicators = session_indicators;
-		this._available_indicators = [];
-		
-        this._findAvailableIndicators();
-        this.transferIndicators();
-	}
-
-    _findAvailableIndicators() {
-		let available_indicators = [];
-		let excluded_indicators = this._settings.get_strv(EXCLUDE_INDICATORS_ID);
-		let statusArea = Main.panel.statusArea;
-		for(let indicator in statusArea) {
-			if(Object.prototype.hasOwnProperty.call(statusArea, indicator) &&
-			   this._session_indicators.indexOf(indicator)<0 &&
-			   excluded_indicators.indexOf(indicator)<0){
-				available_indicators.push(indicator);
-			}
-		}
-		if(available_indicators.length!=this._available_indicators.length) {
-			this._available_indicators = available_indicators;
-//			console.log(this._available_indicators);
-			this._settings.set_strv(AVAILABLE_INDICATORS_ID, this._available_indicators);
-		}
-	}
-
-    _getFirstExternalMonitorIndex() {
-        const primary = Main.layoutManager.primaryIndex;
-        const n = Main.layoutManager.monitors?.length ?? 1;
-        for (let i = 0; i < n; i++) {
-            if (i !== primary)
-                return i;
-        }
-        // Fallback to primary if no external found
-        return primary;
-    }
-
-    _autoTransferIndicatorByPattern(pattern) {
-        // Read the current available indicators list
-        const available = this._settings.get_strv(AVAILABLE_INDICATORS_ID) || [];
-        const name = available.find(n => pattern.test(n));
-        if (!name)
-            return; // not present
-
-        // Don't override user choices
-        let transfers = this._settings.get_value(TRANSFER_INDICATORS_ID).deep_unpack();
-        if (Object.prototype.hasOwnProperty.call(transfers, name))
-            return; // already configured by user
-
-        const targetMonitor = this._getFirstExternalMonitorIndex();
-        if (targetMonitor === Main.layoutManager.primaryIndex)
-            return; // no external monitor to target
-
-        // Apply the mapping and trigger transfer
-        transfers[name] = targetMonitor;
-        this._settings.set_value(TRANSFER_INDICATORS_ID, new GLib.Variant('a{si}', transfers));
-    }
-};
-
-// Lightweight mirrored indicator that visually clones an existing indicator
-// (e.g., Vitals) from the main panel and opens its menu anchored to this button.
-console.log('[Multi Monitors Add-On] +++++ DEFINING MirroredIndicatorButton class +++++');
-const MirroredIndicatorButton = GObject.registerClass(
-class MirroredIndicatorButton extends PanelMenu.Button {
-    _init(panel, role) {
-        console.log('[Multi Monitors Add-On] ===== MirroredIndicatorButton._init START =====', 'role:', role);
-        super._init(0.0, null, false);  // Initialize as PanelMenu.Button
-        console.log('[Multi Monitors Add-On] ===== super._init done =====');
-
-        this._role = role;
-        this._panel = panel;
-
-        // For activities, create the same visual appearance as the main panel
-        if (role === 'activities') {
-            // Create the activities indicator with hot corner style
-            this.accessible_role = Atk.Role.TOGGLE_BUTTON;
-            this.name = 'mmPanelActivities';
-            this.add_style_class_name('panel-button');
-
-            // Create a container for the activities indicator
-            const container = new St.BoxLayout({
-                style_class: 'panel-status-menu-box',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-
-            // Create the activities icon container
-            const iconContainer = new St.BoxLayout({
-                style_class: 'activities-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-                x_align: Clutter.ActorAlign.CENTER,
-            });
-
-            // Create the pill shape (rounded rectangle representing 3 dots)
-            const pill = new St.Widget({
-                style_class: 'activities-pill',
-                width: 18,  // 3 dots × 6px each
-                height: 6,
-                style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-
-            // Create the single dot
-            const dot = new St.Widget({
-                style_class: 'activities-dot',
-                width: 6,
-                height: 6,
-                style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-
-            iconContainer.add_child(pill);
-            iconContainer.add_child(dot);
-            container.add_child(iconContainer);
-
-            this.add_child(container);
-            this.label_actor = iconContainer;
-
-            // Store references to the visual elements for state changes
-            this._pill = pill;
-            this._dot = dot;
-
-            // Sync with overview state
-            this._showingId = Main.overview.connect('showing', () => {
-                this.add_style_pseudo_class('overview');
-                this.add_accessible_state(Atk.StateType.CHECKED);
-                // Update visual state
-                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
-                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
-            });
-            this._hidingId = Main.overview.connect('hiding', () => {
-                this.remove_style_pseudo_class('overview');
-                this.remove_accessible_state(Atk.StateType.CHECKED);
-                // Restore normal visual state
-                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
-                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
-            });
-
-            // Handle hover state
-            this.connect('notify::hover', () => {
-                if (this.hover) {
-                    this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
-                    this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
-                } else if (!Main.overview.visible) {
-                    // Only restore if overview is not showing
-                    this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
-                    this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
-                }
-            });
-
-            console.log('[Multi Monitors Add-On] Created activities button with icon');
-            this._sourceIndicator = null;
-        } else {
-            // For other indicators, find them in statusArea and mirror their behavior
-            this._sourceIndicator = Main.panel.statusArea[role] || null;
-
-            console.log('[Multi Monitors Add-On] MirroredIndicatorButton._init for role:', role);
-
-            // Instead of cloning, recreate the visual structure to inherit proper styling
-            if (this._sourceIndicator) {
-                try {
-                    // Copy the structure from the source indicator
-                    const sourceChild = this._sourceIndicator.get_first_child();
-                    if (sourceChild && sourceChild instanceof St.BoxLayout) {
-                        // Recreate the box layout structure instead of cloning
-                        const container = new St.BoxLayout({
-                            style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                            y_align: Clutter.ActorAlign.CENTER,
-                        });
-
-                        // For dateMenu, get the actual clock label text
-                        if (role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
-                            // Create our own clock display that mirrors the main one
-                            const clockDisplay = new St.Label({
-                                style_class: 'clock',
-                                y_align: Clutter.ActorAlign.CENTER,
-                            });
-                            
-                            // Update clock text from the source
-                            const updateClock = () => {
-                                if (this._sourceIndicator._clockDisplay) {
-                                    clockDisplay.text = this._sourceIndicator._clockDisplay.text;
-                                }
-                            };
-                            
-                            // Update immediately and set up periodic updates
-                            updateClock();
-                            this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                                updateClock();
-                                return GLib.SOURCE_CONTINUE;
-                            });
-                            
-                            container.add_child(clockDisplay);
-                            this._clockDisplay = clockDisplay;
-                        } else {
-                            // For other indicators, use a clone as fallback
-                            const clone = new Clutter.Clone({
-                                source: sourceChild,
-                                y_align: Clutter.ActorAlign.CENTER
-                            });
-                            container.add_child(clone);
-                        }
-
-                        this.add_child(container);
-                        console.log('[Multi Monitors Add-On] Successfully created mirrored visual for', role);
-                    } else {
-                        // Fallback to simple clone
-                        const clone = new Clutter.Clone({
-                            source: sourceChild,
-                            y_align: Clutter.ActorAlign.CENTER
-                        });
-                        this.add_child(clone);
-                    }
-                } catch (e) {
-                    console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
-                    // Fallback to gear icon
-                    const label = new St.Label({
-                        text: '⚙',
-                        y_align: Clutter.ActorAlign.CENTER
-                    });
-                    this.add_child(label);
-                }
-            } else {
-                // No source indicator, use gear icon
-                const label = new St.Label({
-                    text: '⚙',
-                    y_align: Clutter.ActorAlign.CENTER
-                });
-                this.add_child(label);
-            }
-        }
-
-        console.log('[Multi Monitors Add-On] MirroredIndicatorButton created, reactive:', this.reactive);
-    }
-
-    vfunc_button_press_event(buttonEvent) {
-        console.log('[Multi Monitors Add-On] !!!!! vfunc_button_press_event FIRED !!!!!');
-        this._onButtonPress();
-        return Clutter.EVENT_STOP;
-    }
-
-    vfunc_event(event) {
-        if (event.type() === Clutter.EventType.BUTTON_PRESS) {
-            console.log('[Multi Monitors Add-On] vfunc_event: BUTTON_PRESS');
-            return this.vfunc_button_press_event(event);
-        }
-        return super.vfunc_event(event);
-    }
-
-    _onButtonPress() {
-        console.log('[Multi Monitors Add-On] =========== MirroredIndicatorButton _onButtonPress called!!! ===========');
-        console.log('[Multi Monitors Add-On] this._role:', this._role);
-        console.log('[Multi Monitors Add-On] this._sourceIndicator:', !!this._sourceIndicator);
-        console.log('[Multi Monitors Add-On] this._sourceIndicator.menu:', !!this._sourceIndicator?.menu);
-
-        try {
-            // Handle activities button specially - it toggles overview instead of showing a menu
-            if (this._role === 'activities') {
-                console.log('[Multi Monitors Add-On] Activities button pressed - toggling overview');
-                Main.overview.toggle();
-                return Clutter.EVENT_STOP;
-            }
-            
-            if (this._sourceIndicator && this._sourceIndicator.menu) {
-                // Get the monitor index based on THIS BUTTON'S POSITION
-                const monitorIndex = Main.layoutManager.findIndexForActor(this);
-                console.log('[Multi Monitors Add-On] MirroredIndicatorButton clicked, button is on monitor:', monitorIndex);
-                console.log('[Multi Monitors Add-On] Button position:', this.get_transformed_position());
-
-                const menu = this._sourceIndicator.menu;
-                console.log('[Multi Monitors Add-On] Menu exists, isOpen:', menu.isOpen);
-
-                // Close menu if already open
-                if (menu.isOpen) {
-                    menu.close();
-                    return Clutter.EVENT_STOP;
-                }
-
-                // Store original state to restore later
-                const originalSourceActor = menu.sourceActor;
-                const originalBoxPointer = menu.box?._sourceActor;
-                
-                // Store the original setActive/add_style_pseudo_class methods to prevent active state
-                const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
-                const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
-                
-                // Temporarily override to prevent active state on main panel indicator
-                if (this._sourceIndicator.setActive) {
-                    this._sourceIndicator.setActive = () => {}; // No-op
-                }
-                if (this._sourceIndicator.add_style_pseudo_class) {
-                    const originalMethod = this._sourceIndicator.add_style_pseudo_class.bind(this._sourceIndicator);
-                    this._sourceIndicator.add_style_pseudo_class = (pseudoClass) => {
-                        // Prevent 'active' and 'checked' pseudo-classes
-                        if (pseudoClass !== 'active' && pseudoClass !== 'checked') {
-                            originalMethod(pseudoClass);
-                        }
-                    };
-                }
-
-                // Remove active/checked pseudo-class from the main panel indicator
-                // to prevent it from showing active state when external monitor button is clicked
-                if (this._sourceIndicator.remove_style_pseudo_class) {
-                    this._sourceIndicator.remove_style_pseudo_class('active');
-                    this._sourceIndicator.remove_style_pseudo_class('checked');
-                }
-                
-                // Add active style to THIS button (the external monitor button)
-                this.add_style_pseudo_class('active');
-
-                // Update the menu's sourceActor to point to this mirrored button
-                menu.sourceActor = this;
-
-                // CRITICAL: Update the BoxPointer's source and constraint
-                if (menu.box) {
-                    menu.box._sourceActor = this;
-                    menu.box._sourceAllocation = null; // Force recalculation
-
-                    // Get the monitor geometry
-                    const monitor = Main.layoutManager.monitors[monitorIndex];
-                    console.log('[Multi Monitors Add-On] Monitor geometry:', monitor);
-
-                    // Remove any existing constraint
-                    const constraints = menu.box.get_constraints();
-                    for (let constraint of constraints) {
-                        if (constraint.constructor.name === 'BindConstraint' ||
-                            constraint.constructor.name === 'AlignConstraint') {
-                            menu.box.remove_constraint(constraint);
-                        }
-                    }
-
-                    // Add a layout constraint to keep the menu within the target monitor
-                    // This ensures the menu appears on the correct monitor
-                    try {
-                        // Force the actor to be positioned within the correct monitor bounds
-                        const oldSetPosition = menu.box.setPosition.bind(menu.box);
-                        menu.box.setPosition = function(sourceActor, alignment) {
-                            console.log('[Multi Monitors Add-On] setPosition intercepted, forcing monitor:', monitorIndex);
-                            oldSetPosition(sourceActor, alignment);
-
-                            // After positioning, ensure it's on the correct monitor
-                            const [x, y] = this.get_position();
-                            const [w, h] = this.get_size();
-
-                            // If positioned outside target monitor, move it
-                            if (x < monitor.x || x + w > monitor.x + monitor.width ||
-                                y < monitor.y || y + h > monitor.y + monitor.height) {
-                                console.log('[Multi Monitors Add-On] Menu outside target monitor, repositioning');
-                                // Position below the button
-                                const [btnX, btnY] = sourceActor.get_transformed_position();
-                                const [btnW, btnH] = sourceActor.get_transformed_size();
-
-                                let newX = btnX;
-                                let newY = btnY + btnH;
-
-                                // Keep within monitor bounds
-                                if (newX + w > monitor.x + monitor.width) {
-                                    newX = monitor.x + monitor.width - w;
-                                }
-                                if (newX < monitor.x) {
-                                    newX = monitor.x;
-                                }
-                                if (newY + h > monitor.y + monitor.height) {
-                                    newY = btnY - h; // Show above instead
-                                }
-
-                                console.log('[Multi Monitors Add-On] Repositioning to:', newX, newY);
-                                this.set_position(newX, newY);
-                            }
-                        };
-                    } catch (e) {
-                        console.error('[Multi Monitors Add-On] Failed to override setPosition:', String(e));
-                    }
-                }
-
-                // Connect to open-state-changed to restore original behavior ONLY when closed
-                const openStateId = menu.connect('open-state-changed', (m, isOpen) => {
-                    if (isOpen) {
-                        // Menu opened - ensure external monitor button shows active state
-                        this.add_style_pseudo_class('active');
-                    } else {
-                        // Menu closed - restore everything
-                        console.log('[Multi Monitors Add-On] Menu closed, restoring original state');
-                        menu.sourceActor = originalSourceActor;
-                        if (menu.box) {
-                            menu.box._sourceActor = originalBoxPointer;
-                        }
-                        
-                        // Restore original methods
-                        if (originalSetActive) {
-                            this._sourceIndicator.setActive = originalSetActive;
-                        }
-                        if (originalAddPseudoClass) {
-                            this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
-                        }
-                        
-                        // Remove active/checked pseudo-class from both indicators when menu closes
-                        if (this._sourceIndicator && this._sourceIndicator.remove_style_pseudo_class) {
-                            this._sourceIndicator.remove_style_pseudo_class('active');
-                            this._sourceIndicator.remove_style_pseudo_class('checked');
-                        }
-                        if (this.remove_style_pseudo_class) {
-                            this.remove_style_pseudo_class('active');
-                            this.remove_style_pseudo_class('checked');
-                        }
-                        
-                        menu.disconnect(openStateId);
-                    }
-                });
-
-                // Open the menu - it will now use our modified positioning
-                console.log('[Multi Monitors Add-On] Opening menu with modified BoxPointer');
-                menu.open();
-
-                return Clutter.EVENT_STOP;
-            }
-        } catch (e) {
-            console.error('[Multi Monitors Add-On] Error opening mirrored menu:', String(e), e.stack);
-        }
-
-        return Clutter.EVENT_PROPAGATE;
-    }
-
-    destroy() {
-        // Cleanup clock update timer
-        if (this._clockUpdateId) {
-            GLib.source_remove(this._clockUpdateId);
-            this._clockUpdateId = null;
-        }
-        
-        // Disconnect overview signals for activities button
-        if (this._role === 'activities') {
-            if (this._showingId) {
-                Main.overview.disconnect(this._showingId);
-                this._showingId = null;
-            }
-            if (this._hidingId) {
-                Main.overview.disconnect(this._hidingId);
-                this._hidingId = null;
-            }
-        }
-        super.destroy();
-    }
-});
 
 const MultiMonitorsAppMenuButton = GObject.registerClass(
 class MultiMonitorsAppMenuButton extends PanelMenu.Button {
@@ -721,7 +125,6 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	        			if (win.get_monitor() == this._monitorIndex){
 	        				if (win.has_focus()){
 	        					this._lastFocusedWindow = win;
-	//    	        			console.log(this._monitorIndex+": focus :"+win.get_title()+" : "+win.has_focus());
 		        			return focusedApp;	
 	        				}
 	        				else
@@ -736,7 +139,6 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	    					this._targetAppGroup = focusedApp;
 	    					this._actionOnWorkspaceGroupNotifyId = this._targetAppGroup.connect('notify::action-group',
 	    																				this._sync.bind(this));
-	//    				 	console.log(this._monitorIndex+": gConnect :"+win.get_title()+" : "+win.has_focus());
 							}
 	        				break;
 	        			}
@@ -746,13 +148,11 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	
 	        for (let i = 0; i < this._startingApps.length; i++)
 	            if (this._startingApps[i].is_on_workspace(workspace)){
-	//            	console.log(this._monitorIndex+": newAppFocus");
 	                return this._startingApps[i];
 	            }
 	        
 	        if (this._lastFocusedWindow && this._lastFocusedWindow.located_on_workspace(workspace) &&
 	        											this._lastFocusedWindow.get_monitor() == this._monitorIndex){
-	//			console.log(this._monitorIndex+": lastFocus :"+this._lastFocusedWindow.get_title());
 				return tracker.get_window_app(this._lastFocusedWindow);
 	        }
 	
@@ -761,7 +161,6 @@ class MultiMonitorsAppMenuButton extends PanelMenu.Button {
 	        for (let i = 0; i < windows.length; i++) {
 	        	if(windows[i].get_monitor() == this._monitorIndex){
 	        		this._lastFocusedWindow = windows[i];
-	//        		console.log(this._monitorIndex+": appFind :"+windows[i].get_title());
 	    			return tracker.get_window_app(windows[i]);
 	    		}
 	        }
@@ -921,7 +320,6 @@ class MultiMonitorsPanel extends St.Widget {
         });
         this.add_child(this._rightBox);
 
-        console.log('[Multi Monitors Add-On] MultiMonitorsPanel boxes created');
 
         this._showingId = Main.overview.connect('showing', () => {
             this.add_style_pseudo_class('overview');
@@ -999,7 +397,6 @@ class MultiMonitorsPanel extends St.Widget {
         let name = 'activities';
         // Don't show activities button on primary monitor - it already has one
         if (this.monitorIndex === Main.layoutManager.primaryIndex) {
-            console.log('[Multi Monitors Add-On] Skipping activities button on primary monitor');
             // Remove any existing activities button on primary monitor
             if (this.statusArea[name]) {
                 let indicator = this.statusArea[name];
@@ -1034,22 +431,15 @@ class MultiMonitorsPanel extends St.Widget {
 
     _showDateTime() {
         let name = 'dateMenu';
-        console.log('[DATETIME DEBUG] _showDateTime called, setting:', this._settings.get_boolean(SHOW_DATE_TIME_ID));
-        console.log('[DATETIME DEBUG] statusArea[dateMenu] exists?', !!this.statusArea[name]);
         if (this._settings.get_boolean(SHOW_DATE_TIME_ID)) {
             if (!this.statusArea[name]) {
-                console.log('[DATETIME DEBUG] Creating new dateMenu indicator');
                 let indicator = this._ensureIndicator(name);
-                console.log('[DATETIME DEBUG] _ensureIndicator returned:', !!indicator);
                 if (indicator) {
                     let box = this._centerBox;
-                    console.log('[DATETIME DEBUG] centerBox children before add:', box.get_n_children());
                     this._addToPanelBox(name, indicator, 0, box);
-                    console.log('[DATETIME DEBUG] centerBox children after add:', box.get_n_children());
                 }
             }
             if (this.statusArea[name]) {
-                console.log('[DATETIME DEBUG] Setting dateMenu visible');
                 this.statusArea[name].visible = true;
             }
         } else {
@@ -1149,42 +539,34 @@ class MultiMonitorsPanel extends St.Widget {
     }
 
     _hideIndicators() {
-        console.log('[Multi Monitors Add-On] _hideIndicators called, statusArea keys:', Object.keys(this.statusArea));
         for (let role in MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS) {
             let indicator = this.statusArea[role];
-            console.log('[Multi Monitors Add-On] _hideIndicators: checking role', role, 'indicator exists?', !!indicator);
             if (!indicator)
                 continue;
-            console.log('[Multi Monitors Add-On] _hideIndicators: hiding container for role', role);
             indicator.container.hide();
         }
     }
 
     _ensureIndicator(role) {
-        console.log('[Multi Monitors Add-On] _ensureIndicator called for role:', role);
         
         // CRITICAL FIX: Never create activities indicator on primary monitor
         if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
-            console.log('[Multi Monitors Add-On] Blocking activities indicator creation on primary monitor');
             return null;
         }
         
         let indicator = this.statusArea[role];
         if (indicator) {
-            console.log('[Multi Monitors Add-On] indicator already exists for', role, ', showing container');
             indicator.container.show();
             // CRITICAL FIX: Return the existing indicator instead of null!
             return indicator;
         }
         else {
             let constructor = MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS[role];
-            console.log('[Multi Monitors Add-On] constructor for', role, ':', constructor ? 'found' : 'NOT FOUND');
             if (!constructor) {
                 // For indicators not implemented here, mirror ANY indicator from main panel
                 const mainIndicator = Main.panel.statusArea[role];
                 
                 if (mainIndicator) {
-                    console.log('[Multi Monitors Add-On] Creating mirrored indicator for role:', role);
                     try {
                         indicator = new MirroredIndicatorButton(this, role);
                         this.statusArea[role] = indicator;
@@ -1197,7 +579,6 @@ class MultiMonitorsPanel extends St.Widget {
                 // Otherwise, not supported
                 return null;
             }
-            console.log('[Multi Monitors Add-On] About to call new constructor for', role);
             try {
                 indicator = new constructor(this);
             } catch (e) {
@@ -1205,7 +586,6 @@ class MultiMonitorsPanel extends St.Widget {
                 console.error('[Multi Monitors Add-On] Error creating indicator for', role, ':', String(e));
                 throw e;
             }
-            console.log('[Multi Monitors Add-On] Constructor returned successfully for', role);
             this.statusArea[role] = indicator;
         }
         return indicator;
@@ -1228,7 +608,6 @@ class MultiMonitorsPanel extends St.Widget {
     }
 
     _addToPanelBox(role, indicator, position, box) {
-        console.log('[Multi Monitors Add-On] _addToPanelBox called for role:', role, 'position:', position);
 
         // Exactly mimic the main Panel._addToPanelBox behavior
         let container = indicator;
@@ -1236,8 +615,6 @@ class MultiMonitorsPanel extends St.Widget {
             container = indicator.container;
         }
 
-        console.log('[Multi Monitors Add-On] _addToPanelBox: container type:', container.constructor.name);
-        console.log('[Multi Monitors Add-On] _addToPanelBox: container parent before:', container.get_parent() ? 'HAS PARENT' : 'NO PARENT');
 
         this.statusArea[role] = indicator;
 
@@ -1273,9 +650,6 @@ class MultiMonitorsPanel extends St.Widget {
             box.insert_child_at_index(container, position);
         }
 
-        console.log('[Multi Monitors Add-On] _addToPanelBox: added to box, box has', box.get_n_children(), 'children');
-        console.log('[Multi Monitors Add-On] _addToPanelBox: container parent after:', container.get_parent() ? 'HAS PARENT' : 'NO PARENT');
-        console.log('[Multi Monitors Add-On] _addToPanelBox: container visible?', container.visible, 'width/height:', container.width, container.height);
 
         // Add menu if it exists
         if (indicator.menu)
@@ -1283,30 +657,23 @@ class MultiMonitorsPanel extends St.Widget {
     }
 
     _updatePanel() {
-        console.log('[Multi Monitors Add-On] _updatePanel called for monitor', this.monitorIndex);
-        console.log('[Multi Monitors Add-On] Primary monitor index:', Main.layoutManager.primaryIndex);
-        console.log('[Multi Monitors Add-On] Main.sessionMode.panel:', JSON.stringify(Main.sessionMode.panel));
         this._hideIndicators();
         
         // Clone ALL indicators from main panel instead of just the default ones
         this._cloneAllMainPanelIndicators();
         
-        console.log('[Multi Monitors Add-On] statusArea after update:', Object.keys(this.statusArea));
 
         // Ensure system tray is rightmost
         try {
             this._ensureQuickSettingsRightmost();
         } catch (e) {
-            console.log('[Multi Monitors Add-On] _ensureQuickSettingsRightmost error:', String(e));
         }
     }
     
     _cloneAllMainPanelIndicators() {
-        console.log('[Multi Monitors Add-On] _cloneAllMainPanelIndicators: Starting to clone all indicators');
         
         const mainPanel = Main.panel;
         if (!mainPanel || !mainPanel.statusArea) {
-            console.log('[Multi Monitors Add-On] No main panel or statusArea found');
             return;
         }
         
@@ -1335,7 +702,6 @@ class MultiMonitorsPanel extends St.Widget {
                 
                 // Skip excluded indicators
                 if (excludedIndicators.includes(role)) {
-                    console.log('[Multi Monitors Add-On] Skipping excluded indicator:', role);
                     continue;
                 }
                 
@@ -1350,16 +716,13 @@ class MultiMonitorsPanel extends St.Widget {
         // Scan each box in main panel to preserve order
         if (mainPanel._leftBox) {
             const children = mainPanel._leftBox.get_children();
-            console.log('[Multi Monitors Add-On] Left box has', children.length, 'children');
             for (let child of children) {
                 if (!child.visible) {
-                    console.log('[Multi Monitors Add-On] Skipping hidden child in left box');
                     continue;
                 }
                 
                 const role = findRoleForChild(child);
                 if (role) {
-                    console.log('[Multi Monitors Add-On] Found visible indicator in left box:', role);
                     leftIndicators.push(role);
                 }
             }
@@ -1367,16 +730,13 @@ class MultiMonitorsPanel extends St.Widget {
         
         if (mainPanel._centerBox) {
             const children = mainPanel._centerBox.get_children();
-            console.log('[Multi Monitors Add-On] Center box has', children.length, 'children');
             for (let child of children) {
                 if (!child.visible) {
-                    console.log('[Multi Monitors Add-On] Skipping hidden child in center box');
                     continue;
                 }
                 
                 const role = findRoleForChild(child);
                 if (role) {
-                    console.log('[Multi Monitors Add-On] Found visible indicator in center box:', role);
                     centerIndicators.push(role);
                 }
             }
@@ -1384,22 +744,18 @@ class MultiMonitorsPanel extends St.Widget {
         
         if (mainPanel._rightBox) {
             const children = mainPanel._rightBox.get_children();
-            console.log('[Multi Monitors Add-On] Right box has', children.length, 'children');
             for (let child of children) {
                 if (!child.visible) {
-                    console.log('[Multi Monitors Add-On] Skipping hidden child in right box');
                     continue;
                 }
                 
                 const role = findRoleForChild(child);
                 if (role) {
-                    console.log('[Multi Monitors Add-On] Found visible indicator in right box:', role);
                     rightIndicators.push(role);
                 }
             }
         }
         
-        console.log('[Multi Monitors Add-On] Found visible indicators - Left:', leftIndicators, 'Center:', centerIndicators, 'Right:', rightIndicators);
         
         // Now mirror them in order
         this._updateBox(leftIndicators, this._leftBox);
@@ -1409,11 +765,9 @@ class MultiMonitorsPanel extends St.Widget {
 
     _updateBox(elements, box) {
         if (!elements) {
-            console.log('[Multi Monitors Add-On] _updateBox: elements is null/undefined');
             return;
         }
 
-        console.log('[Multi Monitors Add-On] _updateBox: elements =', elements);
         let nChildren = box.get_n_children();
 
         for (let i = 0; i < elements.length; i++) {
@@ -1421,20 +775,14 @@ class MultiMonitorsPanel extends St.Widget {
 
             // Skip activities button on primary monitor - it already has one
             if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
-                console.log('[Multi Monitors Add-On] _updateBox: skipping activities role on primary monitor');
                 continue;
             }
 
-            console.log('[Multi Monitors Add-On] _updateBox: processing role', role);
             try {
                 let indicator = this._ensureIndicator(role);
-                console.log('[Multi Monitors Add-On] _updateBox: _ensureIndicator returned', indicator ? 'truthy' : 'falsy', 'for role', role);
                 if (indicator) {
-                    console.log('[Multi Monitors Add-On] _updateBox: about to call _addToPanelBox for role', role);
                     this._addToPanelBox(role, indicator, i + nChildren, box);
-                    console.log('[Multi Monitors Add-On] _updateBox: _addToPanelBox returned for role', role);
                 } else {
-                    console.log('[Multi Monitors Add-On] _updateBox: no indicator returned for role', role);
                 }
             } catch (e) {
                 console.error('[Multi Monitors Add-On] _updateBox: ERROR for role', role, ':', e, e.stack);
@@ -1475,7 +823,6 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function() {
             indicator = new MirroredIndicatorButton(this, role);
             this.statusArea[role] = indicator;
         } catch (e) {
-            console.log('[Multi Monitors Add-On] Failed to create quickSettings mirror:', String(e));
             return;
         }
     }
