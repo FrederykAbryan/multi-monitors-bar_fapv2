@@ -899,7 +899,8 @@ class MultiMonitorsPanel extends St.Widget {
             name: 'panelCenter',
             x_expand: true,
             y_expand: false,
-            x_align: Clutter.ActorAlign.CENTER
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER
         });
         this.add_child(this._centerBox);
 
@@ -1101,51 +1102,50 @@ class MultiMonitorsPanel extends St.Widget {
         const [centerMinWidth, centerNatWidth] = this._centerBox.get_preferred_width(-1);
         const [rightMinWidth, rightNatWidth] = this._rightBox.get_preferred_width(-1);
         
-        // Calculate total natural width needed
-        const totalNatWidth = leftNatWidth + centerNatWidth + rightNatWidth;
+        // Calculate widths for left and right based on which is larger
+        const sideWidth = Math.max(leftNatWidth, rightNatWidth);
         
         let leftWidth, centerWidth, rightWidth;
         
-        if (totalNatWidth > allocWidth) {
-            // Overflow case: proportionally reduce sizes but ensure minimum visibility
-            const scale = allocWidth / totalNatWidth;
-            leftWidth = Math.max(leftMinWidth, Math.floor(leftNatWidth * scale));
-            rightWidth = Math.max(rightMinWidth, Math.floor(rightNatWidth * scale));
+        // Check if we have enough space for balanced layout
+        if (sideWidth * 2 + centerNatWidth > allocWidth) {
+            // Overflow case: use natural widths and clip
+            leftWidth = Math.min(leftNatWidth, Math.floor(allocWidth * 0.33));
+            rightWidth = Math.min(rightNatWidth, Math.floor(allocWidth * 0.33));
             centerWidth = Math.max(centerMinWidth, allocWidth - leftWidth - rightWidth);
         } else {
-            // Normal case: use natural widths with balanced thirds
-            const third = Math.floor(allocWidth / 3);
-            leftWidth = Math.min(leftNatWidth, third);
-            rightWidth = Math.min(rightNatWidth, third);
+            // Normal case: balance sides to keep center truly centered
+            leftWidth = sideWidth;
+            rightWidth = sideWidth;
             centerWidth = allocWidth - leftWidth - rightWidth;
         }
 
-        // Left box
+        // Left box - aligned to start
         const leftChildBox = new Clutter.ActorBox();
         leftChildBox.x1 = contentBox.x1;
         leftChildBox.y1 = contentBox.y1;
         leftChildBox.x2 = contentBox.x1 + leftWidth;
         leftChildBox.y2 = contentBox.y2;
         this._leftBox.allocate(leftChildBox);
-        this._leftBox.clip_to_allocation = true;  // Clip overflow
+        this._leftBox.clip_to_allocation = true;
 
-        // Right box
+        // Right box - aligned to end
         const rightChildBox = new Clutter.ActorBox();
         rightChildBox.x1 = contentBox.x2 - rightWidth;
         rightChildBox.y1 = contentBox.y1;
         rightChildBox.x2 = contentBox.x2;
         rightChildBox.y2 = contentBox.y2;
         this._rightBox.allocate(rightChildBox);
-        this._rightBox.clip_to_allocation = true;  // Clip overflow
+        this._rightBox.clip_to_allocation = true;
 
-        // Center box
+        // Center box - perfectly centered between left and right
         const centerChildBox = new Clutter.ActorBox();
         centerChildBox.x1 = leftChildBox.x2;
         centerChildBox.y1 = contentBox.y1;
         centerChildBox.x2 = rightChildBox.x1;
         centerChildBox.y2 = contentBox.y2;
         this._centerBox.allocate(centerChildBox);
-        this._centerBox.clip_to_allocation = true;  // Clip overflow
+        this._centerBox.clip_to_allocation = false;  // Don't clip center
     }
 
     _hideIndicators() {
@@ -1263,6 +1263,8 @@ class MultiMonitorsPanel extends St.Widget {
 
         // If targeting center box, place the item in the center wrapper and center it
         if (box === this._centerBox && this._centerBin) {
+            // Remove any existing children from centerBin first
+            this._centerBin.remove_all_children();
             container.x_align = Clutter.ActorAlign.CENTER;
             container.y_align = Clutter.ActorAlign.CENTER;
             this._centerBin.add_child(container);
