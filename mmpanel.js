@@ -1095,31 +1095,57 @@ class MultiMonitorsPanel extends St.Widget {
         const contentBox = themeNode.get_content_box(box);
 
         const allocWidth = contentBox.get_width();
-        const third = Math.floor(allocWidth / 3);
+        
+        // Get natural widths of each box to prevent overflow
+        const [leftMinWidth, leftNatWidth] = this._leftBox.get_preferred_width(-1);
+        const [centerMinWidth, centerNatWidth] = this._centerBox.get_preferred_width(-1);
+        const [rightMinWidth, rightNatWidth] = this._rightBox.get_preferred_width(-1);
+        
+        // Calculate total natural width needed
+        const totalNatWidth = leftNatWidth + centerNatWidth + rightNatWidth;
+        
+        let leftWidth, centerWidth, rightWidth;
+        
+        if (totalNatWidth > allocWidth) {
+            // Overflow case: proportionally reduce sizes but ensure minimum visibility
+            const scale = allocWidth / totalNatWidth;
+            leftWidth = Math.max(leftMinWidth, Math.floor(leftNatWidth * scale));
+            rightWidth = Math.max(rightMinWidth, Math.floor(rightNatWidth * scale));
+            centerWidth = Math.max(centerMinWidth, allocWidth - leftWidth - rightWidth);
+        } else {
+            // Normal case: use natural widths with balanced thirds
+            const third = Math.floor(allocWidth / 3);
+            leftWidth = Math.min(leftNatWidth, third);
+            rightWidth = Math.min(rightNatWidth, third);
+            centerWidth = allocWidth - leftWidth - rightWidth;
+        }
 
-        // Left third
+        // Left box
         const leftChildBox = new Clutter.ActorBox();
         leftChildBox.x1 = contentBox.x1;
         leftChildBox.y1 = contentBox.y1;
-        leftChildBox.x2 = contentBox.x1 + third;
+        leftChildBox.x2 = contentBox.x1 + leftWidth;
         leftChildBox.y2 = contentBox.y2;
         this._leftBox.allocate(leftChildBox);
+        this._leftBox.clip_to_allocation = true;  // Clip overflow
 
-        // Right third
+        // Right box
         const rightChildBox = new Clutter.ActorBox();
-        rightChildBox.x1 = contentBox.x2 - third;
+        rightChildBox.x1 = contentBox.x2 - rightWidth;
         rightChildBox.y1 = contentBox.y1;
         rightChildBox.x2 = contentBox.x2;
         rightChildBox.y2 = contentBox.y2;
         this._rightBox.allocate(rightChildBox);
+        this._rightBox.clip_to_allocation = true;  // Clip overflow
 
-        // Center third (middle section)
+        // Center box
         const centerChildBox = new Clutter.ActorBox();
         centerChildBox.x1 = leftChildBox.x2;
         centerChildBox.y1 = contentBox.y1;
         centerChildBox.x2 = rightChildBox.x1;
         centerChildBox.y2 = contentBox.y2;
         this._centerBox.allocate(centerChildBox);
+        this._centerBox.clip_to_allocation = true;  // Clip overflow
     }
 
     _hideIndicators() {
@@ -1154,26 +1180,10 @@ class MultiMonitorsPanel extends St.Widget {
             let constructor = MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS[role];
             console.log('[Multi Monitors Add-On] constructor for', role, ':', constructor ? 'found' : 'NOT FOUND');
             if (!constructor) {
-                // For indicators not implemented here, mirror specific core/extension roles
-                // Supported mirrors: activities, dateMenu, quickSettings (system tray) and Vitals (regex)
-                const isVitals = /vitals/i.test(role);
-                const isQuickSettings = role === 'quickSettings';
-                const isDateMenu = role === 'dateMenu';
-                const isActivities = role === 'activities';
+                // For indicators not implemented here, mirror ANY indicator from main panel
                 const mainIndicator = Main.panel.statusArea[role];
                 
-                // For activities, we need to mirror the main panel's activities functionality
-                if (isActivities) {
-                    console.log('[Multi Monitors Add-On] Creating mirrored activities indicator');
-                    try {
-                        indicator = new MirroredIndicatorButton(this, role);
-                        this.statusArea[role] = indicator;
-                        return indicator;
-                    } catch (e) {
-                        console.error('[Multi Monitors Add-On] Failed to create mirrored activities indicator:', String(e));
-                        return null;
-                    }
-                } else if ((isVitals || isQuickSettings || isDateMenu) && mainIndicator) {
+                if (mainIndicator) {
                     console.log('[Multi Monitors Add-On] Creating mirrored indicator for role:', role);
                     try {
                         indicator = new MirroredIndicatorButton(this, role);
@@ -1275,18 +1285,124 @@ class MultiMonitorsPanel extends St.Widget {
         console.log('[Multi Monitors Add-On] Primary monitor index:', Main.layoutManager.primaryIndex);
         console.log('[Multi Monitors Add-On] Main.sessionMode.panel:', JSON.stringify(Main.sessionMode.panel));
         this._hideIndicators();
-        this._updateBox(Main.sessionMode.panel.left, this._leftBox);
-        this._updateBox(Main.sessionMode.panel.center, this._centerBox);
-        this._updateBox(Main.sessionMode.panel.right, this._rightBox);
+        
+        // Clone ALL indicators from main panel instead of just the default ones
+        this._cloneAllMainPanelIndicators();
+        
         console.log('[Multi Monitors Add-On] statusArea after update:', Object.keys(this.statusArea));
 
-        // Ensure mirrored Vitals appears before system tray and system tray is rightmost
+        // Ensure system tray is rightmost
         try {
-            this._ensureVitalsMirrorRightSide();
             this._ensureQuickSettingsRightmost();
         } catch (e) {
-            console.log('[Multi Monitors Add-On] _ensureVitalsMirrorRightSide error:', String(e));
+            console.log('[Multi Monitors Add-On] _ensureQuickSettingsRightmost error:', String(e));
         }
+    }
+    
+    _cloneAllMainPanelIndicators() {
+        console.log('[Multi Monitors Add-On] _cloneAllMainPanelIndicators: Starting to clone all indicators');
+        
+        const mainPanel = Main.panel;
+        if (!mainPanel || !mainPanel.statusArea) {
+            console.log('[Multi Monitors Add-On] No main panel or statusArea found');
+            return;
+        }
+        
+        // Indicators that should NOT be mirrored (system/accessibility indicators)
+        const excludedIndicators = [
+            'a11y',              // Accessibility menu
+            'dwellClick',        // Dwell click accessibility
+            'screencast',        // Screen recording indicator
+            'screenRecording',   // Screen recording indicator (alternative name)
+            'remoteAccess',      // Remote desktop indicator
+            'screenSharing',     // Screen sharing indicator
+            'keyboard',          // Keyboard layout (only needed on primary)
+            'power',             // Power indicator (only needed on primary)
+        ];
+        
+        // Get all indicators from main panel's three boxes
+        const leftIndicators = [];
+        const centerIndicators = [];
+        const rightIndicators = [];
+        
+        // Helper function to find role for a child actor
+        const findRoleForChild = (child) => {
+            for (let role in mainPanel.statusArea) {
+                const indicator = mainPanel.statusArea[role];
+                if (!indicator) continue;
+                
+                // Skip excluded indicators
+                if (excludedIndicators.includes(role)) {
+                    console.log('[Multi Monitors Add-On] Skipping excluded indicator:', role);
+                    continue;
+                }
+                
+                // Check if this child IS the indicator or is the indicator's container
+                if (indicator === child || indicator.container === child) {
+                    return role;
+                }
+            }
+            return null;
+        };
+        
+        // Scan each box in main panel to preserve order
+        if (mainPanel._leftBox) {
+            const children = mainPanel._leftBox.get_children();
+            console.log('[Multi Monitors Add-On] Left box has', children.length, 'children');
+            for (let child of children) {
+                if (!child.visible) {
+                    console.log('[Multi Monitors Add-On] Skipping hidden child in left box');
+                    continue;
+                }
+                
+                const role = findRoleForChild(child);
+                if (role) {
+                    console.log('[Multi Monitors Add-On] Found visible indicator in left box:', role);
+                    leftIndicators.push(role);
+                }
+            }
+        }
+        
+        if (mainPanel._centerBox) {
+            const children = mainPanel._centerBox.get_children();
+            console.log('[Multi Monitors Add-On] Center box has', children.length, 'children');
+            for (let child of children) {
+                if (!child.visible) {
+                    console.log('[Multi Monitors Add-On] Skipping hidden child in center box');
+                    continue;
+                }
+                
+                const role = findRoleForChild(child);
+                if (role) {
+                    console.log('[Multi Monitors Add-On] Found visible indicator in center box:', role);
+                    centerIndicators.push(role);
+                }
+            }
+        }
+        
+        if (mainPanel._rightBox) {
+            const children = mainPanel._rightBox.get_children();
+            console.log('[Multi Monitors Add-On] Right box has', children.length, 'children');
+            for (let child of children) {
+                if (!child.visible) {
+                    console.log('[Multi Monitors Add-On] Skipping hidden child in right box');
+                    continue;
+                }
+                
+                const role = findRoleForChild(child);
+                if (role) {
+                    console.log('[Multi Monitors Add-On] Found visible indicator in right box:', role);
+                    rightIndicators.push(role);
+                }
+            }
+        }
+        
+        console.log('[Multi Monitors Add-On] Found visible indicators - Left:', leftIndicators, 'Center:', centerIndicators, 'Right:', rightIndicators);
+        
+        // Now mirror them in order
+        this._updateBox(leftIndicators, this._leftBox);
+        this._updateBox(centerIndicators, this._centerBox);
+        this._updateBox(rightIndicators, this._rightBox);
     }
 
     _updateBox(elements, box) {
@@ -1333,61 +1449,6 @@ MultiMonitorsPanel.prototype._findRoleByPattern = function(pattern) {
     } catch (_e) {
         return null;
     }
-};
-
-MultiMonitorsPanel.prototype._getChildIndex = function(box, child) {
-    const n = box.get_n_children();
-    for (let i = 0; i < n; i++) {
-        if (box.get_child_at_index(i) === child)
-            return i;
-    }
-    return -1;
-};
-
-MultiMonitorsPanel.prototype._ensureVitalsMirrorRightSide = function() {
-    const role = this._findRoleByPattern(/vitals/i);
-    const mirrorRole = 'vitalsMirror';
-
-    // If Vitals not present on main panel, remove any mirror we created
-    if (!role) {
-        if (this.statusArea[mirrorRole]) {
-            const ind = this.statusArea[mirrorRole];
-            if (ind.container && ind.container.get_parent())
-                ind.container.get_parent().remove_child(ind.container);
-            ind.destroy();
-            delete this.statusArea[mirrorRole];
-        }
-        return;
-    }
-
-    // Create mirror if missing
-    let indicator = this.statusArea[mirrorRole];
-    if (!indicator) {
-        try {
-            indicator = new MirroredIndicatorButton(this, role);
-            this.statusArea[mirrorRole] = indicator;
-        } catch (e) {
-            console.log('[Multi Monitors Add-On] Failed to create vitals mirror:', String(e));
-            return;
-        }
-    }
-
-    // Determine insertion index: before quickSettings if present, else at end
-    let insertIndex = this._rightBox.get_n_children();
-    const qs = this.statusArea['quickSettings'];
-    if (qs) {
-        const qsContainer = qs.container || qs;
-        const idx = this._getChildIndex(this._rightBox, qsContainer);
-        if (idx >= 0)
-            insertIndex = idx; // place before quick settings
-    }
-
-    // Move/add the mirror container at desired position
-    const container = indicator.container ? indicator.container : indicator;
-    const parent = container.get_parent();
-    if (parent)
-        parent.remove_child(container);
-    this._rightBox.insert_child_at_index(container, insertIndex);
 };
 
 // Ensure the mirrored Quick Settings (system tray) exists and is placed at the far right
