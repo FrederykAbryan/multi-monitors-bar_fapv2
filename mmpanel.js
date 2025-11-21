@@ -269,9 +269,8 @@ class MultiMonitorsPanel extends St.Widget {
         super._init({
             name: 'panel',
             reactive: true,
-            style_class: 'panel',
-            x_expand: true
-        });
+            style_class: 'panel'
+         });
 
         this.monitorIndex = monitorIndex;
         this._settings = settings;
