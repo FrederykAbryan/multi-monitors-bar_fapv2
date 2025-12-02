@@ -142,6 +142,13 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                     };
                     
                     updateClock();
+                    
+                    // Remove existing timeout before creating new one
+                    if (this._clockUpdateId) {
+                        GLib.source_remove(this._clockUpdateId);
+                        this._clockUpdateId = null;
+                    }
+                    
                     this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
                         updateClock();
                         return GLib.SOURCE_CONTINUE;
@@ -183,6 +190,13 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         };
         
         updateClock();
+        
+        // Remove existing timeout before creating new one
+        if (this._clockUpdateId) {
+            GLib.source_remove(this._clockUpdateId);
+            this._clockUpdateId = null;
+        }
+        
         this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
             updateClock();
             return GLib.SOURCE_CONTINUE;
