@@ -288,8 +288,9 @@ class MultiMonitorsPanel extends St.Widget {
         this._leftBox = new St.BoxLayout({
             name: 'panelLeft',
             x_expand: true,
-            y_expand: false,
-            x_align: Clutter.ActorAlign.START
+            y_expand: true,  // Allow full height for activities hover
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.FILL
         });
         this.add_child(this._leftBox);
 

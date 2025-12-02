@@ -32,24 +32,22 @@
    The Clutter.Clone automatically scales content, ensuring proper font sizes. */
 
 /* Activities button styling for external monitors */
-#mmPanelActivities {
-    border-radius: 99px;
+/* Activities/Workspace indicator - full height hover like main panel */
+#mmPanelActivities,
+.mm-activities {
     padding: 0 12px;
-    margin: 3px 0;
 }
 
-#mmPanelActivities:hover {
+#mmPanelActivities:hover,
+.mm-activities:hover {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
 #mmPanelActivities:active,
-#mmPanelActivities:overview {
-    background-color: rgba(255, 255, 255, 0.2);
-}
-
-/* Activities icon container - holds pill and dot */
-.activities-icon {
-    gap: 6px;
+#mmPanelActivities:overview,
+.mm-activities:active,
+.mm-activities:checked {
+    background-color: rgba(255, 255, 255, 0.15);
 }
 
 /* Padding for mirrored indicators (e.g., Vitals extension) */

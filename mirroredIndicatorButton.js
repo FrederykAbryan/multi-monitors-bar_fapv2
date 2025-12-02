@@ -42,74 +42,74 @@ class MirroredIndicatorButton extends PanelMenu.Button {
     }
 
     _initActivitiesButton() {
-        // Create the activities indicator with hot corner style
+        // Create the activities indicator with workspace dots like main panel
         this.accessible_role = Atk.Role.TOGGLE_BUTTON;
         this.name = 'mmPanelActivities';
         this.add_style_class_name('panel-button');
+        this.add_style_class_name('mm-activities');
+        
+        // Set up for full height hover
+        this.y_expand = true;
+        this.y_align = Clutter.ActorAlign.FILL;
 
-        const container = new St.BoxLayout({
-            style_class: 'panel-status-menu-box',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        const iconContainer = new St.BoxLayout({
-            style_class: 'activities-icon',
+        // Container for workspace dots - centered vertically
+        this._workspaceDotsBox = new St.BoxLayout({
+            style_class: 'workspace-dots',
             y_align: Clutter.ActorAlign.CENTER,
             x_align: Clutter.ActorAlign.CENTER,
+            y_expand: true,
         });
 
-        // Create the pill shape (rounded rectangle representing 3 dots)
-        this._pill = new St.Widget({
-            style_class: 'activities-pill',
-            width: 18,
-            height: 6,
-            style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
+        this.add_child(this._workspaceDotsBox);
+        this.label_actor = this._workspaceDotsBox;
 
-        // Create the single dot
-        this._dot = new St.Widget({
-            style_class: 'activities-dot',
-            width: 6,
-            height: 6,
-            style: 'border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
+        // Store workspace manager reference first
+        this._workspaceManager = global.workspace_manager;
 
-        iconContainer.add_child(this._pill);
-        iconContainer.add_child(this._dot);
-        container.add_child(iconContainer);
+        // Build initial workspace dots
+        this._updateWorkspaceDots();
 
-        this.add_child(container);
-        this.label_actor = iconContainer;
+        // Connect to workspace changes
+        this._activeWsChangedId = this._workspaceManager.connect('active-workspace-changed', 
+            this._updateWorkspaceDots.bind(this));
+        this._nWorkspacesChangedId = this._workspaceManager.connect('notify::n-workspaces',
+            this._updateWorkspaceDots.bind(this));
 
         // Sync with overview state
         this._showingId = Main.overview.connect('showing', () => {
             this.add_style_pseudo_class('overview');
             this.add_accessible_state(Atk.StateType.CHECKED);
-            this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
-            this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
         });
         
         this._hidingId = Main.overview.connect('hiding', () => {
             this.remove_style_pseudo_class('overview');
             this.remove_accessible_state(Atk.StateType.CHECKED);
-            this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
-            this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
-        });
-
-        // Handle hover state
-        this.connect('notify::hover', () => {
-            if (this.hover) {
-                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1); margin-right: 6px;');
-                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 1);');
-            } else if (!Main.overview.visible) {
-                this._pill.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8); margin-right: 6px;');
-                this._dot.set_style('border-radius: 3px; background-color: rgba(255, 255, 255, 0.8);');
-            }
         });
 
         this._sourceIndicator = null;
+    }
+
+    _updateWorkspaceDots() {
+        if (!this._workspaceDotsBox || !this._workspaceManager)
+            return;
+            
+        // Remove existing dots
+        this._workspaceDotsBox.remove_all_children();
+
+        const nWorkspaces = this._workspaceManager.n_workspaces;
+        const activeIndex = this._workspaceManager.get_active_workspace_index();
+
+        for (let i = 0; i < nWorkspaces; i++) {
+            const isActive = (i === activeIndex);
+            const dot = new St.Widget({
+                style_class: isActive ? 'workspace-dot active' : 'workspace-dot',
+                width: isActive ? 18 : 6,
+                height: 6,
+                style: `border-radius: 3px; background-color: rgba(255, 255, 255, ${isActive ? '1' : '0.5'}); margin: 0 2px;`,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._workspaceDotsBox.add_child(dot);
+        }
     }
 
     _initGenericIndicator(role) {
@@ -393,6 +393,14 @@ class MirroredIndicatorButton extends PanelMenu.Button {
             if (this._hidingId) {
                 Main.overview.disconnect(this._hidingId);
                 this._hidingId = null;
+            }
+            if (this._activeWsChangedId) {
+                this._workspaceManager.disconnect(this._activeWsChangedId);
+                this._activeWsChangedId = null;
+            }
+            if (this._nWorkspacesChangedId) {
+                this._workspaceManager.disconnect(this._nWorkspacesChangedId);
+                this._nWorkspacesChangedId = null;
             }
         }
         super.destroy();
