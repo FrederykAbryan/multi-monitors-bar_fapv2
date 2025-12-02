@@ -126,21 +126,41 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         try {
             const sourceChild = this._sourceIndicator.get_first_child();
             if (sourceChild && sourceChild instanceof St.BoxLayout) {
-                const container = new St.BoxLayout({
-                    style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                    y_align: Clutter.ActorAlign.FILL,
-                    // Ensure container doesn't constrain child height
-                    natural_height_set: false,
-                    height: -1,
-                });
-
+                // For dateMenu, create a real label (not a clone) for independent hover
                 if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
-                    this._createClockDisplay(container);
+                    // Create clock label directly - no extra container
+                    const clockDisplay = new St.Label({
+                        style_class: 'clock',
+                        y_align: Clutter.ActorAlign.CENTER,
+                        y_expand: true,
+                    });
+                    
+                    const updateClock = () => {
+                        if (this._sourceIndicator._clockDisplay) {
+                            clockDisplay.text = this._sourceIndicator._clockDisplay.text;
+                        }
+                    };
+                    
+                    updateClock();
+                    this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                        updateClock();
+                        return GLib.SOURCE_CONTINUE;
+                    });
+                    
+                    this.add_child(clockDisplay);
+                    this._clockDisplay = clockDisplay;
                 } else {
+                    // For other indicators, use clone approach
+                    const container = new St.BoxLayout({
+                        style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        natural_height_set: false,
+                        height: -1,
+                    });
+                    
                     this._createSimpleClone(container, sourceChild);
+                    this.add_child(container);
                 }
-
-                this.add_child(container);
             } else {
                 this._createSimpleClone(this, sourceChild);
             }

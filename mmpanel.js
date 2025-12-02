@@ -297,9 +297,9 @@ class MultiMonitorsPanel extends St.Widget {
         this._centerBox = new St.BoxLayout({
             name: 'panelCenter',
             x_expand: true,
-            y_expand: false,
+            y_expand: true,  // Allow full height
             x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER
+            y_align: Clutter.ActorAlign.FILL  // Fill height
         });
         this.add_child(this._centerBox);
 
@@ -307,7 +307,7 @@ class MultiMonitorsPanel extends St.Widget {
         this._centerBin = new St.Widget({
             layout_manager: new Clutter.BinLayout(),
             x_expand: true,
-            y_expand: false,
+            y_expand: true,  // Allow full height for dateMenu hover
         });
         this._centerBox.add_child(this._centerBin);
 
@@ -643,7 +643,13 @@ class MultiMonitorsPanel extends St.Widget {
             // Remove any existing children from centerBin first
             this._centerBin.remove_all_children();
             container.x_align = Clutter.ActorAlign.CENTER;
-            container.y_align = Clutter.ActorAlign.CENTER;
+            // Use FILL for dateMenu so hover takes full panel height
+            if (role === 'dateMenu') {
+                container.y_align = Clutter.ActorAlign.FILL;
+                container.y_expand = true;
+            } else {
+                container.y_align = Clutter.ActorAlign.CENTER;
+            }
             this._centerBin.add_child(container);
         } else {
             // Add to box at position
