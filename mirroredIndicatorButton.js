@@ -157,16 +157,29 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                     this.add_child(clockDisplay);
                     this._clockDisplay = clockDisplay;
                 } else {
-                    // For other indicators, use clone approach
-                    // Container is FILL to get full-height hover, but clone inside is centered
-                    const container = new St.BoxLayout({
-                        style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                        y_align: Clutter.ActorAlign.FILL,
-                        y_expand: true,
-                    });
-                    
-                    this._createSimpleClone(container, sourceChild);
-                    this.add_child(container);
+                    // For quickSettings, use FILL to match panel height
+                    if (this._role === 'quickSettings') {
+                        this.add_style_class_name('mm-quick-settings');
+                        this.y_expand = true;
+                        this.y_align = Clutter.ActorAlign.FILL;
+                        const container = new St.BoxLayout({
+                            style_class: 'mm-quick-settings-box',
+                            y_align: Clutter.ActorAlign.FILL,
+                            y_expand: true,
+                        });
+                        this._createQuickSettingsClone(container, sourceChild);
+                        this.add_child(container);
+                    } else {
+                        // For other indicators, use clone approach
+                        // Container is FILL to get full-height hover, but clone inside is centered
+                        const container = new St.BoxLayout({
+                            style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                            y_align: Clutter.ActorAlign.FILL,
+                            y_expand: true,
+                        });
+                        this._createSimpleClone(container, sourceChild);
+                        this.add_child(container);
+                    }
                 }
             } else {
                 this._createSimpleClone(this, sourceChild);
@@ -214,6 +227,18 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         });
 
         parent.add_child(clone);
+    }
+
+    _createQuickSettingsClone(parent, source) {
+        // For quick settings (system tray), use FILL to match panel height
+        const clone = new Clutter.Clone({
+            source: source,
+            y_align: Clutter.ActorAlign.FILL,
+            y_expand: true,
+        });
+
+        parent.add_child(clone);
+        this._quickSettingsClone = clone;
     }
 
     _createFallbackIcon() {

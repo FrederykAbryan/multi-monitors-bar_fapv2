@@ -52,6 +52,25 @@
 
 /* Padding for mirrored indicators (e.g., Vitals extension) */
 .panel-status-menu-box {
-    padding: 6px 2px;
+    padding: 0px 2px;
     min-height: 24px;
+}
+
+/* Quick Settings (system tray) in extended monitor - full height */
+.mm-quick-settings {
+    padding: 0 4px;
+    -natural-hpadding: 4px;
+    -minimum-hpadding: 4px;
+}
+
+.mm-quick-settings-box {
+    padding: 0;
+    margin: 0;
+}
+
+/* System tray icons in extended monitor - prevent shrinking */
+.multimonitor-status-indicators-box .panel-button,
+.multimonitor-status-indicators-box .system-status-icon {
+    min-height: 30px;
+    padding: 4px 8px;
 }
