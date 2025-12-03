@@ -360,12 +360,20 @@ class MultiMonitorsPanel extends St.Widget {
         this._extensionStateChangedId = Main.extensionManager.connect('extension-state-changed', 
             this._onExtensionStateChanged.bind(this));
         
-        // Also do one delayed check for extensions that loaded before we connected
-        this._initialCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
-            this._updatePanel();
-            this._initialCheckTimeoutId = null;
-            return GLib.SOURCE_REMOVE;
-        });
+        // Multiple delayed checks to catch extensions that load at various times
+        // Apps and Places extension can take several seconds to fully initialize
+        this._initialCheckTimeouts = [];
+        const delays = [1000, 2000, 3000, 5000, 8000];
+        
+        for (const delay of delays) {
+            const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                this._updatePanel();
+                const idx = this._initialCheckTimeouts.indexOf(timeoutId);
+                if (idx >= 0) this._initialCheckTimeouts.splice(idx, 1);
+                return GLib.SOURCE_REMOVE;
+            });
+            this._initialCheckTimeouts.push(timeoutId);
+        }
     }
 
     _onExtensionStateChanged(_extensionManager, _extension) {
@@ -393,9 +401,11 @@ class MultiMonitorsPanel extends St.Widget {
             Main.extensionManager.disconnect(this._extensionStateChangedId);
             this._extensionStateChangedId = null;
         }
-        if (this._initialCheckTimeoutId) {
-            GLib.source_remove(this._initialCheckTimeoutId);
-            this._initialCheckTimeoutId = null;
+        if (this._initialCheckTimeouts) {
+            for (const timeoutId of this._initialCheckTimeouts) {
+                GLib.source_remove(timeoutId);
+            }
+            this._initialCheckTimeouts = null;
         }
         if (this._extensionUpdateTimeoutId) {
             GLib.source_remove(this._extensionUpdateTimeoutId);
