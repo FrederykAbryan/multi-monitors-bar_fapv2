@@ -169,6 +169,18 @@ class MirroredIndicatorButton extends PanelMenu.Button {
                         });
                         this._createQuickSettingsClone(container, sourceChild);
                         this.add_child(container);
+                    } else if (this._role === 'favorites-menu' || this._role.includes('favorites')) {
+                        // For favorites-menu extension, use FILL to prevent icon shrinking
+                        this.add_style_class_name('mm-favorites-menu');
+                        this.y_expand = true;
+                        this.y_align = Clutter.ActorAlign.FILL;
+                        const container = new St.BoxLayout({
+                            style_class: 'mm-favorites-menu-box',
+                            y_align: Clutter.ActorAlign.FILL,
+                            y_expand: true,
+                        });
+                        this._createFillClone(container, sourceChild);
+                        this.add_child(container);
                     } else {
                         // For other indicators, use clone approach
                         // Container is FILL to get full-height hover, but clone inside is centered
@@ -239,6 +251,17 @@ class MirroredIndicatorButton extends PanelMenu.Button {
 
         parent.add_child(clone);
         this._quickSettingsClone = clone;
+    }
+
+    _createFillClone(parent, source) {
+        // For indicators that need full height (favorites-menu, etc.)
+        const clone = new Clutter.Clone({
+            source: source,
+            y_align: Clutter.ActorAlign.FILL,
+            y_expand: true,
+        });
+
+        parent.add_child(clone);
     }
 
     _createFallbackIcon() {
