@@ -232,10 +232,24 @@ class MirroredIndicatorButton extends PanelMenu.Button {
     }
 
     _createSimpleClone(parent, source) {
+        // Check if this is a problematic extension that needs static icon copies
+        // (Tiling Shell and similar extensions that resize during fullscreen)
+        const problematicExtensions = ['tiling', 'tilingshell', 'forge', 'pop-shell'];
+        const isProblematic = problematicExtensions.some(name => 
+            this._role && this._role.toLowerCase().includes(name)
+        );
+        
+        if (isProblematic) {
+            // Use static icon copies for problematic extensions
+            this._createStaticIconCopy(parent, source);
+            return;
+        }
+        
+        // For regular indicators, use Clutter.Clone (works fine)
         const clone = new Clutter.Clone({
             source: source,
-            y_align: Clutter.ActorAlign.CENTER,  // Center vertically, don't stretch
-            y_expand: false,  // Prevent vertical stretching
+            y_align: Clutter.ActorAlign.CENTER,
+            y_expand: false,
         });
 
         parent.add_child(clone);
@@ -252,7 +266,91 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         parent.add_child(clone);
         this._quickSettingsClone = clone;
     }
+    
+    _createStaticIconCopy(parent, source) {
+        // Create static icon copies for problematic extensions (Tiling Shell, etc.)
+        // These are immune to source changes during fullscreen
+        const container = new St.BoxLayout({
+            style_class: 'panel-status-menu-box',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            y_expand: false,
+            reactive: false,
+        });
 
+        // Copy all icons from the source
+        this._copyIconsFromSource(container, source);
+        parent.add_child(container);
+        this._iconContainer = container;
+        this._iconSource = source;
+        
+        // Periodically sync icons (every 5 seconds) to catch icon changes
+        this._startIconSync();
+    }
+    
+    _copyIconsFromSource(container, source) {
+        // Remove existing children
+        container.remove_all_children();
+        
+        // Find all icons in the source and create copies
+        const icons = this._findAllIconsInActor(source);
+        
+        if (icons.length > 0) {
+            for (const icon of icons) {
+                try {
+                    const iconCopy = new St.Icon({
+                        gicon: icon.gicon,
+                        icon_name: icon.icon_name,
+                        icon_size: icon.icon_size || 16,
+                        style_class: icon.get_style_class_name() || 'system-status-icon',
+                        y_align: Clutter.ActorAlign.CENTER,
+                    });
+                    container.add_child(iconCopy);
+                } catch (e) {
+                    // Skip icons that can't be copied
+                }
+            }
+        } else {
+            // Fallback: use a clone but wrap it to prevent resize
+            const clone = new Clutter.Clone({
+                source: source,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            container.add_child(clone);
+        }
+    }
+    
+    _findAllIconsInActor(actor) {
+        // Recursively find all St.Icon instances in an actor tree
+        const icons = [];
+        if (actor instanceof St.Icon) {
+            icons.push(actor);
+        }
+        const children = actor.get_children ? actor.get_children() : [];
+        for (const child of children) {
+            icons.push(...this._findAllIconsInActor(child));
+        }
+        return icons;
+    }
+    
+    _startIconSync() {
+        if (this._iconSyncId) {
+            GLib.source_remove(this._iconSyncId);
+            this._iconSyncId = null;
+        }
+        
+        this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
+            try {
+                if (this._iconContainer && this._iconSource) {
+                    this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                }
+            } catch (e) {
+                // Ignore sync errors
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+    
     _createFillClone(parent, source) {
         // For favorites-menu@fthx - create real widget copy instead of Clutter.Clone
         // This prevents visual glitches when the main panel hides during fullscreen
@@ -590,6 +688,11 @@ class MirroredIndicatorButton extends PanelMenu.Button {
         if (this._forwardClickTimeoutId) {
             GLib.source_remove(this._forwardClickTimeoutId);
             this._forwardClickTimeoutId = null;
+        }
+        
+        if (this._iconSyncId) {
+            GLib.source_remove(this._iconSyncId);
+            this._iconSyncId = null;
         }
         
         if (this._role === 'activities') {
