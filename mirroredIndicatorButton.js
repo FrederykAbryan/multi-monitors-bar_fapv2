@@ -304,15 +304,90 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _onSourceSizeChanged() {
-            // Only update if the source is visible (not during fullscreen) and not in overview
-            if (this._quickSettingsSource && this._quickSettingsSource.visible && !Main.overview.visible) {
-                const [sourceWidth, sourceHeight] = this._quickSettingsSource.get_size();
-                if (sourceWidth > 0 && sourceHeight > 0) {
+            if (!this._quickSettingsSource || !this._quickSettingsClone) {
+                return;
+            }
+
+            const [sourceWidth, sourceHeight] = this._quickSettingsSource.get_size();
+
+            // Ignore invalid sizes
+            if (sourceWidth <= 0 || sourceHeight <= 0) {
+                return;
+            }
+
+            // During fullscreen on primary monitor, only allow GROWING (for new icons)
+            // Block SHRINKING to prevent collapse when main panel hides
+            if (this._isPrimaryMonitorFullscreen()) {
+                const currentWidth = this._cachedWidth || 0;
+                // Only update if the new size is BIGGER (new icon added)
+                if (sourceWidth > currentWidth) {
                     this._quickSettingsClone.set_size(sourceWidth, sourceHeight);
                     this._quickSettingsClone.min_width = sourceWidth;
                     this._quickSettingsClone.min_height = sourceHeight;
+                    this._cachedWidth = sourceWidth;
+                    this._cachedHeight = sourceHeight;
+                }
+                this._wasFullscreen = true;
+                return;
+            }
+
+            // Normal operation: update size if source is visible and not in overview
+            if (this._quickSettingsSource.visible && !Main.overview.visible) {
+                // If we just exited fullscreen, debounce the size update
+                // to avoid temporary large sizes during panel animation
+                if (this._wasFullscreen) {
+                    this._wasFullscreen = false;
+                    this._debounceSizeUpdate(sourceWidth, sourceHeight);
+                    return;
+                }
+
+                this._applySize(sourceWidth, sourceHeight);
+            }
+        }
+
+        _debounceSizeUpdate(width, height) {
+            // Clear any pending debounce
+            if (this._sizeDebounceId) {
+                GLib.source_remove(this._sizeDebounceId);
+                this._sizeDebounceId = null;
+            }
+
+            // Wait for panel to fully settle after exiting fullscreen
+            this._sizeDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                // Re-check the actual source size after settling
+                if (this._quickSettingsSource && this._quickSettingsClone) {
+                    const [finalWidth, finalHeight] = this._quickSettingsSource.get_size();
+                    if (finalWidth > 0 && finalHeight > 0) {
+                        this._applySize(finalWidth, finalHeight);
+                    }
+                }
+                this._sizeDebounceId = null;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        _applySize(width, height) {
+            this._quickSettingsClone.set_size(width, height);
+            this._quickSettingsClone.min_width = width;
+            this._quickSettingsClone.min_height = height;
+            this._cachedWidth = width;
+            this._cachedHeight = height;
+        }
+
+        _isPrimaryMonitorFullscreen() {
+            // Check if any window is fullscreen on the primary monitor
+            const primaryIndex = Main.layoutManager.primaryIndex;
+            const windows = global.get_window_actors();
+
+            for (const actor of windows) {
+                const metaWindow = actor.get_meta_window();
+                if (metaWindow &&
+                    metaWindow.is_fullscreen() &&
+                    metaWindow.get_monitor() === primaryIndex) {
+                    return true;
                 }
             }
+            return false;
         }
 
         _createStaticIconCopy(parent, source) {
@@ -751,6 +826,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._sourceSizeChangedId && this._quickSettingsSource) {
                 this._quickSettingsSource.disconnect(this._sourceSizeChangedId);
                 this._sourceSizeChangedId = null;
+            }
+
+            if (this._sizeDebounceId) {
+                GLib.source_remove(this._sizeDebounceId);
+                this._sizeDebounceId = null;
             }
 
             if (this._role === 'activities') {
