@@ -275,6 +275,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Wait for the clone to be properly sized, then lock it with min_width/min_height
             if (this._lockSizeTimeoutId) {
                 GLib.source_remove(this._lockSizeTimeoutId);
+                this._lockSizeTimeoutId = null;
             }
 
             this._lockSizeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
@@ -593,9 +594,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._forwardClickTimeoutId = null;
                 }
                 this._forwardClickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                    try {
-                        this._sourceIndicator.emit('button-release-event', event);
-                    } catch (_e) { }
+                    this._sourceIndicator.emit('button-release-event', event);
                     this.remove_style_pseudo_class('active');
                     this._forwardClickTimeoutId = null;
                     return GLib.SOURCE_REMOVE;

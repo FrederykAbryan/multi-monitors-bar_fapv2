@@ -524,12 +524,8 @@ var MultiMonitorsMessagesIndicator = (() => {
                 // Clean up all source connections
                 if (this._sourceConnections) {
                     for (const [source, { notifAddedId, notifRemovedId }] of this._sourceConnections.entries()) {
-                        try {
-                            if (notifAddedId) source.disconnect(notifAddedId);
-                            if (notifRemovedId) source.disconnect(notifRemovedId);
-                        } catch (e) {
-                            // Ignore disconnect errors
-                        }
+                        if (notifAddedId) source.disconnect(notifAddedId);
+                        if (notifRemovedId) source.disconnect(notifRemovedId);
                     }
                     this._sourceConnections.clear();
                 }
@@ -546,20 +542,16 @@ var MultiMonitorsMessagesIndicator = (() => {
             this._sources.push(source);
             // GNOME 46+ removed 'count-updated' signal. Instead, track notification count changes
             // by connecting to the source's notification-added and notification-removed signals
-            try {
-                if (source.connect) {
-                    // Try to connect to notification signals if available
-                    let notifAddedId = source.connect('notification-added', this._updateCount.bind(this));
-                    let notifRemovedId = source.connect('notification-removed', this._updateCount.bind(this));
+            if (source.connect) {
+                // Try to connect to notification signals if available
+                let notifAddedId = source.connect('notification-added', this._updateCount.bind(this));
+                let notifRemovedId = source.connect('notification-removed', this._updateCount.bind(this));
 
-                    // Store connection IDs for cleanup
-                    if (!this._sourceConnections) {
-                        this._sourceConnections = new Map();
-                    }
-                    this._sourceConnections.set(source, { notifAddedId, notifRemovedId });
+                // Store connection IDs for cleanup
+                if (!this._sourceConnections) {
+                    this._sourceConnections = new Map();
                 }
-            } catch (e) {
-                // If signals don't exist, just update count once
+                this._sourceConnections.set(source, { notifAddedId, notifRemovedId });
             }
             this._updateCount();
         }
@@ -573,12 +565,8 @@ var MultiMonitorsMessagesIndicator = (() => {
                 // Clean up connections if they exist
                 if (this._sourceConnections && this._sourceConnections.has(source)) {
                     const { notifAddedId, notifRemovedId } = this._sourceConnections.get(source);
-                    try {
-                        if (notifAddedId) source.disconnect(notifAddedId);
-                        if (notifRemovedId) source.disconnect(notifRemovedId);
-                    } catch (e) {
-                        // Ignore disconnect errors
-                    }
+                    if (notifAddedId) source.disconnect(notifAddedId);
+                    if (notifRemovedId) source.disconnect(notifRemovedId);
                     this._sourceConnections.delete(source);
                 }
                 this._sources.splice(index, 1);
@@ -668,31 +656,23 @@ var MultiMonitorsDateMenuButton = (() => {
             // Ensure our button and label use the same style classes as the main panel
             // Button should look like a normal panel button; label should have clock-display
             this.add_style_class_name('panel-button');
-            try {
-                if (this._clockDisplay && this._clockDisplay.add_style_class_name)
-                    this._clockDisplay.add_style_class_name('clock-display');
-            } catch (e) {
-                // ignore
-            }
+            if (this._clockDisplay && this._clockDisplay.add_style_class_name)
+                this._clockDisplay.add_style_class_name('clock-display');
             // Copy style classes from the main dateMenu when available for visual parity
-            try {
-                const mainBtn = (MainRef && MainRef.panel && MainRef.panel.statusArea)
-                    ? MainRef.panel.statusArea.dateMenu : null;
-                if (mainBtn) {
-                    if (mainBtn.get_style_class_name && this.set_style_class_name) {
-                        const btnCls = mainBtn.get_style_class_name();
-                        if (btnCls)
-                            this.set_style_class_name(btnCls);
-                    }
-                    const mainMenuBox = mainBtn.menu ? mainBtn.menu.box : null;
-                    if (mainMenuBox && mainMenuBox.get_style_class_name && this.menu && this.menu.box && this.menu.box.set_style_class_name) {
-                        const menuCls = mainMenuBox.get_style_class_name();
-                        if (menuCls)
-                            this.menu.box.set_style_class_name(menuCls);
-                    }
+            const mainBtn = (MainRef && MainRef.panel && MainRef.panel.statusArea)
+                ? MainRef.panel.statusArea.dateMenu : null;
+            if (mainBtn) {
+                if (mainBtn.get_style_class_name && this.set_style_class_name) {
+                    const btnCls = mainBtn.get_style_class_name();
+                    if (btnCls)
+                        this.set_style_class_name(btnCls);
                 }
-            } catch (e) {
-                // best-effort styling; ignore failures
+                const mainMenuBox = mainBtn.menu ? mainBtn.menu.box : null;
+                if (mainMenuBox && mainMenuBox.get_style_class_name && this.menu && this.menu.box && this.menu.box.set_style_class_name) {
+                    const menuCls = mainMenuBox.get_style_class_name();
+                    if (menuCls)
+                        this.menu.box.set_style_class_name(menuCls);
+                }
             }
 
             // Force visibility
@@ -717,16 +697,12 @@ var MultiMonitorsDateMenuButton = (() => {
                     throw new Error('No FreezableBinLayout');
             } catch (e) {
                 layout = new Clutter.BinLayout();
-                try {
-                    Object.defineProperty(layout, 'frozen', {
-                        configurable: true,
-                        enumerable: false,
-                        get() { return false; },
-                        set(_) { /* noop */ },
-                    });
-                } catch (e) {
-                    // Ignore failures to define the property
-                }
+                Object.defineProperty(layout, 'frozen', {
+                    configurable: true,
+                    enumerable: false,
+                    get() { return false; },
+                    set(_) { /* noop */ },
+                });
             }
 
             let bin = new St.Widget({ layout_manager: layout });
@@ -786,21 +762,15 @@ var MultiMonitorsDateMenuButton = (() => {
             this._displaysSection.add_child(displaysBox);
 
             // World clocks section
-            try {
-                if (DateMenu.WorldClocksSection) {
-                    this._clocksItem = new DateMenu.WorldClocksSection();
-                    displaysBox.add_child(this._clocksItem);
-                }
-            } catch (e) {
+            if (DateMenu.WorldClocksSection) {
+                this._clocksItem = new DateMenu.WorldClocksSection();
+                displaysBox.add_child(this._clocksItem);
             }
 
             // Weather section
-            try {
-                if (DateMenu.WeatherSection) {
-                    this._weatherItem = new DateMenu.WeatherSection();
-                    displaysBox.add_child(this._weatherItem);
-                }
-            } catch (e) {
+            if (DateMenu.WeatherSection) {
+                this._weatherItem = new DateMenu.WeatherSection();
+                displaysBox.add_child(this._weatherItem);
             }
 
             this._eventsItem = new MultiMonitorsEventsSection();
