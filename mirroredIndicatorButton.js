@@ -607,42 +607,51 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _openCustomPopupMenu(popupMenu) {
             const monitorIndex = Main.layoutManager.findIndexForActor(this);
-
-            // Close the menu if it's already open
-            if (popupMenu.isOpen) {
-                popupMenu.close();
-                return Clutter.EVENT_STOP;
-            }
-
-            // Store original source actor
             const originalSourceActor = popupMenu.sourceActor;
 
-            // Add active style to this button
-            this.add_style_pseudo_class('active');
+            try {
+                // Close the menu if it's already open
+                if (popupMenu.isOpen) {
+                    popupMenu.close();
+                    return Clutter.EVENT_STOP;
+                }
 
-            // Update popup's sourceActor to position correctly
-            popupMenu.sourceActor = this;
+                // Add active style to this button
+                this.add_style_pseudo_class('active');
 
-            // Update positioning for the correct monitor
-            if (popupMenu.box) {
-                const monitor = Main.layoutManager.monitors[monitorIndex];
-                if (monitor && popupMenu.box._updateFlip) {
-                    popupMenu.box._updateFlip(monitor);
+                // Update popup's sourceActor to position correctly
+                popupMenu.sourceActor = this;
+
+                // Update positioning for the correct monitor
+                if (popupMenu.box) {
+                    const monitor = Main.layoutManager.monitors[monitorIndex];
+                    if (monitor && popupMenu.box._updateFlip) {
+                        popupMenu.box._updateFlip(monitor);
+                    }
+                }
+
+                // Setup cleanup on menu close
+                const openStateId = popupMenu.connect('open-state-changed', (_m, isOpen) => {
+                    if (isOpen) {
+                        this.add_style_pseudo_class('active');
+                    } else {
+                        this.remove_style_pseudo_class('active');
+                        popupMenu.sourceActor = originalSourceActor;
+                        popupMenu.disconnect(openStateId);
+                    }
+                });
+
+                popupMenu.open();
+            } catch (e) {
+                console.error('[Multi Monitors Add-On] Failed to open custom popup menu:', String(e));
+
+                // Cleanup on error
+                this.remove_style_pseudo_class('active');
+                if (popupMenu) {
+                    popupMenu.sourceActor = originalSourceActor;
                 }
             }
 
-            // Setup cleanup on menu close
-            const openStateId = popupMenu.connect('open-state-changed', (_m, isOpen) => {
-                if (isOpen) {
-                    this.add_style_pseudo_class('active');
-                } else {
-                    this.remove_style_pseudo_class('active');
-                    popupMenu.sourceActor = originalSourceActor;
-                    popupMenu.disconnect(openStateId);
-                }
-            });
-
-            popupMenu.open();
             return Clutter.EVENT_STOP;
         }
 
@@ -650,42 +659,61 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const monitorIndex = Main.layoutManager.findIndexForActor(this);
             const menu = this._sourceIndicator.menu;
 
-            if (menu.isOpen) {
-                menu.close();
-                return Clutter.EVENT_STOP;
-            }
+            // Store original state variables
+            let originalSourceActor = menu.sourceActor;
+            let originalBoxPointer = menu.box?._sourceActor;
+            let originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+            let originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
 
-            // Store original state
-            const originalSourceActor = menu.sourceActor;
-            const originalBoxPointer = menu.box?._sourceActor;
-            const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
-            const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+            // State for restoring menu box modifications
+            let menuBoxState = null;
 
-            // Prevent active state on main panel indicator
-            this._preventMainPanelActiveState(originalAddPseudoClass);
+            let openStateId = 0;
 
-            // Add active style to THIS button
-            this.add_style_pseudo_class('active');
+            try {
+                if (menu.isOpen) {
+                    menu.close();
+                    return Clutter.EVENT_STOP;
+                }
 
-            // Update menu's sourceActor
-            menu.sourceActor = this;
+                // Prevent active state on main panel indicator
+                this._preventMainPanelActiveState(originalAddPseudoClass);
 
-            // Update BoxPointer positioning
-            if (menu.box) {
-                this._updateMenuPositioning(menu, monitorIndex);
-            }
+                // Add active style to THIS button
+                this.add_style_pseudo_class('active');
 
-            // Setup cleanup on menu close
-            const openStateId = menu.connect('open-state-changed', (m, isOpen) => {
-                if (isOpen) {
-                    this.add_style_pseudo_class('active');
-                } else {
-                    this._restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass);
+                // Update menu's sourceActor
+                menu.sourceActor = this;
+
+                // Update BoxPointer positioning and save state for restoration
+                if (menu.box) {
+                    menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+                }
+
+                // Setup cleanup on menu close
+                openStateId = menu.connect('open-state-changed', (m, isOpen) => {
+                    if (isOpen) {
+                        this.add_style_pseudo_class('active');
+                    } else {
+                        this._restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass, menuBoxState);
+                        menu.disconnect(openStateId);
+                    }
+                });
+
+                menu.open();
+            } catch (e) {
+                console.error('[Multi Monitors Add-On] Failed to open mirrored menu:', String(e));
+
+                // Immediate cleanup on error
+                this._restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass, menuBoxState);
+
+                if (openStateId > 0) {
                     menu.disconnect(openStateId);
                 }
-            });
 
-            menu.open();
+                this.remove_style_pseudo_class('active');
+            }
+
             return Clutter.EVENT_STOP;
         }
 
@@ -710,25 +738,42 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _updateMenuPositioning(menu, monitorIndex) {
-            menu.box._sourceActor = this;
-            menu.box._sourceAllocation = null;
+            const menuBox = menu.box;
 
-            const monitor = Main.layoutManager.monitors[monitorIndex];
+            // 1. Save original source actor
+            // _sourceActor is used by BoxPointer
+            menuBox._sourceActor = this;
+            menuBox._sourceAllocation = null;
 
-            // Remove existing constraints
-            const constraints = menu.box.get_constraints();
+            // 2. Handle constraints
+            // We need to remove constraints that bind the menu to the original panel
+            // but we must restore them later!
+            const removedConstraints = [];
+            const constraints = menuBox.get_constraints();
             for (let constraint of constraints) {
                 if (constraint.constructor.name === 'BindConstraint' ||
                     constraint.constructor.name === 'AlignConstraint') {
-                    menu.box.remove_constraint(constraint);
+                    menuBox.remove_constraint(constraint);
+                    removedConstraints.push(constraint);
                 }
             }
 
-            // Override setPosition to keep menu within monitor bounds
-            const oldSetPosition = menu.box.setPosition.bind(menu.box);
-            menu.box.setPosition = function (sourceActor, alignment) {
-                oldSetPosition(sourceActor, alignment);
+            // 3. Handle setPosition override
+            // We store the current setPosition (which serves as original) and restore it later.
+            // This prevents recursive wrapping on multiple clicks.
+            const originalSetPosition = menuBox.setPosition;
 
+            const monitor = Main.layoutManager.monitors[monitorIndex];
+
+            // Capture the 'original' function to call inside our wrapper
+            // Bind it to ensuring 'this' context is preserved if it's a method
+            const boundOriginalSetPosition = originalSetPosition.bind(menuBox);
+
+            menuBox.setPosition = function (sourceActor, alignment) {
+                // Call the original setPosition logic first
+                boundOriginalSetPosition(sourceActor, alignment);
+
+                // Then adjust if out of bounds (mirrored monitor logic)
                 const [x, y] = this.get_position();
                 const [w, h] = this.get_size();
 
@@ -754,29 +799,63 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this.set_position(newX, newY);
                 }
             };
+
+            // Return state object for restoration
+            return {
+                originalSetPosition: originalSetPosition,
+                removedConstraints: removedConstraints
+            };
         }
 
-        _restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass) {
-            menu.sourceActor = originalSourceActor;
-            if (menu.box) {
-                menu.box._sourceActor = originalBoxPointer;
+        _restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass, menuBoxState) {
+            try {
+                // 1. Restore standard menu properties
+                if (originalSourceActor) {
+                    menu.sourceActor = originalSourceActor;
+                }
+
+                if (menu.box && originalBoxPointer) {
+                    menu.box._sourceActor = originalBoxPointer;
+                }
+
+                // 2. Restore hijacked indicator methods
+                if (originalSetActive && this._sourceIndicator) {
+                    this._sourceIndicator.setActive = originalSetActive;
+                }
+
+                if (originalAddPseudoClass && this._sourceIndicator) {
+                    this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+                }
+
+                // 3. Restore menu box modifications (setPosition and constraints)
+                if (menu.box && menuBoxState) {
+                    if (menuBoxState.originalSetPosition) {
+                        menu.box.setPosition = menuBoxState.originalSetPosition;
+                    }
+
+                    if (menuBoxState.removedConstraints && menuBoxState.removedConstraints.length > 0) {
+                        menuBoxState.removedConstraints.forEach(constraint => {
+                            menu.box.add_constraint(constraint);
+                        });
+                    }
+                }
+
+                // 4. Reset style classes on source
+                if (this._sourceIndicator && this._sourceIndicator.remove_style_pseudo_class) {
+                    this._sourceIndicator.remove_style_pseudo_class('active');
+                    this._sourceIndicator.remove_style_pseudo_class('checked');
+                }
+            } catch (e) {
+                console.error('[Multi Monitors Add-On] Error restoring menu state:', String(e));
             }
 
-            if (originalSetActive) {
-                this._sourceIndicator.setActive = originalSetActive;
-            }
-            if (originalAddPseudoClass) {
-                this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
-            }
-
-            if (this._sourceIndicator && this._sourceIndicator.remove_style_pseudo_class) {
-                this._sourceIndicator.remove_style_pseudo_class('active');
-                this._sourceIndicator.remove_style_pseudo_class('checked');
-            }
-            if (this.remove_style_pseudo_class) {
-                this.remove_style_pseudo_class('active');
-                this.remove_style_pseudo_class('checked');
-            }
+            // Always try to reset this button's state
+            try {
+                if (this.remove_style_pseudo_class) {
+                    this.remove_style_pseudo_class('active');
+                    this.remove_style_pseudo_class('checked');
+                }
+            } catch (e) { }
         }
 
         destroy() {
