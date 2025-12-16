@@ -269,6 +269,15 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
     addThumbnails(start, count) {
         let workspaceManager = global.workspace_manager;
 
+        // Validate porthole before creating thumbnails to prevent NaN/zero dimension errors
+        if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
+            this._updatePorthole();
+            if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
+                log('[Multi Monitors Add-On] Invalid porthole dimensions, skipping thumbnail creation');
+                return;
+            }
+        }
+
         for (let k = start; k < start + count; k++) {
             let metaWorkspace = workspaceManager.get_workspace_by_index(k);
             let thumbnail = new MultiMonitorsWorkspaceThumbnail(metaWorkspace, this._monitorIndex);
@@ -327,6 +336,11 @@ export const MultiMonitorsThumbnailsBox = GObject.registerClass({
             'scale', 'scale', 'scale',
             GObject.ParamFlags.READWRITE,
             0, Infinity, 0),
+        // Required by methods copied from ThumbnailsBox via copyClass
+        'should-show': GObject.ParamSpec.boolean(
+            'should-show', 'should-show', 'should-show',
+            GObject.ParamFlags.READWRITE,
+            true),
     },
 }, MultiMonitorsThumbnailsBoxClass);
 
@@ -442,16 +456,23 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
 
-            // GNOME 46 removed 'page-changed' and 'page-empty' signals from SearchController
-            // Guard against missing signals to prevent crashes
+            // GNOME 46+ may not have 'page-changed' and 'page-empty' signals on SearchController
+            // Wrap in try-catch to gracefully handle missing signals
             this._pageChangedId = 0;
             this._pageEmptyId = 0;
             if (Main.overview.searchController && typeof Main.overview.searchController.connect === 'function') {
-                // Try to connect; if the signal doesn't exist, the connect will throw
-                this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
-            }
-            if (Main.overview.searchController && typeof Main.overview.searchController.connect === 'function') {
-                this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
+                try {
+                    this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
+                } catch (e) {
+                    // Signal doesn't exist in this GNOME version - this is expected
+                    this._pageChangedId = 0;
+                }
+                try {
+                    this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
+                } catch (e) {
+                    // Signal doesn't exist in this GNOME version - this is expected
+                    this._pageEmptyId = 0;
+                }
             }
 
             this._group = new St.BoxLayout({
@@ -574,7 +595,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 height += this._spacer_height;
                 geometry = { x, y, width, height };
             }
-            if (isNaN(geometry.x))
+            // Guard against NaN or invalid geometry values to prevent allocation assertion failures
+            if (isNaN(geometry.x) || isNaN(geometry.y) ||
+                isNaN(geometry.width) || isNaN(geometry.height) ||
+                geometry.width <= 0 || geometry.height <= 0)
                 return null;
             return geometry;
         }
