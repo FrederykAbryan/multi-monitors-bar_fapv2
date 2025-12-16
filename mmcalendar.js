@@ -24,6 +24,12 @@ import Pango from 'gi://Pango';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+
+// Shell version for feature detection
+const [major] = Config.PACKAGE_VERSION.split('.');
+const shellVersion = Number.parseInt(major);
+
 export let MainRef = null;
 export function setMainRef(m) { MainRef = m; }
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -73,26 +79,16 @@ const MultiMonitorsTodayButton = GObject.registerClass(
         }
 
         setDate(date) {
-            // Use Intl.DateTimeFormat as toLocaleFormat is not available in GJS 1.78+/GNOME 45+
-            try {
-                const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
-                const longDateFmt = new Intl.DateTimeFormat(undefined, {
-                    year: 'numeric', month: 'long', day: 'numeric'
-                });
-                const dayText = weekdayFmt.format(date);
-                const dateText = longDateFmt.format(date);
-                this._dayLabel.set_text(dayText);
-                this._dateLabel.set_text(dateText);
-                this.accessible_name = `${dayText} ${dateText}`;
-            } catch (e) {
-                // Fallback via GLib.DateTime formatting
-                const gdt = GLib.DateTime.new_now_local();
-                const dayText = gdt.format('%A');
-                const dateText = gdt.format('%B %e %Y');
-                this._dayLabel.set_text(dayText);
-                this._dateLabel.set_text(dateText);
-                this.accessible_name = `${dayText} ${dateText}`;
-            }
+            // Use Intl.DateTimeFormat (available in GJS 1.68+/GNOME 40+)
+            const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+            const longDateFmt = new Intl.DateTimeFormat(undefined, {
+                year: 'numeric', month: 'long', day: 'numeric'
+            });
+            const dayText = weekdayFmt.format(date);
+            const dateText = longDateFmt.format(date);
+            this._dayLabel.set_text(dayText);
+            this._dateLabel.set_text(dateText);
+            this.accessible_name = `${dayText} ${dateText}`;
         }
     });
 
@@ -154,20 +150,10 @@ var MultiMonitorsCalendar = (() => {
             this._weekStart = Shell.util_get_week_start();
             this._settings = new Gio.Settings({ schema_id: 'org.gnome.desktop.calendar' });
 
-            // The upstream Calendar.SHOW_WEEKDATE_KEY may not exist on all GNOME
-            // versions. Guard against undefined to avoid GSettings errors when
-            // trying to connect to 'changed::undefined'. If the key is missing,
-            // default to not using weekdate.
-            if (Calendar && Calendar.SHOW_WEEKDATE_KEY !== undefined &&
-                typeof Calendar.SHOW_WEEKDATE_KEY === 'string' &&
-                Calendar.SHOW_WEEKDATE_KEY !== 'undefined') {
-                try {
-                    this._showWeekdateKeyId = this._settings.connect('changed::' + Calendar.SHOW_WEEKDATE_KEY, this._onSettingsChange.bind(this));
-                    this._useWeekdate = this._settings.get_boolean(Calendar.SHOW_WEEKDATE_KEY);
-                } catch (e) {
-                    this._showWeekdateKeyId = 0;
-                    this._useWeekdate = false;
-                }
+            // SHOW_WEEKDATE_KEY exists in GNOME 40+
+            if (shellVersion >= 40 && Calendar.SHOW_WEEKDATE_KEY) {
+                this._showWeekdateKeyId = this._settings.connect('changed::' + Calendar.SHOW_WEEKDATE_KEY, this._onSettingsChange.bind(this));
+                this._useWeekdate = this._settings.get_boolean(Calendar.SHOW_WEEKDATE_KEY);
             } else {
                 this._showWeekdateKeyId = 0;
                 this._useWeekdate = false;
@@ -286,7 +272,8 @@ var MultiMonitorsEventsSection = (() => {
 
 var MultiMonitorsNotificationSection = (() => {
     // Check if MessageListSection is available, otherwise use St.Widget as base
-    const BaseClass = (MessageList.MessageListSection && typeof MessageList.MessageListSection === 'function')
+    // MessageListSection is available in GNOME 40+, use version check
+    const BaseClass = (shellVersion >= 40 && MessageList.MessageListSection)
         ? MessageList.MessageListSection
         : St.Widget;
 
@@ -496,7 +483,7 @@ var MultiMonitorsMessagesIndicator = (() => {
             // _sync may be provided by copying the upstream DateMenu.MessagesIndicator
             // prototype. Guard against missing _sync to avoid runtime TypeErrors on
             // systems where the upstream class isn't present or doesn't export it.
-            if (typeof this._sync === 'function') {
+            if (this._sync) {
                 this._settings.connect('changed::show-banners', this._sync.bind(this));
             }
 
@@ -508,7 +495,7 @@ var MultiMonitorsMessagesIndicator = (() => {
             sources.forEach(source => this._onSourceAdded(null, source));
 
             // Call _sync only if it's available (copied from upstream).
-            if (typeof this._sync === 'function') {
+            if (this._sync) {
                 this._sync();
             } else {
                 // Fallback: update visibility using our local implementation
@@ -682,20 +669,11 @@ var MultiMonitorsDateMenuButton = (() => {
             this._clockDisplay.show();
 
 
-            // Prefer the upstream FreezableBinLayout when available. Some GNOME
-            // versions don't export it, so fall back to a plain BinLayout and add
-            // a safe no-op `frozen` property so later code can toggle it without
-            // throwing.
-            // Try constructing the upstream FreezableBinLayout; some GNOME builds
-            // export a symbol that isn't a usable constructor. Fall back to
-            // Clutter.BinLayout on any failure.
+            // FreezableBinLayout was added in GNOME 40
             let layout;
-            try {
-                if (DateMenu.FreezableBinLayout)
-                    layout = new DateMenu.FreezableBinLayout();
-                else
-                    throw new Error('No FreezableBinLayout');
-            } catch (e) {
+            if (shellVersion >= 40 && DateMenu.FreezableBinLayout) {
+                layout = new DateMenu.FreezableBinLayout();
+            } else {
                 layout = new Clutter.BinLayout();
                 Object.defineProperty(layout, 'frozen', {
                     configurable: true,

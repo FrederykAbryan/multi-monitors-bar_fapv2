@@ -137,10 +137,8 @@ export class StatusIndicatorsController {
 		const panels = Constants.getMMPanelArray();
 		if (panels) {
 			for (const p of panels) {
-				if (p && typeof p._ensureVitalsMirrorRightSide === 'function')
-					p._ensureVitalsMirrorRightSide();
-				if (p && typeof p._ensureQuickSettingsRightmost === 'function')
-					p._ensureQuickSettingsRightmost();
+				p?._ensureVitalsMirrorRightSide?.();
+				p?._ensureQuickSettingsRightmost?.();
 			}
 		}
 	}

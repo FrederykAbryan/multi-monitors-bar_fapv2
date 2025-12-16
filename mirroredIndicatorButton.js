@@ -606,15 +606,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 ];
 
                 for (const menuName of customMenus) {
-                    if (this._sourceIndicator[menuName] && typeof this._sourceIndicator[menuName].toggle === 'function') {
+                    if (this._sourceIndicator[menuName]?.toggle) {
                         return this._openCustomPopupMenu(this._sourceIndicator[menuName]);
                     }
                 }
 
                 // If no menu found, try to emit a button press on the source indicator
                 // This allows the source indicator to handle the click itself
-                if (typeof this._sourceIndicator.vfunc_button_press_event === 'function' ||
-                    typeof this._sourceIndicator.emit === 'function') {
+                if (this._sourceIndicator.vfunc_button_press_event || this._sourceIndicator.emit) {
                     return this._forwardClickToSource();
                 }
             }

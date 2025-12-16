@@ -23,6 +23,12 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
 
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
+
+// Shell version for feature detection
+const [major] = Config.PACKAGE_VERSION.split('.');
+const shellVersion = Number.parseInt(major);
+
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Params from 'resource:///org/gnome/shell/misc/params.js';
 import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThumbnail.js';
@@ -199,11 +205,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
             mutterSchemaId = 'org.gnome.mutter';
         }
         // Ensure it's a string
-        try {
-            mutterSchemaId = String(mutterSchemaId);
-        } catch (e) {
-            mutterSchemaId = 'org.gnome.mutter';
-        }
+        mutterSchemaId = String(mutterSchemaId);
 
         log('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
         if (!this._settings) {
@@ -456,23 +458,12 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
 
-            // GNOME 46+ may not have 'page-changed' and 'page-empty' signals on SearchController
-            // Wrap in try-catch to gracefully handle missing signals
+            // 'page-changed' and 'page-empty' signals exist in GNOME < 46
             this._pageChangedId = 0;
             this._pageEmptyId = 0;
-            if (Main.overview.searchController && typeof Main.overview.searchController.connect === 'function') {
-                try {
-                    this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
-                } catch (e) {
-                    // Signal doesn't exist in this GNOME version - this is expected
-                    this._pageChangedId = 0;
-                }
-                try {
-                    this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
-                } catch (e) {
-                    // Signal doesn't exist in this GNOME version - this is expected
-                    this._pageEmptyId = 0;
-                }
+            if (Main.overview.searchController && shellVersion < 46) {
+                this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
+                this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
             }
 
             this._group = new St.BoxLayout({
