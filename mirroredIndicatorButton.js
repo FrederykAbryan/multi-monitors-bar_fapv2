@@ -427,19 +427,31 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Remove existing children
             container.remove_all_children();
 
-            // Find all icons in the source and create copies
-            const icons = this._findAllIconsInActor(source);
+            // Find all display widgets (icons and labels) in the source and create copies
+            const widgets = this._findAllDisplayWidgets(source);
 
-            if (icons.length > 0) {
-                for (const icon of icons) {
-                    const iconCopy = new St.Icon({
-                        gicon: icon.gicon,
-                        icon_name: icon.icon_name,
-                        icon_size: icon.icon_size || 16,
-                        style_class: icon.get_style_class_name() || 'system-status-icon',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    });
-                    container.add_child(iconCopy);
+            if (widgets.length > 0) {
+                for (const widget of widgets) {
+                    if (widget instanceof St.Icon) {
+                        const iconCopy = new St.Icon({
+                            gicon: widget.gicon,
+                            icon_name: widget.icon_name,
+                            icon_size: widget.icon_size || 16,
+                            style_class: widget.get_style_class_name() || 'system-status-icon',
+                            y_align: Clutter.ActorAlign.CENTER,
+                        });
+                        container.add_child(iconCopy);
+                    } else if (widget instanceof St.Label) {
+                        // Copy labels (like Vitals' numbers/text values)
+                        const labelCopy = new St.Label({
+                            text: widget.text,
+                            style_class: widget.get_style_class_name() || '',
+                            y_align: Clutter.ActorAlign.CENTER,
+                        });
+                        // Store reference to sync text later
+                        labelCopy._sourceLabel = widget;
+                        container.add_child(labelCopy);
+                    }
                 }
             } else {
                 // Fallback: use a clone but wrap it to prevent resize
@@ -451,17 +463,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
-        _findAllIconsInActor(actor) {
-            // Recursively find all St.Icon instances in an actor tree
-            const icons = [];
-            if (actor instanceof St.Icon) {
-                icons.push(actor);
+        _findAllDisplayWidgets(actor) {
+            // Recursively find all St.Icon and St.Label instances in an actor tree
+            // This preserves their order for proper display (e.g., Vitals: icon + number)
+            const widgets = [];
+            if (actor instanceof St.Icon || actor instanceof St.Label) {
+                widgets.push(actor);
             }
             const children = actor.get_children ? actor.get_children() : [];
             for (const child of children) {
-                icons.push(...this._findAllIconsInActor(child));
+                widgets.push(...this._findAllDisplayWidgets(child));
             }
-            return icons;
+            return widgets;
         }
 
         _startIconSync() {
@@ -469,13 +482,36 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 GLib.source_remove(this._iconSyncId);
                 this._iconSyncId = null;
             }
+            if (this._labelSyncId) {
+                GLib.source_remove(this._labelSyncId);
+                this._labelSyncId = null;
+            }
 
+            // Full rebuild every 5 seconds to catch added/removed icons
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
                 if (this._iconContainer && this._iconSource) {
                     this._copyIconsFromSource(this._iconContainer, this._iconSource);
                 }
                 return GLib.SOURCE_CONTINUE;
             });
+
+            // Sync label text more frequently (every 2 seconds) for Vitals-like extensions
+            this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+                if (this._iconContainer) {
+                    this._syncLabelTexts(this._iconContainer);
+                }
+                return GLib.SOURCE_CONTINUE;
+            });
+        }
+
+        _syncLabelTexts(container) {
+            // Update label text from source labels
+            const children = container.get_children();
+            for (const child of children) {
+                if (child instanceof St.Label && child._sourceLabel) {
+                    child.text = child._sourceLabel.text;
+                }
+            }
         }
 
         _createFillClone(parent, source) {
@@ -847,6 +883,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._iconSyncId) {
                 GLib.source_remove(this._iconSyncId);
                 this._iconSyncId = null;
+            }
+
+            if (this._labelSyncId) {
+                GLib.source_remove(this._labelSyncId);
+                this._labelSyncId = null;
             }
 
             if (this._lockSizeTimeoutId) {
