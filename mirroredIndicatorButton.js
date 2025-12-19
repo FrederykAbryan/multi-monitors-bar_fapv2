@@ -157,9 +157,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         this.add_child(clockDisplay);
                         this._clockDisplay = clockDisplay;
                     } else {
-                        // For quickSettings, use FILL to match panel height
+                        // For quickSettings, use FILL for full-height hover area
+                        // The clipping container inside handles the fixed visual content height
                         if (this._role === 'quickSettings') {
                             this.add_style_class_name('mm-quick-settings');
+                            // Use FILL for full panel height hover detection
                             this.y_expand = true;
                             this.y_align = Clutter.ActorAlign.FILL;
                             const container = new St.BoxLayout({
@@ -267,123 +269,86 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _createQuickSettingsClone(parent, source) {
-            // For quick settings (system tray), use FILL to match panel height
+            // SIMPLE APPROACH - Clone directly in parent
+            // This is the ONLY approach that gives "perfect" size
+
             const clone = new Clutter.Clone({
                 source: source,
                 y_align: Clutter.ActorAlign.FILL,
                 y_expand: true,
+                x_align: Clutter.ActorAlign.START,
+                x_expand: false,
             });
 
             parent.add_child(clone);
+
             this._quickSettingsClone = clone;
+            this._quickSettingsClipContainer = null;
             this._quickSettingsSource = source;
-
-            // Lock the clone's size after it's allocated to prevent collapse during fullscreen
-            this._lockQuickSettingsSize();
+            this._quickSettingsContainer = parent;
         }
 
-        _lockQuickSettingsSize() {
-            // Wait for the clone to be properly sized, then lock it with min_width/min_height
-            if (this._lockSizeTimeoutId) {
-                GLib.source_remove(this._lockSizeTimeoutId);
-                this._lockSizeTimeoutId = null;
+        _applyNormalMode() {
+            // Not used
+        }
+
+        _applyOverviewMode() {
+            // Not used
+        }
+
+        _monitorSize(duration) {
+            // Since we removed the clipping container and use FILL,
+            // this just tracks the max observed width for reference
+            if (this._monitorTimeoutId) {
+                GLib.source_remove(this._monitorTimeoutId);
+                this._monitorTimeoutId = null;
             }
 
-            this._lockSizeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                if (this._quickSettingsClone && this._quickSettingsSource) {
-                    // Get the source's current size (when main panel is visible)
-                    const [sourceWidth, sourceHeight] = this._quickSettingsSource.get_size();
+            const startTime = GLib.get_monotonic_time();
+            const endTime = startTime + (duration * 1000);
 
-                    if (sourceWidth > 0 && sourceHeight > 0) {
-                        // Lock the clone's minimum size to prevent collapse
-                        this._quickSettingsClone.set_size(sourceWidth, sourceHeight);
-                        this._quickSettingsClone.min_width = sourceWidth;
-                        this._quickSettingsClone.min_height = sourceHeight;
-                        this._cachedWidth = sourceWidth;
-                        this._cachedHeight = sourceHeight;
-                    }
+            const checkSize = () => {
+                if (!this._quickSettingsSource) {
+                    return GLib.SOURCE_REMOVE;
                 }
-                this._lockSizeTimeoutId = null;
-                return GLib.SOURCE_REMOVE;
-            });
 
-            // Also listen for source size changes to update when not in fullscreen
-            if (!this._sourceSizeChangedId && this._quickSettingsSource) {
-                this._sourceSizeChangedId = this._quickSettingsSource.connect(
-                    'notify::width', () => this._onSourceSizeChanged()
-                );
-            }
-        }
+                // Get source size (max of actual and preferred)
+                const [minW, natW] = this._quickSettingsSource.get_preferred_width(-1);
+                const [actW] = this._quickSettingsSource.get_size();
+                const sourceWidth = Math.max(natW, minW, actW);
 
-        _onSourceSizeChanged() {
-            if (!this._quickSettingsSource || !this._quickSettingsClone) {
-                return;
-            }
-
-            const [sourceWidth, sourceHeight] = this._quickSettingsSource.get_size();
-
-            // Ignore invalid sizes
-            if (sourceWidth <= 0 || sourceHeight <= 0) {
-                return;
-            }
-
-            // During fullscreen on primary monitor, only allow GROWING (for new icons)
-            // Block SHRINKING to prevent collapse when main panel hides
-            if (this._isPrimaryMonitorFullscreen()) {
-                const currentWidth = this._cachedWidth || 0;
-                // Only update if the new size is BIGGER (new icon added)
-                if (sourceWidth > currentWidth) {
-                    this._quickSettingsClone.set_size(sourceWidth, sourceHeight);
-                    this._quickSettingsClone.min_width = sourceWidth;
-                    this._quickSettingsClone.min_height = sourceHeight;
+                // Track max observed width
+                if (sourceWidth > (this._cachedWidth || 0)) {
                     this._cachedWidth = sourceWidth;
-                    this._cachedHeight = sourceHeight;
                 }
-                this._wasFullscreen = true;
+
+                // Stop after duration
+                if (GLib.get_monotonic_time() > endTime) {
+                    this._monitorTimeoutId = null;
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                return GLib.SOURCE_CONTINUE;
+            };
+
+            this._monitorTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, checkSize);
+        }
+
+        _onSourceWidthChanged() {
+            // Do nothing if width is locked (initial size captured)
+            if (this._widthLocked) {
                 return;
             }
-
-            // Normal operation: update size if source is visible and not in overview
-            if (this._quickSettingsSource.visible && !Main.overview.visible) {
-                // If we just exited fullscreen, debounce the size update
-                // to avoid temporary large sizes during panel animation
-                if (this._wasFullscreen) {
-                    this._wasFullscreen = false;
-                    this._debounceSizeUpdate(sourceWidth, sourceHeight);
-                    return;
-                }
-
-                this._applySize(sourceWidth, sourceHeight);
+            // Before locked, track the width
+            if (this._monitorTimeoutId) {
+                // Already monitoring, let it handle
+            } else {
+                this._monitorSize(500);
             }
         }
 
-        _debounceSizeUpdate(width, height) {
-            // Clear any pending debounce
-            if (this._sizeDebounceId) {
-                GLib.source_remove(this._sizeDebounceId);
-                this._sizeDebounceId = null;
-            }
-
-            // Wait for panel to fully settle after exiting fullscreen
-            this._sizeDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                // Re-check the actual source size after settling
-                if (this._quickSettingsSource && this._quickSettingsClone) {
-                    const [finalWidth, finalHeight] = this._quickSettingsSource.get_size();
-                    if (finalWidth > 0 && finalHeight > 0) {
-                        this._applySize(finalWidth, finalHeight);
-                    }
-                }
-                this._sizeDebounceId = null;
-                return GLib.SOURCE_REMOVE;
-            });
-        }
-
-        _applySize(width, height) {
-            this._quickSettingsClone.set_size(width, height);
-            this._quickSettingsClone.min_width = width;
-            this._quickSettingsClone.min_height = height;
-            this._cachedWidth = width;
-            this._cachedHeight = height;
+        _detectAndLockWidth() {
+            // Unused - replaced by initial size capture
         }
 
         _isPrimaryMonitorFullscreen() {
@@ -894,6 +859,31 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._lockSizeTimeoutId = null;
             }
 
+            if (this._monitorTimeoutId) {
+                GLib.source_remove(this._monitorTimeoutId);
+                this._monitorTimeoutId = null;
+            }
+
+            if (this._captureNormalSizeId) {
+                GLib.source_remove(this._captureNormalSizeId);
+                this._captureNormalSizeId = null;
+            }
+
+            if (this._overviewShowingId) {
+                Main.overview.disconnect(this._overviewShowingId);
+                this._overviewShowingId = null;
+            }
+
+            if (this._overviewHidingId) {
+                Main.overview.disconnect(this._overviewHidingId);
+                this._overviewHidingId = null;
+            }
+
+            if (this._overviewHiddenId) {
+                Main.overview.disconnect(this._overviewHiddenId);
+                this._overviewHiddenId = null;
+            }
+
             if (this._sourceSizeChangedId && this._quickSettingsSource) {
                 this._quickSettingsSource.disconnect(this._sourceSizeChangedId);
                 this._sourceSizeChangedId = null;
@@ -902,6 +892,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._sizeDebounceId) {
                 GLib.source_remove(this._sizeDebounceId);
                 this._sizeDebounceId = null;
+            }
+
+            if (this._overviewShowingId) {
+                Main.overview.disconnect(this._overviewShowingId);
+                this._overviewShowingId = null;
+            }
+
+            if (this._overviewShownId) {
+                Main.overview.disconnect(this._overviewShownId);
+                this._overviewShownId = null;
             }
 
             if (this._role === 'activities') {

@@ -35,7 +35,8 @@ import * as WorkspacesView from 'resource:///org/gnome/shell/ui/workspacesView.j
 import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as MultiMonitors from './extension.js';
-import { shellVersion } from './extension.js';
+import * as Common from './common.js';
+import { shellVersion } from './common.js';
 import * as Constants from './mmPanelConstants.js';
 
 // Re-export for backward compatibility
@@ -62,6 +63,7 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         // Initialize _viewport for GNOME 46 compatibility
         this._viewport = new Clutter.Actor();
         this._contents.add_child(this._viewport);
+
 
         this._createBackground();
 
@@ -112,7 +114,7 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
     }
 }
 
-MultiMonitors.copyClass(WorkspaceThumbnail.WorkspaceThumbnail, MultiMonitorsWorkspaceThumbnailClass);
+Common.copyClass(WorkspaceThumbnail.WorkspaceThumbnail, MultiMonitorsWorkspaceThumbnailClass);
 export const MultiMonitorsWorkspaceThumbnail = GObject.registerClass({
     Properties: {
         'collapse-fraction': GObject.ParamSpec.double(
@@ -322,7 +324,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
     }
 }
 
-MultiMonitors.copyClass(WorkspaceThumbnail.ThumbnailsBox, MultiMonitorsThumbnailsBoxClass);
+Common.copyClass(WorkspaceThumbnail.ThumbnailsBox, MultiMonitorsThumbnailsBoxClass);
 export const MultiMonitorsThumbnailsBox = GObject.registerClass({
     Properties: {
         'indicator-y': GObject.ParamSpec.double(
@@ -382,7 +384,7 @@ var MultiMonitorsSlidingControl = (() => {
         super.destroy();
     }};
 
-    MultiMonitors.copyClass(OverviewControls.SlidingControl, MultiMonitorsSlidingControl);
+    Common.copyClass(OverviewControls.SlidingControl, MultiMonitorsSlidingControl);
     return GObject.registerClass(MultiMonitorsSlidingControl);
 })();
 
@@ -414,7 +416,7 @@ var MultiMonitorsThumbnailsSlider = (() => {
         super.destroy();
     }};
 
-    MultiMonitors.copyClass(OverviewControls.ThumbnailsSlider, MultiMonitorsThumbnailsSlider);
+    Common.copyClass(OverviewControls.ThumbnailsSlider, MultiMonitorsThumbnailsSlider);
     return GObject.registerClass(MultiMonitorsThumbnailsSlider);
 })();
 */

@@ -56,7 +56,7 @@
     min-height: 24px;
 }
 
-/* Quick Settings (system tray) in extended monitor - full height */
+/* Quick Settings (system tray) in extended monitor */
 .mm-quick-settings {
     padding: 0 4px;
     -natural-hpadding: 4px;
@@ -64,6 +64,12 @@
 }
 
 .mm-quick-settings-box {
+    padding: 0;
+    margin: 0;
+}
+
+/* Clipping container for system tray */
+.mm-quick-settings-clip {
     padding: 0;
     margin: 0;
 }

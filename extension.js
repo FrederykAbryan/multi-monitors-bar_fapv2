@@ -24,8 +24,11 @@ import * as PanelModule from 'resource:///org/gnome/shell/ui/panel.js';
 import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 
 // Shell version for feature detection - centralized here and exported for other modules
-const [major] = Config.PACKAGE_VERSION.split('.');
-export const shellVersion = Number.parseInt(major);
+// Shell version for feature detection - centralized here and exported for other modules
+import * as Common from './common.js';
+export const shellVersion = Common.shellVersion;
+export const patchAddActorMethod = Common.patchAddActorMethod;
+export const copyClass = Common.copyClass;
 
 import * as MMLayout from './mmlayout.js';
 import * as MMOverview from './mmoverview.js';
@@ -35,41 +38,6 @@ const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
 
 const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
-
-export function patchAddActorMethod(prototype) {
-	if (!prototype.add_actor) {
-		if (prototype.add_child) {
-			prototype.add_actor = function (actor) {
-				return this.add_child(actor);
-			};
-		} else {
-			let parent = Object.getPrototypeOf(prototype);
-			if (parent && parent.add_child) {
-				prototype.add_actor = function (actor) {
-					return this.add_child(actor);
-				};
-			}
-		}
-	}
-}
-
-export function copyClass(s, d) {
-	if (!s) {
-		return;
-	}
-	let propertyNames = Reflect.ownKeys(s.prototype);
-	for (let pName of propertyNames.values()) {
-		if (typeof pName === "symbol") continue;
-		if (Object.prototype.hasOwnProperty.call(d.prototype, pName)) continue;
-		if (pName === "prototype") continue;
-		if (pName === "constructor") continue;
-		let pDesc = Reflect.getOwnPropertyDescriptor(s.prototype, pName);
-		if (typeof pDesc !== 'object') continue;
-		Reflect.defineProperty(d.prototype, pName, pDesc);
-	}
-
-	patchAddActorMethod(d.prototype);
-};
 
 export let mmPanel = [];
 export let mmOverview = null;

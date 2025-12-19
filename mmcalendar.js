@@ -33,7 +33,8 @@ import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.j
 
 import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as MultiMonitors from './extension.js';
-import { shellVersion } from './extension.js';
+import * as Common from './common.js';
+import { shellVersion } from './common.js';
 
 export let MainRef = null;
 export function setMainRef(m) { MainRef = m; }
@@ -178,7 +179,7 @@ var MultiMonitorsCalendar = (() => {
             super.destroy();
         }
     };
-    MultiMonitors.copyClass(Calendar.Calendar, MultiMonitorsCalendar);
+    Common.copyClass(Calendar.Calendar, MultiMonitorsCalendar);
     return GObject.registerClass({
         Signals: { 'selected-date-changed': { param_types: [GLib.DateTime.$gtype] } },
     }, MultiMonitorsCalendar);
@@ -258,7 +259,7 @@ var MultiMonitorsEventsSection = (() => {
 
     const EventsBase = DateMenu.EventsSection ?? null;
     if (EventsBase) {
-        MultiMonitors.copyClass(EventsBase, MultiMonitorsEventsSection);
+        Common.copyClass(EventsBase, MultiMonitorsEventsSection);
     }
     // If EventsBase is null, we already have fallback implementations of
     // setEventSource and setDate in the class definition above
@@ -308,7 +309,7 @@ var MultiMonitorsNotificationSection = (() => {
     };
 
     if (Calendar.NotificationSection)
-        MultiMonitors.copyClass(Calendar.NotificationSection, MultiMonitorsNotificationSection);
+        Common.copyClass(Calendar.NotificationSection, MultiMonitorsNotificationSection);
     return GObject.registerClass(MultiMonitorsNotificationSection);
 })();
 
@@ -415,7 +416,7 @@ var MultiMonitorsCalendarMessageList = (() => {
     };
 
     if (Calendar.CalendarMessageList)
-        MultiMonitors.copyClass(Calendar.CalendarMessageList, MultiMonitorsCalendarMessageList);
+        Common.copyClass(Calendar.CalendarMessageList, MultiMonitorsCalendarMessageList);
 
     // Override _init AFTER copyClass to avoid signal connection issues with St.BoxLayout
     MultiMonitorsCalendarMessageList.prototype._init = MultiMonitorsCalendarMessageList.prototype._initCustom;
@@ -434,7 +435,7 @@ var MultiMonitorsCalendarMessageList = (() => {
 
     let RegisteredClass = GObject.registerClass(MultiMonitorsCalendarMessageList);
     // Apply GNOME 46 compatibility after registration
-    MultiMonitors.patchAddActorMethod(RegisteredClass.prototype);
+    Common.patchAddActorMethod(RegisteredClass.prototype);
 
     // Wrap _sectionList to prevent 'actor-added' signal connections
     // This is a workaround for inherited methods that try to connect to signals
@@ -591,7 +592,7 @@ var MultiMonitorsMessagesIndicator = (() => {
 
     // Copy upstream methods FIRST, then register
     if (DateMenu.MessagesIndicator)
-        MultiMonitors.copyClass(DateMenu.MessagesIndicator, MultiMonitorsMessagesIndicator);
+        Common.copyClass(DateMenu.MessagesIndicator, MultiMonitorsMessagesIndicator);
     return GObject.registerClass(MultiMonitorsMessagesIndicator);
 })();
 
@@ -793,10 +794,10 @@ var MultiMonitorsDateMenuButton = (() => {
 
     // Don't copyClass for DateMenuButton as our custom _init would be overwritten
     // if (DateMenu.DateMenuButton)
-    //     MultiMonitors.copyClass(DateMenu.DateMenuButton, MultiMonitorsDateMenuButton);
+    //     Common.copyClass(DateMenu.DateMenuButton, MultiMonitorsDateMenuButton);
     let RegisteredClass = GObject.registerClass(MultiMonitorsDateMenuButton);
     // Apply GNOME 46 compatibility after registration
-    MultiMonitors.patchAddActorMethod(RegisteredClass.prototype);
+    Common.patchAddActorMethod(RegisteredClass.prototype);
     return RegisteredClass;
 })();
 
