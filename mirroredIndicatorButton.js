@@ -999,6 +999,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._labelSyncId = null;
             }
 
+            if (this._arcMenuTimeoutId) {
+                GLib.source_remove(this._arcMenuTimeoutId);
+                this._arcMenuTimeoutId = null;
+            }
+
             if (this._lockSizeTimeoutId) {
                 GLib.source_remove(this._lockSizeTimeoutId);
                 this._lockSizeTimeoutId = null;
