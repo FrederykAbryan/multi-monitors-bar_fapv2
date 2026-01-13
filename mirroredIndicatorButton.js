@@ -333,6 +333,60 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._quickSettingsClone.queue_relayout();
                 }
             });
+
+            // Monitor fullscreen state changes on primary monitor
+            this._fullscreenChangedId = global.display.connect('in-fullscreen-changed',
+                this._onQuickSettingsFullscreenChanged.bind(this));
+        }
+
+        _onQuickSettingsFullscreenChanged() {
+            // Handle fullscreen state changes separately from overview
+            if (!this._quickSettingsClone) return;
+
+            const isPrimaryFullscreen = this._isPrimaryMonitorFullscreen();
+
+            if (isPrimaryFullscreen) {
+                // Entering fullscreen on primary - apply clipping container if not already
+                if (!this._quickSettingsClipContainer) {
+                    const [, h] = this._quickSettingsClone.get_size();
+                    this._normalCloneHeight = h;
+
+                    // Make container taller than the clone to give room for alignment
+                    const containerHeight = h + 6; // Add 6px for downward shift
+
+                    const clipContainer = new St.Widget({
+                        style_class: 'mm-quick-settings-clip',
+                        x_expand: true,
+                        y_expand: false,
+                        y_align: Clutter.ActorAlign.FILL,
+                        clip_to_allocation: true,
+                    });
+
+                    clipContainer.set_height(containerHeight);
+
+                    this._quickSettingsContainer.remove_child(this._quickSettingsClone);
+                    clipContainer.add_child(this._quickSettingsClone);
+                    this._quickSettingsContainer.add_child(clipContainer);
+                    this._quickSettingsClipContainer = clipContainer;
+                } else {
+                    // Container already exists, just update height for fullscreen mode
+                    if (this._normalCloneHeight > 0) {
+                        this._quickSettingsClipContainer.set_height(this._normalCloneHeight + 6);
+                    }
+                }
+
+                // Adjust alignment for fullscreen - move down
+                this._quickSettingsClone.y_align = Clutter.ActorAlign.END;
+            } else {
+                // Exiting fullscreen on primary - restore alignment and height
+                // but KEEP the clipping container to prevent size issues
+                this._quickSettingsClone.y_align = Clutter.ActorAlign.FILL;
+
+                if (this._quickSettingsClipContainer && this._normalCloneHeight > 0) {
+                    // Restore original height (no extra padding)
+                    this._quickSettingsClipContainer.set_height(this._normalCloneHeight);
+                }
+            }
         }
 
         _applyNormalMode() {
