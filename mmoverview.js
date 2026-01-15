@@ -467,6 +467,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._filterAppGrid(text);
             });
 
+            // Handle Enter key to activate first matching app
+            this._searchEntry.clutter_text.connect('activate', () => {
+                if (this._firstVisibleApp && this._firstVisibleApp._appInfo) {
+                    this._firstVisibleApp._appInfo.activate();
+                    Main.overview.hide();
+                }
+            });
+
             // Create scrollable app grid
             this._appGridScrollView = new St.ScrollView({
                 style_class: 'mm-app-grid-scroll',
@@ -659,6 +667,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             const children = this._appGrid.get_children();
             const maxVisibleApps = 6; // Maximum apps to show when searching
             let visibleCount = 0;
+            let firstVisibleApp = null;
 
             for (const child of children) {
                 if (!child._appInfo) {
@@ -677,6 +686,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     const matches = appName.includes(normalizedSearch) || appId.includes(normalizedSearch);
                     if (matches && visibleCount < maxVisibleApps) {
                         child.visible = true;
+                        if (!firstVisibleApp) {
+                            firstVisibleApp = child;
+                        }
                         visibleCount++;
                     } else {
                         child.visible = false;
@@ -684,24 +696,35 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 }
             }
 
+            // Store reference to first visible app for Enter key activation
+            this._firstVisibleApp = firstVisibleApp;
+
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
                 const hasText = normalizedSearch.length > 0;
                 log('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', visibleApps=' + visibleCount);
 
-                // Lazy discovery: if workspacesViews wasn't found on show(), try again now
-                if (!this._workspacesViews && hasText) {
-                    this._tryFindWorkspacesViews();
-                }
+                // Always re-discover workspacesViews to ensure we have a valid reference
+                this._tryFindWorkspacesViews();
 
                 this._appGridScrollView.visible = hasText;
 
                 // When searching (hasText is true), hide workspace views
-                // When not searching (hasText is false), show workspace views (managed by _setVisibility)
+                // When not searching (hasText is false), show workspace views
                 if (this._workspacesViews) {
                     this._workspacesViews.visible = !hasText;
                     this._workspacesViews.opacity = hasText ? 0 : 255;
                     log('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                }
+
+                // Also hide our own thumbnails box when searching
+                if (this._thumbnailsBox) {
+                    this._thumbnailsBox.visible = !hasText;
+                }
+
+                // Hide the searchController placeholder when searching (we use our own grid)
+                if (this._searchController) {
+                    this._searchController.visible = false;
                 }
             }
         }
