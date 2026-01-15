@@ -32,6 +32,8 @@ import * as SearchController from 'resource:///org/gnome/shell/ui/searchControll
 import * as LayoutManager from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Background from 'resource:///org/gnome/shell/ui/background.js';
 import * as WorkspacesView from 'resource:///org/gnome/shell/ui/workspacesView.js';
+import * as AppDisplay from 'resource:///org/gnome/shell/ui/appDisplay.js';
+import * as Search from 'resource:///org/gnome/shell/ui/search.js';
 import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as MultiMonitors from './extension.js';
@@ -431,15 +433,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._fixGeometry = 0;
             this._visible = false;
 
-            let layout;
-            if (OverviewControls.ControlsManagerLayout) {
-                layout = new OverviewControls.ControlsManagerLayout();
-            } else if (OverviewControls.ControlsLayout) {
-                layout = new OverviewControls.ControlsLayout();
-            } else {
-                // GNOME 46 fallback - use simple BinLayout
-                layout = new Clutter.BinLayout();
-            }
+            // Use a simple BinLayout to ensure we have full control over the child placement
+            // The OverviewControls layouts are too complex and tied to primary monitor state
+            let layout = new Clutter.BinLayout();
+
             super._init({
                 layout_manager: layout,
                 x_expand: true,
@@ -453,23 +450,107 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 new MultiMonitorsThumbnailsBox(this._workspaceAdjustment, this._monitorIndex, this._settings);
             //this._thumbnailsSlider = new MultiMonitorsThumbnailsSlider(this._thumbnailsBox);
 
+            // Create functional search entry
+            this._searchEntry = new St.Entry({
+                hint_text: 'Type to search...',
+                style_class: 'search-entry',
+                can_focus: true,
+                x_expand: false,
+                x_align: Clutter.ActorAlign.CENTER,
+                style: 'width: 400px; border-radius: 8px;',
+            });
+
+            // Connect search entry to filter app grid locally
+            this._searchEntry.clutter_text.connect('text-changed', () => {
+                const text = this._searchEntry.get_text();
+                // Filter the local app grid based on search text
+                this._filterAppGrid(text);
+            });
+
+            // Create scrollable app grid
+            this._appGridScrollView = new St.ScrollView({
+                style_class: 'mm-app-grid-scroll',
+                x_expand: true,
+                y_expand: true,
+                overlay_scrollbars: true,
+                hscrollbar_policy: St.PolicyType.NEVER,
+                vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            });
+
+            this._appGridContainer = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                style: 'spacing: 10px; min-width: 400px; max-width: 600px;', // Limit width for list view
+                x_align: Clutter.ActorAlign.CENTER, // Center the list
+            });
+            this._appGridScrollView.set_child(this._appGridContainer);
+
+            // Create app grid list layout (Vertical List)
+            this._appGrid = new St.Widget({
+                layout_manager: new Clutter.BoxLayout({
+                    orientation: Clutter.Orientation.VERTICAL,
+                    spacing: 4, // Spacing between list items
+                }),
+                x_expand: true,
+                y_expand: true,
+                visible: true,
+                style: 'padding: 20px;',
+            });
+            this._appGridContainer.add_child(this._appGrid);
+
+            // Ensure scroll view is hidden by default
+            this._appGridScrollView.visible = false;
+
+            // Populate app grid with installed applications
+            try {
+                this._populateAppGrid();
+            } catch (e) {
+                log('[MultiMonitors] Error populating app grid: ' + e);
+            }
+
             this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
+
+            this._contentArea = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                x_expand: true,
+                y_expand: true
+            });
+            this._contentArea.add_child(this._searchController);
+            this._contentArea.add_child(this._appGridScrollView);
+
 
             // 'page-changed' and 'page-empty' signals exist in GNOME < 46
             this._pageChangedId = 0;
             this._pageEmptyId = 0;
-            if (Main.overview.searchController && shellVersion < 46) {
-                this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
-                this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
+            if (Main.overview.searchController) {
+                // Determine signal source based on shell version or object capability
+                // Modern GNOME uses state-changed or similar, but page-changed is common in 40-45
+                // We'll try to connect to available signals or use the existing logic check
+                if (Main.overview.searchController.connect) {
+                    // Ensure we catch page changes to toggle App Grid
+                    // Even in 46, we might need these signals if they exist
+                    try {
+                        this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
+                    } catch (e) { log(e); }
+                    try {
+                        this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
+                    } catch (e) { log(e); }
+                }
             }
 
             this._group = new St.BoxLayout({
                 name: 'mm-overview-group-' + index,
-                x_expand: true, y_expand: true
+                x_expand: true, y_expand: true,
+                vertical: true,
+                style: 'padding: 30px;' // Add some padding so it doesn't touch edges
             });
             this.add_child(this._group);
 
-            this._group.add_child(this._searchController);
+            // Add search entry
+            this._group.add_child(this._searchEntry);
+
+            // Add content area (Grid/Thumbnails)
+            this._group.add_child(this._contentArea);
             //this._group.add_actor(this._thumbnailsSlider);
 
             this._monitorsChanged();
@@ -480,6 +561,163 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             //this._thumbnailsSelectSideId = this._settings.connect('changed::'+THUMBNAILS_SLIDER_POSITION_ID,
             //                                                this._thumbnailsSelectSide.bind(this));
             this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', this._monitorsChanged.bind(this));
+        }
+
+        _populateAppGrid() {
+            // Get all installed applications
+            const appSystem = Shell.AppSystem.get_default();
+            const apps = appSystem.get_installed().filter(app => {
+                return app.should_show();
+            });
+
+            log('[MultiMonitors] Found ' + apps.length + ' apps to display');
+
+            // Sort alphabetically
+            apps.sort((a, b) => a.get_name().localeCompare(b.get_name()));
+
+            // Create app icons (limit to reasonable number for performance)
+            const maxApps = 100;
+            for (let i = 0; i < Math.min(apps.length, maxApps); i++) {
+                const app = apps[i];
+                const appButton = this._createAppButton(app);
+                this._appGrid.add_child(appButton);
+            }
+
+            log('[MultiMonitors] App grid populated with ' + Math.min(apps.length, maxApps) + ' buttons');
+        }
+
+        _createAppButton(app) {
+            const button = new St.Button({
+                style_class: 'app-well-app',
+                reactive: true,
+                button_mask: St.ButtonMask.ONE,
+                can_focus: true,
+                x_expand: false,
+                y_expand: false,
+                style: 'padding: 12px; margin: 4px; border-radius: 12px;', // List item styling
+                x_align: Clutter.ActorAlign.FILL, // Fill width
+            });
+
+            // Store app reference for filtering
+            button._appInfo = app;
+
+            const box = new St.BoxLayout({
+                vertical: false, // Horizontal row
+                x_align: Clutter.ActorAlign.START, // Align content to start
+                y_align: Clutter.ActorAlign.CENTER,
+                style: 'spacing: 16px;', // Space between icon and text
+            });
+            button.set_child(box);
+
+            // App icon - with fallback
+            try {
+                const icon = app.create_icon_texture(48);
+                if (icon) {
+                    box.add_child(icon);
+                } else {
+                    // Fallback: use generic icon
+                    const fallbackIcon = new St.Icon({
+                        icon_name: 'application-x-executable',
+                        icon_size: 48,
+                    });
+                    box.add_child(fallbackIcon);
+                }
+            } catch (e) {
+                log('[MultiMonitors] Error creating app icon: ' + e);
+                const fallbackIcon = new St.Icon({
+                    icon_name: 'application-x-executable',
+                    icon_size: 48,
+                });
+                box.add_child(fallbackIcon);
+            }
+
+            // App name
+            // App name - Larger and clearer for list view
+            const label = new St.Label({
+                text: app.get_name(),
+                y_align: Clutter.ActorAlign.CENTER,
+                style: 'font-size: 16px; font-weight: bold; color: white;',
+            });
+            label.clutter_text.set_ellipsize(3); // PANGO_ELLIPSIZE_END
+            box.add_child(label);
+
+            // Click handler to launch app
+            button.connect('clicked', () => {
+                app.activate();
+                Main.overview.hide();
+            });
+
+            return button;
+        }
+
+        _filterAppGrid(searchText) {
+            // Filter the app grid based on search text
+            const normalizedSearch = searchText.toLowerCase().trim();
+
+            if (!this._appGrid) return;
+
+            const children = this._appGrid.get_children();
+            for (const child of children) {
+                if (!child._appInfo) {
+                    child.visible = normalizedSearch === '';
+                    continue;
+                }
+
+                const appName = child._appInfo.get_name().toLowerCase();
+                const appId = child._appInfo.get_id() ? child._appInfo.get_id().toLowerCase() : '';
+
+                if (normalizedSearch === '') {
+                    // When clearing search, we don't want to show all apps
+                    // We want to hide the grid and show windows (via visibility logic)
+                    child.visible = true;
+                } else {
+                    child.visible = appName.includes(normalizedSearch) || appId.includes(normalizedSearch);
+                }
+            }
+
+            // Toggle visibility of the entire scroll view based on search text
+            if (this._appGridScrollView) {
+                const hasText = normalizedSearch.length > 0;
+                log('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', workspacesViews=' + (this._workspacesViews ? 'yes' : 'no'));
+
+                // Lazy discovery: if workspacesViews wasn't found on show(), try again now
+                if (!this._workspacesViews && hasText) {
+                    this._tryFindWorkspacesViews();
+                }
+
+                this._appGridScrollView.visible = hasText;
+
+                // When searching (hasText is true), hide workspace views
+                // When not searching (hasText is false), show workspace views (managed by _setVisibility)
+                if (this._workspacesViews) {
+                    this._workspacesViews.visible = !hasText;
+                    this._workspacesViews.opacity = hasText ? 0 : 255;
+                    log('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                }
+            }
+        }
+
+        _tryFindWorkspacesViews() {
+            // Helper to find workspaces view if not found on initial show()
+            let workspacesDisplay = null;
+
+            if (Main.overview.searchController && Main.overview.searchController._workspacesDisplay) {
+                workspacesDisplay = Main.overview.searchController._workspacesDisplay;
+            }
+            else if (Main.overview._overview && Main.overview._overview._controls && Main.overview._overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._overview._controls._workspacesDisplay;
+            }
+            else if (Main.overview._controls && Main.overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._controls._workspacesDisplay;
+            }
+
+            if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
+                this._workspacesViews = workspacesDisplay._workspacesViews[this._monitorIndex];
+                log('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
+            } else if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
+                this._workspacesViews = workspacesDisplay._primaryWorkspacesView;
+                log('[MultiMonitors] Lazy discovery: Found primary workspacesView');
+            }
         }
 
         destroy() {
@@ -515,10 +753,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         _thumbnailsSelectSide() {
             let thumbnailsSlider;
             thumbnailsSlider = this._thumbnailsSlider;
-    
+     
             let sett = this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID);
             let onLeftSide = sett === 'left' || (sett === 'auto' && this._primaryMonitorOnTheLeft);
-    
+     
             if (onLeftSide) {
                 let first = this._group.get_first_child();
                 if (first != thumbnailsSlider) {
@@ -603,8 +841,15 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             let activePage = Main.overview.searchController.getActivePage();
             let thumbnailsVisible = activePage == SearchController.ViewPage.WINDOWS;
 
+            // Check for local search text
+            const hasLocalSearch = this._searchEntry && this._searchEntry.get_text().length > 0;
+
+            if (this._appGridScrollView) {
+                this._appGridScrollView.visible = hasLocalSearch;
+            }
+
             let opacity = null;
-            if (thumbnailsVisible) {
+            if (thumbnailsVisible && !hasLocalSearch) {
                 opacity = 255;
                 if (this._fixGeometry === 1)
                     this._fixGeometry = 0;
@@ -621,6 +866,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 opacity: opacity,
                 duration: OverviewControls.SIDE_CONTROLS_ANIMATION_TIME,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    // Ensure visibility is toggled off when opacity is 0 to prevents clicks/focus
+                    if (opacity === 0 && this._workspacesViews) {
+                        this._workspacesViews.visible = false;
+                    } else if (opacity === 255 && this._workspacesViews) {
+                        this._workspacesViews.visible = true;
+                    }
+                }
             });
         }
 
@@ -632,13 +885,33 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._searchController.visible = true;
 
             // GNOME 46 changed the searchController structure - _workspacesDisplay may not exist
-            // Guard against undefined to prevent crashes
+            // Try to find the workspaces view using multiple paths
             this._workspacesViews = null;
-            if (Main.overview.searchController &&
-                Main.overview.searchController._workspacesDisplay &&
-                Main.overview.searchController._workspacesDisplay._workspacesViews &&
-                Main.overview.searchController._workspacesDisplay._workspacesViews[this._monitorIndex]) {
-                this._workspacesViews = Main.overview.searchController._workspacesDisplay._workspacesViews[this._monitorIndex];
+            let workspacesDisplay = null;
+
+            // Path 1: Via searchController (GNOME < 46)
+            if (Main.overview.searchController && Main.overview.searchController._workspacesDisplay) {
+                workspacesDisplay = Main.overview.searchController._workspacesDisplay;
+            }
+            // Path 2: Via overview controls (GNOME 46+)
+            else if (Main.overview._overview && Main.overview._overview._controls && Main.overview._overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._overview._controls._workspacesDisplay;
+            }
+            // Path 3: Direct on controls (Some versions)
+            else if (Main.overview._controls && Main.overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._controls._workspacesDisplay;
+            }
+
+            if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
+                this._workspacesViews = workspacesDisplay._workspacesViews[this._monitorIndex];
+                log('[MultiMonitors] Found workspacesView for monitor ' + this._monitorIndex);
+            } else {
+                log('[MultiMonitors] WARNING: Could not find workspacesView for monitor ' + this._monitorIndex);
+                // Try to find it in the new "primary" view for GNOME 45+ if it's not indexed array
+                if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
+                    this._workspacesViews = workspacesDisplay._primaryWorkspacesView;
+                    log('[MultiMonitors] Found primary workspacesView');
+                }
             }
 
             this._visible = true;
