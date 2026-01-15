@@ -32,6 +32,7 @@ export const copyClass = Common.copyClass;
 import * as MMLayout from './mmlayout.js';
 import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
+import * as ScreenshotPatch from './screenshotPatch.js';
 
 const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
@@ -187,9 +188,15 @@ export default class MultiMonitorsExtension extends Extension {
 			}
 			return indicator;
 		};
+
+		// Patch screenshot UI to open on cursor's monitor
+		ScreenshotPatch.patchScreenshotUI();
 	}
 
 	disable() {
+		// Unpatch screenshot UI
+		ScreenshotPatch.unpatchScreenshotUI();
+
 		if (this._relayoutId) {
 			Main.layoutManager.disconnect(this._relayoutId);
 			this._relayoutId = null;
