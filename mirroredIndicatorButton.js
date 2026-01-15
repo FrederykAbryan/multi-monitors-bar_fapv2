@@ -352,7 +352,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._normalCloneHeight = h;
 
                     // Make container taller than the clone to give room for alignment
-                    const containerHeight = h + 6; // Add 6px for downward shift
+                    const containerHeight = h + 10; // Add 10px for downward shift
 
                     const clipContainer = new St.Widget({
                         style_class: 'mm-quick-settings-clip',
@@ -371,7 +371,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 } else {
                     // Container already exists, just update height for fullscreen mode
                     if (this._normalCloneHeight > 0) {
-                        this._quickSettingsClipContainer.set_height(this._normalCloneHeight + 6);
+                        this._quickSettingsClipContainer.set_height(this._normalCloneHeight + 10);
                     }
                 }
 
