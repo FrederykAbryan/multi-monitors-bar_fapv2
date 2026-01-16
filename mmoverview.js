@@ -667,7 +667,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             const label = new St.Label({
                 text: app.get_name(),
                 x_align: Clutter.ActorAlign.CENTER,
-                style: 'font-size: 12px; font-weight: bold; color: white; max-width: 100px;',
+                style: 'font-size: 16px; font-weight: bold; color: white; max-width: 100px;',
             });
             label.clutter_text.set_ellipsize(3); // PANGO_ELLIPSIZE_END
             label.clutter_text.set_line_wrap(false);
@@ -692,8 +692,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         _setFocusedApp(app) {
             // Base style without highlight (use consistent sizing)
             const baseStyle = 'padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;';
-            // Focused style uses box-shadow instead of border to avoid layout shifts
-            const focusedStyle = baseStyle + ' box-shadow: 0 0 0 3px #3584e4; background-color: rgba(53, 132, 228, 0.3);';
+            // Focused style uses box-shadow with white/gray color at 75% opacity
+            const focusedStyle = baseStyle + ' box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.24); background-color: rgba(255, 255, 255, 0.39);';
 
             // Remove highlight from previous focused app
             if (this._focusedApp && this._focusedApp !== app) {
