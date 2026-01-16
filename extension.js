@@ -196,8 +196,8 @@ export default class MultiMonitorsExtension extends Extension {
 			return indicator;
 		};
 
-		// Patch screenshot UI to open on cursor's monitor
-		ScreenshotPatch.patchScreenshotUI();
+		// Patch screenshot UI to open on cursor's monitor (or all monitors based on setting)
+		ScreenshotPatch.patchScreenshotUI(this._settings);
 	}
 
 	disable() {
