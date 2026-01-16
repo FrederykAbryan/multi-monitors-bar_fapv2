@@ -470,8 +470,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Handle Enter key to activate focused app
             this._searchEntry.clutter_text.connect('activate', () => {
                 if (this._focusedApp && this._focusedApp._appInfo) {
-                    this._focusedApp._appInfo.activate();
-                    Main.overview.hide();
+                    this._launchApp(this._focusedApp._appInfo);
                 }
             });
 
@@ -615,7 +614,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 can_focus: true,
                 x_expand: false,
                 y_expand: false,
-                style: 'padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;',
+                style: 'padding: 16px; margin: 8px; border-radius: 16px; min-width: 100px;',
             });
 
             // Store app reference for filtering
@@ -647,7 +646,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Fallback if GIcon didn't work
             if (!icon) {
                 try {
-                    icon = app.create_icon_texture(64);
+                    icon = app.create_icon_texture(86);
                 } catch (e) {
                     log('[MultiMonitors] Error creating icon texture: ' + e);
                 }
@@ -657,7 +656,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!icon) {
                 icon = new St.Icon({
                     icon_name: 'application-x-executable',
-                    icon_size: 64,
+                    icon_size: 86,
                 });
             }
 
@@ -667,7 +666,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             const label = new St.Label({
                 text: app.get_name(),
                 x_align: Clutter.ActorAlign.CENTER,
-                style: 'font-size: 16px; font-weight: bold; color: white; max-width: 100px;',
+                style: 'font-size: 16px; font-weight: bold; color: white; max-width: 140px;',
             });
             label.clutter_text.set_ellipsize(3); // PANGO_ELLIPSIZE_END
             label.clutter_text.set_line_wrap(false);
@@ -675,8 +674,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Click handler to launch app
             button.connect('clicked', () => {
-                app.activate();
-                Main.overview.hide();
+                this._launchApp(app);
             });
 
             // Hover handler to set focus on this app
@@ -737,6 +735,37 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Set focus to new app
             this._setFocusedApp(visibleApps[newIndex]);
+        }
+
+        _launchApp(appInfo) {
+            // Launch an app from either Shell.App or Gio.AppInfo
+            try {
+                // First try to get the Shell.App from AppSystem
+                const appSystem = Shell.AppSystem.get_default();
+                const appId = appInfo.get_id();
+                const shellApp = appSystem.lookup_app(appId);
+
+                if (shellApp) {
+                    // Use Shell.App methods
+                    shellApp.activate();
+                } else if (appInfo.launch) {
+                    // Use Gio.AppInfo.launch()
+                    appInfo.launch([], null);
+                } else if (appInfo.activate) {
+                    // Fallback to activate if available
+                    appInfo.activate();
+                }
+            } catch (e) {
+                log('[MultiMonitors] Error launching app: ' + e);
+                // Last resort - try launch directly
+                try {
+                    appInfo.launch([], null);
+                } catch (e2) {
+                    log('[MultiMonitors] Fallback launch also failed: ' + e2);
+                }
+            }
+
+            Main.overview.hide();
         }
 
         _filterAppGrid(searchText) {
