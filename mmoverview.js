@@ -752,6 +752,25 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
         }
 
+        show() {
+            // Called when overview is shown - nothing special needed
+            this._visible = true;
+        }
+
+        hide() {
+            // Called when overview is closed - clear the search input
+            this._visible = false;
+            if (this._searchEntry) {
+                this._searchEntry.set_text('');
+            }
+            // Reset app grid visibility
+            if (this._appGridScrollView) {
+                this._appGridScrollView.visible = false;
+            }
+            // Clear the first visible app reference
+            this._firstVisibleApp = null;
+        }
+
         destroy() {
             if (this._pageChangedId && Main.overview.searchController) {
                 Main.overview.searchController.disconnect(this._pageChangedId);
