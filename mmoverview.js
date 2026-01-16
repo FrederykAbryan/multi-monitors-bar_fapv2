@@ -618,26 +618,39 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             });
             button.set_child(box);
 
-            // App icon - with fallback (larger for grid view)
+            // App icon - use the app's GIcon for proper icon display
+            let icon = null;
             try {
-                const icon = app.create_icon_texture(64);
-                if (icon) {
-                    box.add_child(icon);
-                } else {
-                    const fallbackIcon = new St.Icon({
-                        icon_name: 'application-x-executable',
+                const gIcon = app.get_icon();
+                if (gIcon) {
+                    icon = new St.Icon({
+                        gicon: gIcon,
                         icon_size: 64,
+                        style_class: 'app-icon',
                     });
-                    box.add_child(fallbackIcon);
                 }
             } catch (e) {
-                log('[MultiMonitors] Error creating app icon: ' + e);
-                const fallbackIcon = new St.Icon({
+                log('[MultiMonitors] Error getting app GIcon: ' + e);
+            }
+
+            // Fallback if GIcon didn't work
+            if (!icon) {
+                try {
+                    icon = app.create_icon_texture(64);
+                } catch (e) {
+                    log('[MultiMonitors] Error creating icon texture: ' + e);
+                }
+            }
+
+            // Final fallback to generic icon
+            if (!icon) {
+                icon = new St.Icon({
                     icon_name: 'application-x-executable',
                     icon_size: 64,
                 });
-                box.add_child(fallbackIcon);
             }
+
+            box.add_child(icon);
 
             // App name - centered below icon
             const label = new St.Label({
