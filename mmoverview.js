@@ -738,7 +738,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _launchApp(appInfo) {
-            // Launch an app from either Shell.App or Gio.AppInfo
+            // Launch an app on this monitor
+            const targetMonitor = this._monitorIndex;
+
             try {
                 // First try to get the Shell.App from AppSystem
                 const appSystem = Shell.AppSystem.get_default();
@@ -746,8 +748,34 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 const shellApp = appSystem.lookup_app(appId);
 
                 if (shellApp) {
-                    // Use Shell.App methods
-                    shellApp.activate();
+                    // Set up a window-created listener to catch the new window
+                    const windowCreatedId = global.display.connect('window-created', (display, window) => {
+                        // Check if this window belongs to our app
+                        const windowApp = Shell.WindowTracker.get_default().get_window_app(window);
+                        if (windowApp && windowApp.get_id() === shellApp.get_id()) {
+                            // Disconnect immediately
+                            global.display.disconnect(windowCreatedId);
+
+                            // Move window to target monitor after it's fully created
+                            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                                this._moveWindowToMonitor(window, targetMonitor);
+                                return GLib.SOURCE_REMOVE;
+                            });
+                        }
+                    });
+
+                    // Auto-disconnect after 5 seconds to prevent memory leaks
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                        try {
+                            global.display.disconnect(windowCreatedId);
+                        } catch (e) {
+                            // Already disconnected
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+
+                    // Launch the app
+                    shellApp.open_new_window(-1);
                 } else if (appInfo.launch) {
                     // Use Gio.AppInfo.launch()
                     appInfo.launch([], null);
@@ -766,6 +794,35 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
 
             Main.overview.hide();
+        }
+
+        _moveWindowToMonitor(window, targetMonitor) {
+            // Move a specific window to the target monitor
+            try {
+                const monitor = Main.layoutManager.monitors[targetMonitor];
+
+                if (monitor && window) {
+                    log('[MultiMonitors] Moving window to monitor ' + targetMonitor);
+
+                    // Move window to the target monitor
+                    window.move_to_monitor(targetMonitor);
+
+                    // Center the window on the new monitor
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                        try {
+                            const rect = window.get_frame_rect();
+                            const newX = monitor.x + Math.floor((monitor.width - rect.width) / 2);
+                            const newY = monitor.y + Math.floor((monitor.height - rect.height) / 2);
+                            window.move_frame(true, newX, newY);
+                        } catch (e) {
+                            log('[MultiMonitors] Error centering window: ' + e);
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
+            } catch (e) {
+                log('[MultiMonitors] Error moving window to monitor: ' + e);
+            }
         }
 
         _filterAppGrid(searchText) {
@@ -935,10 +992,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         _thumbnailsSelectSide() {
             let thumbnailsSlider;
             thumbnailsSlider = this._thumbnailsSlider;
-     
+         
             let sett = this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID);
             let onLeftSide = sett === 'left' || (sett === 'auto' && this._primaryMonitorOnTheLeft);
-     
+         
             if (onLeftSide) {
                 let first = this._group.get_first_child();
                 if (first != thumbnailsSlider) {
