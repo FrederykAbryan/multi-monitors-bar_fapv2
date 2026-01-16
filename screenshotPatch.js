@@ -305,24 +305,53 @@ function _createToolbarClonesForAllMonitors() {
                 const cloneX = origX + shiftX;
                 const cloneY = origY + shiftY;
 
+                // Fix stretch: Set explicit size, remove offset, debug opacity
                 const clone = new Clutter.Clone({
                     source: elem,
                     x: cloneX,
                     y: cloneY,
-                    reactive: false,
+                    width: elem.get_width(), // Force exact width
+                    height: elem.get_height(), // Force exact height to fix stretching
+                    reactive: true,
                 });
 
-                // HIDE the duplicates but keep them in the list (as removing them broke functionality)
-                // We assume _panel already renders them visibly.
+                // Alignment Fix:
+                // Removing manual offset because we believe fixing the STRETCH will fix the alignment.
+                // We revert to exact coordinates.
                 const isDuplicateToken = (elem === screenshotUI._captureButton) ||
                     (elem === screenshotUI._shotCastContainer) ||
                     (elem === screenshotUI._showPointerButtonContainer);
 
+                const isCloseButton = (elem === screenshotUI._closeButton);
+
                 if (isDuplicateToken) {
-                    clone.opacity = 0; // Hide the duplicate
+                    clone.opacity = 150; // Semi-visible to verify stretch fix and alignment
+                    // clone.y += 0;     // No offset
                     clone.set_z_position(9999);
                 } else {
                     clone.opacity = 255;
+                }
+
+                // Add direct click handler
+                if (isDuplicateToken || isCloseButton) {
+                    clone.connect('button-release-event', () => {
+                        log('[MultiMonitors] Reactive Clone Clicked: ' + elem);
+                        // Reuse the activation logic
+                        // We can call a helper or duplicate the logic briefly here
+                        if (elem === screenshotUI._captureButton) {
+                            elem.set_pressed(true);
+                            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                                elem.set_pressed(false);
+                                return GLib.SOURCE_REMOVE;
+                            });
+                        } else if (elem.toggle_mode) {
+                            elem.set_checked(true);
+                            elem.emit('clicked', 0);
+                        } else {
+                            elem.emit('clicked', 0);
+                        }
+                        return Clutter.EVENT_STOP;
+                    });
                 }
 
                 clone.visible = true;
@@ -333,11 +362,12 @@ function _createToolbarClonesForAllMonitors() {
             }
         }
 
-        // 3. Create ONE big overlay covering the interactive area
-        const interactionCorrectionY = 42;
+        // 3. Keep Overlay for background clicks / drag?
+        // Reset correction since overlay is just fallback now.
+        const interactionCorrectionY = 0;
 
         const overlayX = minX + offsetX;
-        const overlayY = minY + offsetY + interactionCorrectionY;
+        const overlayY = minY + offsetY;
 
         // Store rect info for this monitor
         _cloneRects.push({
