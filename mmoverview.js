@@ -467,12 +467,23 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._filterAppGrid(text);
             });
 
-            // Handle Enter key to activate first matching app
+            // Handle Enter key to activate focused app
             this._searchEntry.clutter_text.connect('activate', () => {
-                if (this._firstVisibleApp && this._firstVisibleApp._appInfo) {
-                    this._firstVisibleApp._appInfo.activate();
+                if (this._focusedApp && this._focusedApp._appInfo) {
+                    this._focusedApp._appInfo.activate();
                     Main.overview.hide();
                 }
+            });
+
+            // Handle arrow keys to navigate between apps
+            this._searchEntry.clutter_text.connect('key-press-event', (actor, event) => {
+                const symbol = event.get_key_symbol();
+                if (symbol === Clutter.KEY_Left || symbol === Clutter.KEY_Right ||
+                    symbol === Clutter.KEY_Up || symbol === Clutter.KEY_Down) {
+                    this._navigateApps(symbol);
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
             });
 
             // Create scrollable app grid
@@ -668,7 +679,59 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 Main.overview.hide();
             });
 
+            // Hover handler to set focus on this app
+            button.connect('notify::hover', () => {
+                if (button.hover) {
+                    this._setFocusedApp(button);
+                }
+            });
+
             return button;
+        }
+
+        _setFocusedApp(app) {
+            // Remove highlight from previous focused app
+            if (this._focusedApp && this._focusedApp !== app) {
+                this._focusedApp.remove_style_pseudo_class('focus');
+                this._focusedApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;');
+            }
+
+            // Set new focused app
+            this._focusedApp = app;
+
+            // Add highlight to focused app
+            if (this._focusedApp) {
+                this._focusedApp.add_style_pseudo_class('focus');
+                this._focusedApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px; border: 3px solid #3584e4; background-color: rgba(53, 132, 228, 0.3);');
+            }
+        }
+
+        _navigateApps(keySymbol) {
+            if (!this._appGrid) return;
+
+            // Get visible apps
+            const children = this._appGrid.get_children();
+            const visibleApps = children.filter(child => child.visible && child._appInfo);
+
+            if (visibleApps.length === 0) return;
+
+            // Find current focused index
+            let currentIndex = -1;
+            if (this._focusedApp) {
+                currentIndex = visibleApps.indexOf(this._focusedApp);
+            }
+
+            // Calculate new index based on key
+            let newIndex = currentIndex;
+            if (keySymbol === Clutter.KEY_Right || keySymbol === Clutter.KEY_Down) {
+                newIndex = (currentIndex + 1) % visibleApps.length;
+            } else if (keySymbol === Clutter.KEY_Left || keySymbol === Clutter.KEY_Up) {
+                newIndex = currentIndex - 1;
+                if (newIndex < 0) newIndex = visibleApps.length - 1;
+            }
+
+            // Set focus to new app
+            this._setFocusedApp(visibleApps[newIndex]);
         }
 
         _filterAppGrid(searchText) {
@@ -709,20 +772,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 }
             }
 
-            // Remove focus style from previous first app
-            if (this._firstVisibleApp && this._firstVisibleApp !== firstVisibleApp) {
-                this._firstVisibleApp.remove_style_pseudo_class('focus');
-                this._firstVisibleApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;');
-            }
-
-            // Store reference to first visible app for Enter key activation
-            this._firstVisibleApp = firstVisibleApp;
-
-            // Add visual focus highlight to first app with visible border
-            if (this._firstVisibleApp) {
-                this._firstVisibleApp.add_style_pseudo_class('focus');
-                this._firstVisibleApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px; border: 3px solid #3584e4; background-color: rgba(53, 132, 228, 0.3);');
-            }
+            // Set focus on first visible app using the shared method
+            this._setFocusedApp(firstVisibleApp);
 
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
