@@ -709,8 +709,20 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 }
             }
 
+            // Remove focus style from previous first app
+            if (this._firstVisibleApp && this._firstVisibleApp !== firstVisibleApp) {
+                this._firstVisibleApp.remove_style_pseudo_class('focus');
+                this._firstVisibleApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;');
+            }
+
             // Store reference to first visible app for Enter key activation
             this._firstVisibleApp = firstVisibleApp;
+
+            // Add visual focus highlight to first app with visible border
+            if (this._firstVisibleApp) {
+                this._firstVisibleApp.add_style_pseudo_class('focus');
+                this._firstVisibleApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px; border: 3px solid #3584e4; background-color: rgba(53, 132, 228, 0.3);');
+            }
 
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
