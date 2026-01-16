@@ -625,7 +625,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 if (gIcon) {
                     icon = new St.Icon({
                         gicon: gIcon,
-                        icon_size: 64,
+                        icon_size: 86,
                         style_class: 'app-icon',
                     });
                 }
