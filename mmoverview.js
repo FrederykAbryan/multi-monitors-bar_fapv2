@@ -863,8 +863,29 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         show() {
-            // Called when overview is shown - nothing special needed
+            // Called when overview is shown
             this._visible = true;
+
+            // Check if cursor is on this monitor and focus search entry
+            const [x, y] = global.get_pointer();
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+
+            if (monitor) {
+                const isOnThisMonitor = (
+                    x >= monitor.x &&
+                    x < monitor.x + monitor.width &&
+                    y >= monitor.y &&
+                    y < monitor.y + monitor.height
+                );
+
+                if (isOnThisMonitor && this._searchEntry) {
+                    // Use a small delay to ensure the overview is fully shown
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                        this._searchEntry.grab_key_focus();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
+            }
         }
 
         hide() {
