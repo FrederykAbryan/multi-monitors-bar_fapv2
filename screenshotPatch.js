@@ -68,25 +68,71 @@ function _destroyClones() {
 function _findToolbarActor(actor) {
     if (!actor) return null;
 
-    // Direct properties that might be the toolbar
-    if (actor._panel) return actor._panel;
-    if (actor._bottomBar) return actor._bottomBar;
-    if (actor._toolbar) return actor._toolbar;
-    if (actor._buttonLayout) return actor._buttonLayout;
-
-    // Check children for a widget that looks like a toolbar
+    // Log available properties for debugging
+    log('[MultiMonitors] Looking for toolbar in screenshot UI. Available _ properties:');
     try {
-        const children = actor.get_children();
-        for (let child of children) {
-            if (child instanceof St.BoxLayout || child instanceof St.Widget) {
-                const childChildren = child.get_children ? child.get_children() : [];
-                if (childChildren.length > 2) {
-                    return child;
-                }
+        const props = Object.getOwnPropertyNames(actor).filter(p => p.startsWith('_'));
+        for (let prop of props) {
+            try {
+                const val = actor[prop];
+                const type = val ? (val.constructor?.name || typeof val) : 'null';
+                log('[MultiMonitors]   ' + prop + ': ' + type);
+            } catch (e) {
+                log('[MultiMonitors]   ' + prop + ': (error reading)');
             }
         }
     } catch (e) {
-        // ignore
+        log('[MultiMonitors] Error listing properties: ' + e);
+    }
+
+    // Try to find the main panel/toolbar container
+    // The _panel usually contains the full toolbar with all buttons including capture
+    if (actor._panel) {
+        log('[MultiMonitors] Found _panel');
+        return actor._panel;
+    }
+
+    // _bottomBar might contain the capture button area
+    if (actor._bottomBar) {
+        log('[MultiMonitors] Found _bottomBar');
+        return actor._bottomBar;
+    }
+
+    if (actor._toolbar) {
+        log('[MultiMonitors] Found _toolbar');
+        return actor._toolbar;
+    }
+
+    if (actor._buttonLayout) {
+        log('[MultiMonitors] Found _buttonLayout');
+        return actor._buttonLayout;
+    }
+
+    // Check children for the largest widget that looks like a toolbar
+    try {
+        const children = actor.get_children();
+        log('[MultiMonitors] Checking ' + children.length + ' children');
+
+        let bestChild = null;
+        let maxChildCount = 0;
+
+        for (let child of children) {
+            if (child instanceof St.BoxLayout || child instanceof St.Widget) {
+                const childChildren = child.get_children ? child.get_children() : [];
+                log('[MultiMonitors]   Child: ' + child.constructor.name + ' with ' + childChildren.length + ' children');
+                if (childChildren.length > maxChildCount) {
+                    maxChildCount = childChildren.length;
+                    bestChild = child;
+                }
+            }
+        }
+
+        if (bestChild && maxChildCount > 2) {
+            log('[MultiMonitors] Using best child with ' + maxChildCount + ' children');
+            return bestChild;
+        }
+    } catch (e) {
+        log('[MultiMonitors] Error checking children: ' + e);
     }
 
     return null;
@@ -170,221 +216,299 @@ function _createToolbarClonesForAllMonitors() {
     const screenshotUI = Main.screenshotUI;
     if (!screenshotUI) return;
 
-    const toolbar = _findToolbarActor(screenshotUI);
-    if (!toolbar) {
-        log('[MultiMonitors] Could not find toolbar in screenshot UI');
-        return;
-    }
-
     const primaryIndex = Main.layoutManager.primaryIndex;
     const monitors = Main.layoutManager.monitors;
     const primaryMonitor = monitors[primaryIndex];
 
-    const [toolbarX, toolbarY] = toolbar.get_transformed_position();
-    const toolbarWidth = toolbar.get_width();
-    const toolbarHeight = toolbar.get_height();
-    const offsetFromBottom = primaryMonitor.height - (toolbarY - primaryMonitor.y) - toolbarHeight;
+    // DEFINITION OF ELEMENTS
+    // interactiveElements: Used to calculate the total clickable area (overlay size)
+    // visualElements: Used to create the visual clones (can be a subset to avoid duplicates)
 
-    // Set up a capture handler on the stage to intercept clicks before screenshot UI handles them
-    _stageEventId = global.stage.connect('captured-event', (actor, event) => {
-        log('[MultiMonitors] captured-event fired, type: ' + event.type());
-        if (event.type() !== Clutter.EventType.BUTTON_PRESS &&
-            event.type() !== Clutter.EventType.BUTTON_RELEASE) {
-            return Clutter.EVENT_PROPAGATE;
+    const interactiveElements = [
+        screenshotUI._panel,
+        screenshotUI._captureButton,
+        screenshotUI._shotCastContainer, // Restoring toggle 1
+        screenshotUI._showPointerButtonContainer, // Restoring toggle 2
+        screenshotUI._closeButton
+    ].filter(e => e != null);
+
+    // For visuals, we RE-ADD _captureButton because the user said "that version worked".
+    // We prioritize functionality over the visual duplicate for now.
+    const visualElements = [
+        screenshotUI._panel,
+        screenshotUI._captureButton, // Restored to fix functionality
+        screenshotUI._shotCastContainer, // Restoring toggle 1
+        screenshotUI._showPointerButtonContainer, // Restoring toggle 2
+        screenshotUI._closeButton
+    ].filter(e => e != null);
+
+    if (interactiveElements.length === 0) {
+        log('[MultiMonitors] No screenshot UI elements found to clone');
+        return;
+    }
+
+    // 1. Calculate the bounding box using INTERACTIVE elements (max coverage)
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let elem of interactiveElements) {
+        try {
+            const [x, y] = elem.get_transformed_position();
+            const w = elem.get_width();
+            const h = elem.get_height();
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + w);
+            maxY = Math.max(maxY, y + h);
+        } catch (e) {
+            // ignore
         }
+    }
 
-        const [stageX, stageY] = event.get_coords();
-        const rect = _isClickInCloneArea(stageX, stageY);
+    const toolbarWidth = maxX - minX;
+    const toolbarHeight = maxY - minY;
 
-        if (rect) {
-            log('[MultiMonitors] Captured click in clone area at (' + stageX + ', ' + stageY + ')');
+    // Calculate bottom margin from primary monitor to preserve vertical spacing
+    const marginBottom = (primaryMonitor.y + primaryMonitor.height) - maxY;
 
-            if (event.type() === Clutter.EventType.BUTTON_RELEASE) {
-                _forwardClickToToolbar(stageX, stageY, rect, event.type(), event.get_button());
-            }
-
-            // Stop propagation so screenshot UI doesn't close
-            return Clutter.EVENT_STOP;
-        }
-
-        return Clutter.EVENT_PROPAGATE;
-    });
+    log('[MultiMonitors] Toolbar bounds: x=' + minX + ', y=' + minY + ', w=' + toolbarWidth + ', h=' + toolbarHeight + ', bottomMargin=' + marginBottom);
 
     // Create clones for each non-primary monitor
-    for (let i = 0; i < monitors.length; i++) {
-        if (i === primaryIndex) continue;
+    for (let monitorIdx = 0; monitorIdx < monitors.length; monitorIdx++) {
+        if (monitorIdx === primaryIndex) continue;
 
-        const monitor = monitors[i];
+        const monitor = monitors[monitorIdx];
 
-        try {
-            const cloneX = monitor.x + (monitor.width - toolbarWidth) / 2;
-            const cloneY = monitor.y + monitor.height - toolbarHeight - offsetFromBottom;
+        // Calculate Centered Position for this monitor
+        // New Origin X = Monitor X + (Monitor Width - Toolbar Width) / 2
+        const destOriginX = monitor.x + (monitor.width - toolbarWidth) / 2;
 
-            // Store rect info for click detection
-            _cloneRects.push({
-                x: cloneX,
-                y: cloneY,
-                width: toolbarWidth,
-                height: toolbarHeight,
-                toolbarX: toolbarX,
-                toolbarY: toolbarY,
-                monitorIndex: i
-            });
+        // New Origin Y = Monitor Y + Monitor Height - Toolbar Height - Bottom Margin
+        // User requested extra padding ("no bottom margin from screen")
+        // Adding 40px extra spacing to lift it up.
+        const extraBottomPadding = 40;
+        const destOriginY = monitor.y + monitor.height - toolbarHeight - marginBottom - extraBottomPadding;
 
-            // Create just a visual clone
-            const clone = new Clutter.Clone({
-                source: toolbar,
-                x: cloneX,
-                y: cloneY,
-                reactive: false,
-            });
+        // Calculate offset from PRIMARY origin to DESTINATION origin
+        // We use this to shift each element
+        const shiftX = destOriginX - minX;
+        const shiftY = destOriginY - minY;
 
-            clone.visible = true;
-            clone.opacity = 255;
-            clone.show();
+        // We do NOT use the simple offsetX/Y anymore because that was just screen-to-screen delta.
+        // We want to force centering.
+        const offsetX = shiftX;
+        const offsetY = shiftY;
 
-            // Add clone to the screenshot UI so it's within its event context
-            screenshotUI.add_child(clone);
+        // 2. Create VISUAL clones using only the visualElements list
+        for (let elem of visualElements) {
+            try {
+                const [origX, origY] = elem.get_transformed_position();
+                // Apply the shift calculated from the bounding box origin
+                const cloneX = origX + shiftX;
+                const cloneY = origY + shiftY;
 
-            // Create an invisible reactive overlay on top of the clone to capture input
-            const overlay = new St.Widget({
-                x: cloneX,
-                y: cloneY,
-                width: toolbarWidth,
-                height: toolbarHeight,
-                reactive: true,
-                can_focus: true,
-                track_hover: true,
-                style: 'background-color: transparent;',
-            });
+                const clone = new Clutter.Clone({
+                    source: elem,
+                    x: cloneX,
+                    y: cloneY,
+                    reactive: false,
+                });
 
-            // Store reference to rect for this overlay
-            const rectRef = _cloneRects[_cloneRects.length - 1];
+                // HIDE the duplicates but keep them in the list (as removing them broke functionality)
+                // We assume _panel already renders them visibly.
+                const isDuplicateToken = (elem === screenshotUI._captureButton) ||
+                    (elem === screenshotUI._shotCastContainer) ||
+                    (elem === screenshotUI._showPointerButtonContainer);
 
-            // Function to forward click to corresponding button on original toolbar (WITHOUT moving cursor)
-            const forwardClickToButton = (stageX, stageY, button) => {
-                const relX = stageX - cloneX;
-                const relY = stageY - cloneY;
-                const targetX = Math.round(toolbarX + relX);
-                const targetY = Math.round(toolbarY + relY);
-
-                log('[MultiMonitors] Forwarding click from clone (' + stageX + ',' + stageY + ') to (' + targetX + ',' + targetY + ')');
-
-                // Find the actor at target position on original toolbar
-                let targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, targetX, targetY);
-
-                if (!targetActor || targetActor === global.stage) {
-                    log('[MultiMonitors] No actor found at target position');
-                    return false;
+                if (isDuplicateToken) {
+                    clone.opacity = 0; // Hide the duplicate
+                    clone.set_z_position(9999);
+                } else {
+                    clone.opacity = 255;
                 }
 
-                log('[MultiMonitors] Found target actor: ' + targetActor);
+                clone.visible = true;
+                screenshotUI.add_child(clone);
+                _screenshotClones.push(clone);
+            } catch (e) {
+                log('[MultiMonitors] Error cloning element: ' + e);
+            }
+        }
 
-                // Traverse up parent chain to find a clickable button
-                let actorToClick = targetActor;
-                for (let i = 0; i < 5 && actorToClick; i++) {
-                    log('[MultiMonitors] Trying actor: ' + actorToClick.constructor.name);
+        // 3. Create ONE big overlay covering the interactive area
+        const interactionCorrectionY = 42;
 
-                    // Check if this is an St.Button
-                    if (actorToClick instanceof St.Button) {
-                        log('[MultiMonitors] Found St.Button, simulating click');
+        const overlayX = minX + offsetX;
+        const overlayY = minY + offsetY + interactionCorrectionY;
+
+        // Store rect info for this monitor
+        _cloneRects.push({
+            x: overlayX,
+            y: overlayY,
+            width: toolbarWidth,
+            height: toolbarHeight,
+            origX: minX,
+            origY: minY,
+            offsetX: offsetX,
+            offsetY: offsetY + interactionCorrectionY, // Include correction in mapping offset
+            monitorIndex: monitorIdx
+        });
+
+        const overlay = new St.Widget({
+            x: overlayX,
+            y: overlayY,
+            width: toolbarWidth,
+            height: toolbarHeight,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            style: 'background-color: transparent;',
+        });
+
+        // Handle clicks - find and activate button at corresponding position
+        overlay.connect('button-press-event', (actor, event) => {
+            log('[MultiMonitors] Overlay button-press');
+            return Clutter.EVENT_STOP;
+        });
+
+        overlay.connect('button-release-event', (actor, event) => {
+            const [stageX, stageY] = event.get_coords();
+
+            // Calculate corresponding position on original toolbar
+            const targetX = Math.round(stageX - offsetX);
+            const targetY = Math.round(stageY - offsetY);
+
+            log('[MultiMonitors] Overlay click at (' + stageX + ',' + stageY + ') -> finding button at (' + targetX + ',' + targetY + ')');
+
+            // Find the actor at target position on original toolbar
+            let targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, targetX, targetY);
+
+            if (!targetActor || targetActor === global.stage) {
+                log('[MultiMonitors] No actor found at target position');
+                return Clutter.EVENT_STOP;
+            }
+
+            log('[MultiMonitors] Found target actor: ' + targetActor);
+
+            // Traverse up parent chain to find a clickable button
+            let actorToClick = targetActor;
+            for (let j = 0; j < 10 && actorToClick; j++) {
+                log('[MultiMonitors] Trying actor: ' + actorToClick.constructor.name);
+
+                // Check for St.Button, IconLabelButton, or specific capture button style class
+                const isButton = actorToClick instanceof St.Button ||
+                    actorToClick.constructor.name === 'IconLabelButton' ||
+                    (actorToClick.has_style_class_name && actorToClick.has_style_class_name('screenshot-ui-capture-button'));
+
+                if (isButton) {
+
+                    // --- CASE 1: Toggle Buttons (Selection/Screen/Window) ---
+                    // The user confirmed these ARE working with the current logic. Keep it.
+                    if (actorToClick.toggle_mode) {
+                        log('[MultiMonitors] Detected toggle mode button (Working)');
+                        if (typeof actorToClick.set_checked === 'function') {
+                            actorToClick.set_checked(true);
+                            actorToClick.emit('clicked', 0);
+                            return Clutter.EVENT_STOP;
+                        }
+                    }
+
+                    // --- CASE 2: Capture Button ---
+                    // The user said this USED to work with simple logic. 
+                    // We identify it by class and force the simple path.
+
+                    const isCaptureButton = (actorToClick === screenshotUI._captureButton) ||
+                        (actorToClick.has_style_class_name && actorToClick.has_style_class_name('screenshot-ui-capture-button'));
+
+                    if (isCaptureButton) {
+                        log('[MultiMonitors] Detected Capture Button - Using SIMPLE logic');
+                        log('[MultiMonitors] Actor details: ' + actorToClick + ' constructor: ' + actorToClick.constructor.name);
+
                         try {
-                            // Simulate a proper button click by setting pressed state
                             actorToClick.set_pressed(true);
+                            actorToClick.add_style_pseudo_class('active');
+
                             GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
                                 try {
                                     actorToClick.set_pressed(false);
-                                    // The button should emit 'clicked' when going from pressed to unpressed
-                                    log('[MultiMonitors] Button click simulated successfully');
+                                    actorToClick.remove_style_pseudo_class('active');
                                 } catch (e) {
-                                    log('[MultiMonitors] set_pressed(false) failed: ' + e);
+                                    log('[MultiMonitors] timeout callback failed: ' + e);
                                 }
                                 return GLib.SOURCE_REMOVE;
                             });
-                            return true;
+                            return Clutter.EVENT_STOP;
                         } catch (e) {
-                            log('[MultiMonitors] set_pressed failed: ' + e);
+                            log('[MultiMonitors] Simple capture click failed: ' + e);
                         }
+                    }
 
-                        // Alternative: try to set checked for toggle buttons
+                    // --- CASE 3: Close Button & Others ---
+                    // Standard methods for other buttons
+
+                    // Method 1: Try clicked() method
+                    if (typeof actorToClick.clicked === 'function') {
                         try {
-                            if (typeof actorToClick.get_checked === 'function') {
-                                const isChecked = actorToClick.get_checked();
-                                actorToClick.set_checked(!isChecked);
-                                log('[MultiMonitors] Toggled checked state');
-                                return true;
+                            actorToClick.clicked(0);
+                            return Clutter.EVENT_STOP;
+                        } catch (e) {
+                            log('[MultiMonitors] clicked() failed: ' + e);
+                        }
+                    }
+
+                    // Method 2: Try emit 'clicked' signal
+                    try {
+                        log('[MultiMonitors] Emitting clicked signal');
+                        actorToClick.emit('clicked', 0);
+                        return Clutter.EVENT_STOP;
+                    } catch (e) {
+                        log('[MultiMonitors] emit clicked failed: ' + e);
+                    }
+
+                    // Method 3: Try vfunc_clicked
+                    if (typeof actorToClick.vfunc_clicked === 'function') {
+                        try {
+                            actorToClick.vfunc_clicked();
+                            return Clutter.EVENT_STOP;
+                        } catch (e) {
+                            log('[MultiMonitors] vfunc_clicked failed: ' + e);
+                        }
+                    }
+
+                    // Method 4: Simulate press/release cycle 
+                    try {
+                        log('[MultiMonitors] Simulating press/release (fallback)');
+                        actorToClick.set_pressed(true);
+                        actorToClick.add_style_pseudo_class('active');
+
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                            try {
+                                actorToClick.set_pressed(false);
+                                actorToClick.remove_style_pseudo_class('active');
+                            } catch (e) {
+                                // ignore
                             }
-                        } catch (e) {
-                            log('[MultiMonitors] toggle checked failed: ' + e);
-                        }
-                    }
+                            return GLib.SOURCE_REMOVE;
+                        });
 
-                    // Try fake_release for buttons
-                    if (typeof actorToClick.fake_release === 'function') {
-                        log('[MultiMonitors] Trying fake_release');
-                        try {
-                            actorToClick.fake_release();
-                            return true;
-                        } catch (e) {
-                            log('[MultiMonitors] fake_release failed: ' + e);
-                        }
-                    }
+                        return Clutter.EVENT_STOP;
 
-                    actorToClick = actorToClick.get_parent();
+                    } catch (e) {
+                        log('[MultiMonitors] simulation failed: ' + e);
+                    }
                 }
 
-                // Last resort: simulate button press/release events on original actor
-                try {
-                    log('[MultiMonitors] Simulating button events');
+                actorToClick = actorToClick.get_parent();
+            }
 
-                    // Create and emit synthetic events
-                    let pressEvent = Clutter.Event.new(Clutter.EventType.BUTTON_PRESS);
-                    pressEvent.set_coords(targetX, targetY);
-                    pressEvent.set_button(1);
-                    targetActor.event(pressEvent, false);
+            return Clutter.EVENT_STOP;
+        });
 
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
-                        let releaseEvent = Clutter.Event.new(Clutter.EventType.BUTTON_RELEASE);
-                        releaseEvent.set_coords(targetX, targetY);
-                        releaseEvent.set_button(1);
-                        targetActor.event(releaseEvent, false);
-                        return GLib.SOURCE_REMOVE;
-                    });
+        // Add overlay to screenshotUI so it receives events
+        screenshotUI.add_child(overlay);
+        _screenshotClones.push(overlay);
 
-                    return true;
-                } catch (e) {
-                    log('[MultiMonitors] Synthetic event failed: ' + e);
-                }
-
-                return false;
-            };
-
-            // Handle clicks on the overlay
-            overlay.connect('button-press-event', (actor, event) => {
-                log('[MultiMonitors] Clone overlay button-press');
-                return Clutter.EVENT_STOP;
-            });
-
-            overlay.connect('button-release-event', (actor, event) => {
-                const [stageX, stageY] = event.get_coords();
-                log('[MultiMonitors] Clone overlay button-release at (' + stageX + ', ' + stageY + ')');
-                forwardClickToButton(stageX, stageY, event.get_button());
-                return Clutter.EVENT_STOP;
-            });
-
-            // Add overlay to the screenshot UI so it receives events
-            screenshotUI.add_child(overlay);
-            screenshotUI.set_child_above_sibling(overlay, clone);
-
-            _screenshotClones.push(clone);
-            _screenshotClones.push(overlay);
-
-            log('[MultiMonitors] Created toolbar clone for monitor ' + i);
-            log('[MultiMonitors]   Position: (' + cloneX + ', ' + cloneY + ')');
-            log('[MultiMonitors]   Size: ' + toolbarWidth + 'x' + toolbarHeight);
-        } catch (e) {
-            log('[MultiMonitors] Error creating toolbar clone for monitor ' + i + ': ' + e);
-        }
+        log('[MultiMonitors] Created unified toolbar clone for monitor ' + monitorIdx);
+        log('[MultiMonitors]   Overlay position: (' + overlayX + ', ' + overlayY + ')');
+        log('[MultiMonitors]   Overlay size: ' + toolbarWidth + 'x' + toolbarHeight);
     }
 }
 
