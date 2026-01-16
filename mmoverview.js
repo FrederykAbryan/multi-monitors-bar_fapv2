@@ -690,10 +690,15 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _setFocusedApp(app) {
+            // Base style without highlight (use consistent sizing)
+            const baseStyle = 'padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;';
+            // Focused style uses box-shadow instead of border to avoid layout shifts
+            const focusedStyle = baseStyle + ' box-shadow: 0 0 0 3px #3584e4; background-color: rgba(53, 132, 228, 0.3);';
+
             // Remove highlight from previous focused app
             if (this._focusedApp && this._focusedApp !== app) {
                 this._focusedApp.remove_style_pseudo_class('focus');
-                this._focusedApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;');
+                this._focusedApp.set_style(baseStyle);
             }
 
             // Set new focused app
@@ -702,7 +707,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Add highlight to focused app
             if (this._focusedApp) {
                 this._focusedApp.add_style_pseudo_class('focus');
-                this._focusedApp.set_style('padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px; border: 3px solid #3584e4; background-color: rgba(53, 132, 228, 0.3);');
+                this._focusedApp.set_style(focusedStyle);
             }
         }
 
