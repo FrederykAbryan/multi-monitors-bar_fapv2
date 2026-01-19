@@ -325,8 +325,7 @@ function _createToolbarClonesForAllMonitors() {
                 const isCloseButton = (elem === screenshotUI._closeButton);
 
                 if (isDuplicateToken) {
-                    clone.opacity = 150; // Semi-visible to verify stretch fix and alignment
-                    // clone.y += 0;     // No offset
+                    clone.opacity = 0;   // Hidden but reactive!
                     clone.set_z_position(9999);
                 } else {
                     clone.opacity = 255;
@@ -345,7 +344,23 @@ function _createToolbarClonesForAllMonitors() {
                                 return GLib.SOURCE_REMOVE;
                             });
                         } else if (elem.toggle_mode) {
-                            elem.set_checked(true);
+                            // Fix for "Can't redisable":
+                            // If it's the Pointer button (Checkbox behavior), we must TOGGLE.
+                            // If it's Mode button (Radio behavior), usually we set to true.
+
+                            const isPointerButton = (elem === screenshotUI._showPointerButtonContainer);
+
+                            if (isPointerButton) {
+                                // Toggle (Checkbox)
+                                if (elem.get_checked) {
+                                    elem.set_checked(!elem.get_checked());
+                                }
+                            } else {
+                                // Mode Selectors (Radio) - Always set to true
+                                if (elem.set_checked) {
+                                    elem.set_checked(true);
+                                }
+                            }
                             elem.emit('clicked', 0);
                         } else {
                             elem.emit('clicked', 0);
