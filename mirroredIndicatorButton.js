@@ -41,6 +41,62 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
+        vfunc_destroy() {
+            // Clean up signals for activities button
+            if (this._activeWsChangedId) {
+                this._workspaceManager.disconnect(this._activeWsChangedId);
+                this._activeWsChangedId = null;
+            }
+            if (this._nWorkspacesChangedId) {
+                this._workspaceManager.disconnect(this._nWorkspacesChangedId);
+                this._nWorkspacesChangedId = null;
+            }
+            if (this._showingId) {
+                Main.overview.disconnect(this._showingId);
+                this._showingId = null;
+            }
+            if (this._hidingId) {
+                Main.overview.disconnect(this._hidingId);
+                this._hidingId = null;
+            }
+
+            // Clean up signals for generic indicator
+            if (this._clockUpdateId) {
+                GLib.source_remove(this._clockUpdateId);
+                this._clockUpdateId = null;
+            }
+            if (this._monitorTimeoutId) {
+                GLib.source_remove(this._monitorTimeoutId);
+                this._monitorTimeoutId = null;
+            }
+            if (this._overviewShowingId) {
+                Main.overview.disconnect(this._overviewShowingId);
+                this._overviewShowingId = null;
+            }
+            if (this._overviewHiddenId) {
+                Main.overview.disconnect(this._overviewHiddenId);
+                this._overviewHiddenId = null;
+            }
+            if (this._fullscreenChangedId) {
+                global.display.disconnect(this._fullscreenChangedId);
+                this._fullscreenChangedId = null;
+            }
+            if (this._iconSyncId) {
+                GLib.source_remove(this._iconSyncId);
+                this._iconSyncId = null;
+            }
+            if (this._labelSyncId) {
+                GLib.source_remove(this._labelSyncId);
+                this._labelSyncId = null;
+            }
+            if (this._forwardClickTimeoutId) {
+                GLib.source_remove(this._forwardClickTimeoutId);
+                this._forwardClickTimeoutId = null;
+            }
+
+            super.vfunc_destroy();
+        }
+
         _initActivitiesButton() {
             // Create the activities indicator with workspace dots like main panel
             this.accessible_role = Atk.Role.TOGGLE_BUTTON;
@@ -125,79 +181,92 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _createIndicatorClone() {
             try {
                 const sourceChild = this._sourceIndicator.get_first_child();
-                if (sourceChild && sourceChild instanceof St.BoxLayout) {
-                    // For dateMenu, create a real label (not a clone) for independent hover
-                    if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
-                        // Create clock label directly - no extra container
-                        const clockDisplay = new St.Label({
-                            style_class: 'clock',
-                            y_align: Clutter.ActorAlign.CENTER,
-                            y_expand: true,
-                        });
+                if (!sourceChild) {
+                    this._createFallbackIcon();
+                    return;
+                }
 
-                        const updateClock = () => {
-                            if (this._sourceIndicator._clockDisplay) {
-                                clockDisplay.text = this._sourceIndicator._clockDisplay.text;
-                            }
-                        };
+                // 1. Quick Settings (Handle explicitly regardless of structure)
+                if (this._role === 'quickSettings') {
+                    this.add_style_class_name('mm-quick-settings');
+                    // Use FILL for full panel height hover detection
+                    this.y_expand = true;
+                    this.y_align = Clutter.ActorAlign.FILL;
+                    const container = new St.BoxLayout({
+                        style_class: 'mm-quick-settings-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                        // Ensure width expands
+                        x_align: Clutter.ActorAlign.FILL,
+                        x_expand: true
+                    });
+                    this._createQuickSettingsClone(container, sourceChild);
+                    this.add_child(container);
+                    return;
+                }
 
-                        updateClock();
+                // 2. Date Menu (Try optimizing with Label copy, fallback to simple clone)
+                if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
+                    // Create clock label directly - no extra container
+                    const clockDisplay = new St.Label({
+                        style_class: 'clock',
+                        y_align: Clutter.ActorAlign.CENTER,
+                        y_expand: true,
+                    });
 
-                        // Remove existing timeout before creating new one
-                        if (this._clockUpdateId) {
-                            GLib.source_remove(this._clockUpdateId);
-                            this._clockUpdateId = null;
+                    const updateClock = () => {
+                        if (this._sourceIndicator._clockDisplay) {
+                            clockDisplay.text = this._sourceIndicator._clockDisplay.text;
                         }
+                    };
 
-                        this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                            updateClock();
-                            return GLib.SOURCE_CONTINUE;
-                        });
+                    updateClock();
 
-                        this.add_child(clockDisplay);
-                        this._clockDisplay = clockDisplay;
-                    } else {
-                        // For quickSettings, use FILL for full-height hover area
-                        // The clipping container inside handles the fixed visual content height
-                        if (this._role === 'quickSettings') {
-                            this.add_style_class_name('mm-quick-settings');
-                            // Use FILL for full panel height hover detection
-                            this.y_expand = true;
-                            this.y_align = Clutter.ActorAlign.FILL;
-                            const container = new St.BoxLayout({
-                                style_class: 'mm-quick-settings-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createQuickSettingsClone(container, sourceChild);
-                            this.add_child(container);
-                        } else if (this._role === 'favorites-menu' || this._role.toLowerCase().includes('favorites') || this._role.toLowerCase().includes('favorite')) {
-                            // For favorites-menu@fthx extension (registers as 'Favorites Menu Button'), use real widget copy
-                            this.add_style_class_name('mm-favorites-menu');
-                            this.y_expand = true;
-                            this.y_align = Clutter.ActorAlign.FILL;
-                            const container = new St.BoxLayout({
-                                style_class: 'mm-favorites-menu-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createFillClone(container, sourceChild);
-                            this.add_child(container);
-                        } else {
-                            // For other indicators, use clone approach
-                            // Container is FILL to get full-height hover, but clone inside is centered
-                            const container = new St.BoxLayout({
-                                style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createSimpleClone(container, sourceChild);
-                            this.add_child(container);
-                        }
+                    // Remove existing timeout before creating new one
+                    if (this._clockUpdateId) {
+                        GLib.source_remove(this._clockUpdateId);
+                        this._clockUpdateId = null;
                     }
+
+                    this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                        updateClock();
+                        return GLib.SOURCE_CONTINUE;
+                    });
+
+                    this.add_child(clockDisplay);
+                    this._clockDisplay = clockDisplay;
+                    return;
+                }
+
+                // 3. Favorites Menu (Special handling)
+                if (this._role === 'favorites-menu' || (this._role && (this._role.toLowerCase().includes('favorites') || this._role.toLowerCase().includes('favorite')))) {
+                    this.add_style_class_name('mm-favorites-menu');
+                    this.y_expand = true;
+                    this.y_align = Clutter.ActorAlign.FILL;
+                    const container = new St.BoxLayout({
+                        style_class: 'mm-favorites-menu-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                    });
+                    this._createFillClone(container, sourceChild);
+                    this.add_child(container);
+                    return;
+                }
+
+                // 4. Generic Handling
+                if (sourceChild instanceof St.BoxLayout) {
+                    // Container is FILL to get full-height hover, but clone inside is centered
+                    const container = new St.BoxLayout({
+                        style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                    });
+                    this._createSimpleClone(container, sourceChild);
+                    this.add_child(container);
                 } else {
                     this._createSimpleClone(this, sourceChild);
                 }
+
             } catch (e) {
                 console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                 this._createFallbackIcon();
@@ -276,8 +345,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 source: source,
                 y_align: Clutter.ActorAlign.FILL,
                 y_expand: true,
-                x_align: Clutter.ActorAlign.START,
-                x_expand: false,
+                x_align: Clutter.ActorAlign.FILL,
+                x_expand: true,
             });
 
             // Add clone directly to parent (no container in normal mode)
