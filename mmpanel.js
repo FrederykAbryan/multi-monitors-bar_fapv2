@@ -735,7 +735,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
             }
 
-            // Indicators that should NOT be mirrored (system/accessibility indicators)
+            // Indicators that should NOT be mirrored (system/accessibility indicators and GNOME 46 phantom indicators)
             const excludedIndicators = [
                 'a11y',              // Accessibility menu
                 'dwellClick',        // Dwell click accessibility
@@ -745,6 +745,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                 'screenSharing',     // Screen sharing indicator
                 'keyboard',          // Keyboard layout (only needed on primary)
                 'power',             // Power indicator (only needed on primary)
+                'unsafeModeIndicator', // GNOME 46 unsafe mode (often empty)
+                'backgroundApps',    // GNOME 46 background apps indicator (often empty)
             ];
 
             // Get all indicators from main panel's three boxes
@@ -839,6 +841,15 @@ const MultiMonitorsPanel = GObject.registerClass(
                 try {
                     let indicator = this._ensureIndicator(role);
                     if (indicator) {
+                        // Skip indicators that are marked as empty (phantom buttons)
+                        if (indicator._isEmpty) {
+                            // Destroy the empty indicator to clean up
+                            if (this.statusArea[role] === indicator) {
+                                delete this.statusArea[role];
+                            }
+                            indicator.destroy();
+                            continue;
+                        }
                         this._addToPanelBox(role, indicator, i + nChildren, box);
                     } else {
                     }

@@ -184,6 +184,32 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._sourceIndicator = Main.panel.statusArea[role] || null;
 
             if (this._sourceIndicator) {
+                // Check if the source indicator has any visible content
+                const sourceChild = this._sourceIndicator.get_first_child();
+                if (!sourceChild) {
+                    // No child content - mark as empty and hide
+                    this._isEmpty = true;
+                    this.visible = false;
+                    return;
+                }
+
+                // Additional check: if the source indicator or its child is not visible, skip
+                if (!this._sourceIndicator.visible) {
+                    this._isEmpty = true;
+                    this.visible = false;
+                    return;
+                }
+
+                // Check for empty BoxLayout with no visible children
+                if (sourceChild instanceof St.BoxLayout) {
+                    const visibleChildren = sourceChild.get_children().filter(c => c.visible);
+                    if (visibleChildren.length === 0) {
+                        this._isEmpty = true;
+                        this.visible = false;
+                        return;
+                    }
+                }
+
                 this._createIndicatorClone();
             } else {
                 this._createFallbackIcon();
