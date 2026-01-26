@@ -1,15 +1,14 @@
-
 .helloworld-label {
     font-size: 72px;
     font-weight: bold;
     color: #ffffff;
-    background-color: rgba(0,0,0,0.5);
+    background-color: rgba(0, 0, 0, 0.5);
     border-radius: 5px;
     padding: .5em;
 }
 
 .multimonitor-spacer {
-	height: 4em;
+    height: 4em;
 }
 
 .multimonitor-status-indicators-box {
@@ -21,7 +20,7 @@
 }
 
 .workspace-thumbnails-left {
-  border-radius: 0 9px 9px 0; 
+    border-radius: 0 9px 9px 0;
 }
 
 .workspace-thumbnails-left:rtl {
@@ -56,7 +55,7 @@
     min-height: 24px;
 }
 
-/* Quick Settings (system tray) in extended monitor */
+/* Quick Settings (system tray) in extended monitor - consistent padding */
 .mm-quick-settings {
     padding: 0 8px;
     -natural-hpadding: 8px;
@@ -68,23 +67,16 @@
     margin: 0;
 }
 
-/* Clipping container for system tray - adjust padding to control size during overview */
+/* Clipping container for system tray - SAME padding as normal mode */
 .mm-quick-settings-clip {
-    padding: 4px 6px;
+    padding: 0 6px;
     margin: 0;
 }
 
-/* Normal state - adjust this to control default icon size and padding */
-.mm-quick-settings-normal {
-    height: 42px;
-    padding: 0 2px;
-    scale: 1.25;
-}
-
-/* Overview state - adjust this to control icon size and padding during overview */
+/* Normal and overview states should have SAME padding for consistency */
+.mm-quick-settings-normal,
 .mm-quick-settings-overview {
-    height: 36px;
-    padding: 0 2px;
+    padding: 0 6px;
 }
 
 /* Favorites menu in extended monitor - full height */

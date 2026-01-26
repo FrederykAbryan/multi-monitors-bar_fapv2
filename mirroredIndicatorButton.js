@@ -426,9 +426,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     }
 
                     // Set fixed size on container to prevent shrinking
+                    // Add horizontal padding (16px total - 8px each side) to maintain visual padding
+                    const horizontalPadding = 16;
                     if (this._sizeCaptured) {
                         this._quickSettingsContainer.set_size(
-                            this._normalCloneSize.width,
+                            this._normalCloneSize.width + horizontalPadding,
                             this._normalCloneSize.height
                         );
                     }
