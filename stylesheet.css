@@ -58,19 +58,19 @@
 
 /* Quick Settings (system tray) in extended monitor */
 .mm-quick-settings {
-    padding: 0;
-    -natural-hpadding: 0;
-    -minimum-hpadding: 0;
+    padding: 0 8px;
+    -natural-hpadding: 8px;
+    -minimum-hpadding: 8px;
 }
 
 .mm-quick-settings-box {
-    padding: 0;
+    padding: 0 6px;
     margin: 0;
 }
 
 /* Clipping container for system tray - adjust padding to control size during overview */
 .mm-quick-settings-clip {
-    padding: 4px 0;
+    padding: 4px 6px;
     margin: 0;
 }
 
