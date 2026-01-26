@@ -93,6 +93,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 GLib.source_remove(this._forwardClickTimeoutId);
                 this._forwardClickTimeoutId = null;
             }
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
+            if (this._captureNormalHeightTimeoutId) {
+                GLib.source_remove(this._captureNormalHeightTimeoutId);
+                this._captureNormalHeightTimeoutId = null;
+            }
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
 
             super.vfunc_destroy();
         }
@@ -349,63 +361,133 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 x_expand: true,
             });
 
-            // Add clone directly to parent (no container in normal mode)
+            // Add clone directly to parent
             parent.add_child(clone);
 
             this._quickSettingsClone = clone;
-            this._quickSettingsClipContainer = null;
             this._quickSettingsSource = source;
             this._quickSettingsContainer = parent;
-            this._normalCloneHeight = 0;
+            this._normalCloneSize = { width: 0, height: 0 };
+            this._sizeCaptured = false;
+            this._isInOverview = false;
 
-            // When overview shows - capture height and wrap in clipping container
+            // Capture normal size IMMEDIATELY on first allocation (before any overview)
+            const captureSize = () => {
+                if (!this._sizeCaptured && this._quickSettingsClone) {
+                    const [w, h] = this._quickSettingsClone.get_size();
+                    if (w > 0 && h > 0) {
+                        this._normalCloneSize = { width: w, height: h };
+                        this._sizeCaptured = true;
+                    }
+                }
+            };
+
+            // Try to capture size after a brief delay (once layout settles)
+            this._captureHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                captureSize();
+                this._captureHeightTimeoutId = null;
+                return GLib.SOURCE_REMOVE;
+            });
+
+            // When overview shows - apply counter-scale to maintain visual size
             this._overviewShowingId = Main.overview.connect('showing', () => {
-                if (this._quickSettingsClone && !this._quickSettingsClipContainer) {
-                    // Capture current height only
-                    const [, h] = this._quickSettingsClone.get_size();
-                    this._normalCloneHeight = h;
+                if (this._quickSettingsClone && !this._isInOverview) {
+                    this._isInOverview = true;
 
-                    // Create clipping container - height locked, width dynamic
-                    const clipContainer = new St.Widget({
-                        style_class: 'mm-quick-settings-clip',
-                        x_expand: true,  // Allow width to grow
-                        y_expand: false,
-                        y_align: Clutter.ActorAlign.FILL,
-                        clip_to_allocation: true,
-                    });
-
-                    // Lock only the height, let width be auto
-                    if (h > 0) {
-                        clipContainer.set_height(h);
+                    // Capture size if not yet captured
+                    if (!this._sizeCaptured) {
+                        captureSize();
                     }
 
-                    // Reparent clone into container
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClone);
-                    clipContainer.add_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.add_child(clipContainer);
-                    this._quickSettingsClipContainer = clipContainer;
+                    // Set fixed size on container to prevent shrinking
+                    if (this._sizeCaptured) {
+                        this._quickSettingsContainer.set_size(
+                            this._normalCloneSize.width,
+                            this._normalCloneSize.height
+                        );
+                    }
+
+                    // Monitor clone size changes during overview and apply counter-scale
+                    this._startOverviewSizeMonitor();
                 }
             });
 
-            // When overview hides - remove clipping container, put clone back directly
+            // When overview hides - remove fixed size and scale
             this._overviewHiddenId = Main.overview.connect('hidden', () => {
-                if (this._quickSettingsClipContainer && this._quickSettingsClone) {
-                    // Reparent clone back to parent directly
-                    this._quickSettingsClipContainer.remove_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClipContainer);
-                    this._quickSettingsContainer.add_child(this._quickSettingsClone);
+                if (this._quickSettingsClone && this._isInOverview) {
+                    this._isInOverview = false;
 
-                    // Destroy clip container
-                    this._quickSettingsClipContainer.destroy();
-                    this._quickSettingsClipContainer = null;
+                    // Stop size monitoring
+                    this._stopOverviewSizeMonitor();
 
-                    this._quickSettingsClone.queue_relayout();
+                    // Remove fixed size
+                    this._quickSettingsContainer.set_size(-1, -1);
+
+                    // Reset any scale transform
+                    this._quickSettingsClone.set_scale(1.0, 1.0);
+                    this._quickSettingsClone.set_pivot_point(0, 0);
+
+                    // Re-capture size for next overview
+                    this._captureNormalHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                        if (this._quickSettingsClone) {
+                            const [w, h] = this._quickSettingsClone.get_size();
+                            if (w > 0 && h > 0) {
+                                this._normalCloneSize = { width: w, height: h };
+                            }
+                        }
+                        this._captureNormalHeightTimeoutId = null;
+                        return GLib.SOURCE_REMOVE;
+                    });
                 }
             });
 
             // Monitor fullscreen state changes on primary monitor
             this._fullscreenChangedId = global.display.connect('in-fullscreen-changed',
                 this._onQuickSettingsFullscreenChanged.bind(this));
+        }
+
+        _startOverviewSizeMonitor() {
+            // Monitor clone size continuously during overview and apply counter-scale
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+            }
+
+            const updateScale = () => {
+                if (!this._quickSettingsClone || !this._isInOverview || !this._sizeCaptured) {
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                const [currentW, currentH] = this._quickSettingsClone.get_size();
+                const targetW = this._normalCloneSize.width;
+                const targetH = this._normalCloneSize.height;
+
+                if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
+                    // Calculate scale needed to restore visual size
+                    const scaleX = targetW / currentW;
+                    const scaleY = targetH / currentH;
+
+                    // Only apply if significant shrinking detected
+                    if (scaleX > 1.05 || scaleY > 1.05) {
+                        this._quickSettingsClone.set_pivot_point(0.5, 0.5);
+                        this._quickSettingsClone.set_scale(scaleX, scaleY);
+                    } else if (scaleX < 1.0 && scaleY < 1.0) {
+                        // Reset if not shrinking
+                        this._quickSettingsClone.set_scale(1.0, 1.0);
+                    }
+                }
+
+                return this._isInOverview ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+            };
+
+            // Check every 50ms during overview transition
+            this._overviewSizeMonitorId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, updateScale);
+        }
+
+        _stopOverviewSizeMonitor() {
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
         }
 
         _onQuickSettingsFullscreenChanged() {
@@ -415,45 +497,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const isPrimaryFullscreen = this._isPrimaryMonitorFullscreen();
 
             if (isPrimaryFullscreen) {
-                // Entering fullscreen on primary - apply clipping container if not already
-                if (!this._quickSettingsClipContainer) {
-                    const [, h] = this._quickSettingsClone.get_size();
-                    this._normalCloneHeight = h;
-
-                    // Make container taller than the clone to give room for alignment
-                    const containerHeight = h + 10; // Add 10px for downward shift
-
-                    const clipContainer = new St.Widget({
-                        style_class: 'mm-quick-settings-clip',
-                        x_expand: true,
-                        y_expand: false,
-                        y_align: Clutter.ActorAlign.FILL,
-                        clip_to_allocation: true,
-                    });
-
-                    clipContainer.set_height(containerHeight);
-
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClone);
-                    clipContainer.add_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.add_child(clipContainer);
-                    this._quickSettingsClipContainer = clipContainer;
-                } else {
-                    // Container already exists, just update height for fullscreen mode
-                    if (this._normalCloneHeight > 0) {
-                        this._quickSettingsClipContainer.set_height(this._normalCloneHeight + 10);
-                    }
-                }
-
-                // Adjust alignment for fullscreen - move down
+                // Entering fullscreen on primary - adjust alignment
                 this._quickSettingsClone.y_align = Clutter.ActorAlign.END;
+
+                // Set fixed size if captured
+                if (this._sizeCaptured) {
+                    this._quickSettingsContainer.set_size(
+                        this._normalCloneSize.width,
+                        this._normalCloneSize.height + 10  // Add padding for downward shift
+                    );
+                }
             } else {
-                // Exiting fullscreen on primary - restore alignment and height
-                // but KEEP the clipping container to prevent size issues
+                // Exiting fullscreen on primary - restore alignment
                 this._quickSettingsClone.y_align = Clutter.ActorAlign.FILL;
 
-                if (this._quickSettingsClipContainer && this._normalCloneHeight > 0) {
-                    // Restore original height (no extra padding)
-                    this._quickSettingsClipContainer.set_height(this._normalCloneHeight);
+                // Remove fixed size if not in overview
+                if (!this._isInOverview) {
+                    this._quickSettingsContainer.set_size(-1, -1);
                 }
             }
         }
@@ -1140,6 +1200,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._captureNormalSizeId) {
                 GLib.source_remove(this._captureNormalSizeId);
                 this._captureNormalSizeId = null;
+            }
+
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
+
+            if (this._captureNormalHeightTimeoutId) {
+                GLib.source_remove(this._captureNormalHeightTimeoutId);
+                this._captureNormalHeightTimeoutId = null;
+            }
+
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
             }
 
             if (this._overviewShowingId) {
