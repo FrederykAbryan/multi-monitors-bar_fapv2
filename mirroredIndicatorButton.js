@@ -491,15 +491,22 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
                 if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
                     // Calculate scale needed to restore visual size
-                    const scaleX = targetW / currentW;
-                    const scaleY = targetH / currentH;
+                    let scaleX = targetW / currentW;
+                    let scaleY = targetH / currentH;
 
-                    // Only apply if significant shrinking detected
-                    if (scaleX > 1.05 || scaleY > 1.05) {
+                    // Cap maximum scale to 1.1 (10% increase) to prevent explosion on GNOME 49
+                    // This means we only correct small shrinking, and accept larger shrinking
+                    // to avoid visual glitches or huge icons
+                    const maxScale = 1.1;
+                    scaleX = Math.min(scaleX, maxScale);
+                    scaleY = Math.min(scaleY, maxScale);
+
+                    // Only apply if shrinking detected (and significant enough to matter)
+                    if (scaleX > 1.01 || scaleY > 1.01) {
                         this._quickSettingsClone.set_pivot_point(0.5, 0.5);
                         this._quickSettingsClone.set_scale(scaleX, scaleY);
-                    } else if (scaleX < 1.0 && scaleY < 1.0) {
-                        // Reset if not shrinking
+                    } else {
+                        // Reset if no significant shrinking
                         this._quickSettingsClone.set_scale(1.0, 1.0);
                     }
                 }
