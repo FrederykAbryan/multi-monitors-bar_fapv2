@@ -41,74 +41,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
-        vfunc_destroy() {
-            // Clean up signals for activities button
-            if (this._activeWsChangedId) {
-                this._workspaceManager.disconnect(this._activeWsChangedId);
-                this._activeWsChangedId = null;
-            }
-            if (this._nWorkspacesChangedId) {
-                this._workspaceManager.disconnect(this._nWorkspacesChangedId);
-                this._nWorkspacesChangedId = null;
-            }
-            if (this._showingId) {
-                Main.overview.disconnect(this._showingId);
-                this._showingId = null;
-            }
-            if (this._hidingId) {
-                Main.overview.disconnect(this._hidingId);
-                this._hidingId = null;
-            }
-
-            // Clean up signals for generic indicator
-            if (this._clockUpdateId) {
-                GLib.source_remove(this._clockUpdateId);
-                this._clockUpdateId = null;
-            }
-            if (this._monitorTimeoutId) {
-                GLib.source_remove(this._monitorTimeoutId);
-                this._monitorTimeoutId = null;
-            }
-            if (this._overviewShowingId) {
-                Main.overview.disconnect(this._overviewShowingId);
-                this._overviewShowingId = null;
-            }
-            if (this._overviewHiddenId) {
-                Main.overview.disconnect(this._overviewHiddenId);
-                this._overviewHiddenId = null;
-            }
-            if (this._fullscreenChangedId) {
-                global.display.disconnect(this._fullscreenChangedId);
-                this._fullscreenChangedId = null;
-            }
-            if (this._iconSyncId) {
-                GLib.source_remove(this._iconSyncId);
-                this._iconSyncId = null;
-            }
-            if (this._labelSyncId) {
-                GLib.source_remove(this._labelSyncId);
-                this._labelSyncId = null;
-            }
-            if (this._forwardClickTimeoutId) {
-                GLib.source_remove(this._forwardClickTimeoutId);
-                this._forwardClickTimeoutId = null;
-            }
-            if (this._captureHeightTimeoutId) {
-                GLib.source_remove(this._captureHeightTimeoutId);
-                this._captureHeightTimeoutId = null;
-            }
-            if (this._captureNormalHeightTimeoutId) {
-                GLib.source_remove(this._captureNormalHeightTimeoutId);
-                this._captureNormalHeightTimeoutId = null;
-            }
-            if (this._overviewSizeMonitorId) {
-                GLib.source_remove(this._overviewSizeMonitorId);
-                this._overviewSizeMonitorId = null;
-            }
-
-            super.vfunc_destroy();
-        }
-
         _initActivitiesButton() {
             // Create the activities indicator with workspace dots like main panel
             this.accessible_role = Atk.Role.TOGGLE_BUTTON;
@@ -306,7 +238,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
 
             } catch (e) {
-                console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
+                console.debug('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                 this._createFallbackIcon();
             }
         }
@@ -409,6 +341,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             };
 
             // Try to capture size after a brief delay (once layout settles)
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
             this._captureHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
                 captureSize();
                 this._captureHeightTimeoutId = null;
@@ -456,6 +392,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._quickSettingsClone.set_pivot_point(0, 0);
 
                     // Re-capture size for next overview
+                    if (this._captureNormalHeightTimeoutId) {
+                        GLib.source_remove(this._captureNormalHeightTimeoutId);
+                        this._captureNormalHeightTimeoutId = null;
+                    }
                     this._captureNormalHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
                         if (this._quickSettingsClone) {
                             const [w, h] = this._quickSettingsClone.get_size();
@@ -1265,6 +1205,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._overviewHiddenId) {
                 Main.overview.disconnect(this._overviewHiddenId);
                 this._overviewHiddenId = null;
+            }
+
+            if (this._fullscreenChangedId) {
+                global.display.disconnect(this._fullscreenChangedId);
+                this._fullscreenChangedId = null;
             }
 
             if (this._sourceSizeChangedId && this._quickSettingsSource) {

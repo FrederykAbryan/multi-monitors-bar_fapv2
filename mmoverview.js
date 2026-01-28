@@ -206,7 +206,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         // Ensure it's a string
         mutterSchemaId = String(mutterSchemaId);
 
-        log('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
+        console.debug('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
         if (!this._settings) {
             try {
                 this._settings = new Gio.Settings({ schema_id: mutterSchemaId });
@@ -274,7 +274,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
             this._updatePorthole();
             if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
-                log('[Multi Monitors Add-On] Invalid porthole dimensions, skipping thumbnail creation');
+                console.debug('[Multi Monitors Add-On] Invalid porthole dimensions, skipping thumbnail creation');
                 return;
             }
         }
@@ -525,7 +525,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             try {
                 this._populateAppGrid();
             } catch (e) {
-                log('[MultiMonitors] Error populating app grid: ' + e);
+                console.debug('[MultiMonitors] Error populating app grid: ' + e);
             }
 
             this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
@@ -551,10 +551,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     // Even in 46, we might need these signals if they exist
                     try {
                         this._pageChangedId = Main.overview.searchController.connect('page-changed', this._setVisibility.bind(this));
-                    } catch (e) { log(e); }
+                    } catch (e) { /* signal may not exist */ }
                     try {
                         this._pageEmptyId = Main.overview.searchController.connect('page-empty', this._onPageEmpty.bind(this));
-                    } catch (e) { log(e); }
+                    } catch (e) { /* signal may not exist */ }
                 }
             }
 
@@ -590,7 +590,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return app.should_show();
             });
 
-            log('[MultiMonitors] Found ' + apps.length + ' apps to display');
+            console.debug('[MultiMonitors] Found ' + apps.length + ' apps to display');
 
             // Sort alphabetically
             apps.sort((a, b) => a.get_name().localeCompare(b.get_name()));
@@ -603,7 +603,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._appGrid.add_child(appButton);
             }
 
-            log('[MultiMonitors] App grid populated with ' + Math.min(apps.length, maxApps) + ' buttons');
+            console.debug('[MultiMonitors] App grid populated with ' + Math.min(apps.length, maxApps) + ' buttons');
         }
 
         _createAppButton(app) {
@@ -640,7 +640,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     });
                 }
             } catch (e) {
-                log('[MultiMonitors] Error getting app GIcon: ' + e);
+                // GIcon may not be available
             }
 
             // Fallback if GIcon didn't work
@@ -648,7 +648,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 try {
                     icon = app.create_icon_texture(86);
                 } catch (e) {
-                    log('[MultiMonitors] Error creating icon texture: ' + e);
+                    // create_icon_texture may fail
                 }
             }
 
@@ -784,12 +784,12 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     appInfo.activate();
                 }
             } catch (e) {
-                log('[MultiMonitors] Error launching app: ' + e);
+                console.debug('[MultiMonitors] Error launching app: ' + e);
                 // Last resort - try launch directly
                 try {
                     appInfo.launch([], null);
                 } catch (e2) {
-                    log('[MultiMonitors] Fallback launch also failed: ' + e2);
+                    console.debug('[MultiMonitors] Fallback launch also failed: ' + e2);
                 }
             }
 
@@ -802,7 +802,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 const monitor = Main.layoutManager.monitors[targetMonitor];
 
                 if (monitor && window) {
-                    log('[MultiMonitors] Moving window to monitor ' + targetMonitor);
+                    console.debug('[MultiMonitors] Moving window to monitor ' + targetMonitor);
 
                     // Move window to the target monitor
                     window.move_to_monitor(targetMonitor);
@@ -815,13 +815,13 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                             const newY = monitor.y + Math.floor((monitor.height - rect.height) / 2);
                             window.move_frame(true, newX, newY);
                         } catch (e) {
-                            log('[MultiMonitors] Error centering window: ' + e);
+                            console.debug('[MultiMonitors] Error centering window: ' + e);
                         }
                         return GLib.SOURCE_REMOVE;
                     });
                 }
             } catch (e) {
-                log('[MultiMonitors] Error moving window to monitor: ' + e);
+                console.debug('[MultiMonitors] Error moving window to monitor: ' + e);
             }
         }
 
@@ -869,7 +869,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
                 const hasText = normalizedSearch.length > 0;
-                log('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', visibleApps=' + visibleCount);
+                console.debug('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', visibleApps=' + visibleCount);
 
                 // Always re-discover workspacesViews to ensure we have a valid reference
                 this._tryFindWorkspacesViews();
@@ -881,7 +881,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 if (this._workspacesViews) {
                     this._workspacesViews.visible = !hasText;
                     this._workspacesViews.opacity = hasText ? 0 : 255;
-                    log('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
                 }
 
                 // Also hide our own thumbnails box when searching
@@ -912,10 +912,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
                 this._workspacesViews = workspacesDisplay._workspacesViews[this._monitorIndex];
-                log('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
+                console.debug('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
             } else if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
                 this._workspacesViews = workspacesDisplay._primaryWorkspacesView;
-                log('[MultiMonitors] Lazy discovery: Found primary workspacesView');
+                console.debug('[MultiMonitors] Lazy discovery: Found primary workspacesView');
             }
         }
 
