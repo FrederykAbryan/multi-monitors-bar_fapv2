@@ -432,6 +432,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._spacer_height = 0;
             this._fixGeometry = 0;
             this._visible = false;
+            this._pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
 
             // Use a simple BinLayout to ensure we have full control over the child placement
             // The OverviewControls layouts are too complex and tied to primary monitor state
@@ -757,15 +758,18 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                             global.display.disconnect(windowCreatedId);
 
                             // Move window to target monitor after it's fully created
-                            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                            const moveTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                                this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== moveTimeoutId);
                                 this._moveWindowToMonitor(window, targetMonitor);
                                 return GLib.SOURCE_REMOVE;
                             });
+                            this._pendingTimeouts.push(moveTimeoutId);
                         }
                     });
 
                     // Auto-disconnect after 5 seconds to prevent memory leaks
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                    const disconnectTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                        this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== disconnectTimeoutId);
                         try {
                             global.display.disconnect(windowCreatedId);
                         } catch (e) {
@@ -773,6 +777,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                         }
                         return GLib.SOURCE_REMOVE;
                     });
+                    this._pendingTimeouts.push(disconnectTimeoutId);
 
                     // Launch the app
                     shellApp.open_new_window(-1);
@@ -808,17 +813,19 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     window.move_to_monitor(targetMonitor);
 
                     // Center the window on the new monitor
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                    const centerTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                        this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== centerTimeoutId);
                         try {
                             const rect = window.get_frame_rect();
                             const newX = monitor.x + Math.floor((monitor.width - rect.width) / 2);
                             const newY = monitor.y + Math.floor((monitor.height - rect.height) / 2);
                             window.move_frame(true, newX, newY);
                         } catch (e) {
-                            console.debug('[MultiMonitors] Error centering window: ' + e);
+                            // Window may have been destroyed
                         }
                         return GLib.SOURCE_REMOVE;
                     });
+                    this._pendingTimeouts.push(centerTimeoutId);
                 }
             } catch (e) {
                 console.debug('[MultiMonitors] Error moving window to monitor: ' + e);
@@ -937,10 +944,12 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
                 if (isOnThisMonitor && this._searchEntry) {
                     // Use a small delay to ensure the overview is fully shown
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                    const focusTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                        this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== focusTimeoutId);
                         this._searchEntry.grab_key_focus();
                         return GLib.SOURCE_REMOVE;
                     });
+                    this._pendingTimeouts.push(focusTimeoutId);
                 }
             }
         }
@@ -960,6 +969,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         destroy() {
+            // Remove all pending timeouts per EGO guidelines
+            for (let timeoutId of this._pendingTimeouts) {
+                if (timeoutId) {
+                    GLib.source_remove(timeoutId);
+                }
+            }
+            this._pendingTimeouts = [];
+
             if (this._pageChangedId && Main.overview.searchController) {
                 Main.overview.searchController.disconnect(this._pageChangedId);
             }

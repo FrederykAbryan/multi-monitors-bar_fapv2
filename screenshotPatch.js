@@ -23,6 +23,7 @@ let _originalPrimaryIndex = null;
 let _screenshotClones = [];
 let _stageEventId = null;
 let _cloneRects = []; // Store clone bounding boxes for click detection
+let _pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
 
 function getMonitorAtCursor() {
     const [x, y] = global.get_pointer();
@@ -35,6 +36,14 @@ function getMonitorAtCursor() {
 }
 
 function _destroyClones() {
+    // Remove all pending timeouts per EGO guidelines
+    for (let timeoutId of _pendingTimeouts) {
+        if (timeoutId) {
+            GLib.source_remove(timeoutId);
+        }
+    }
+    _pendingTimeouts = [];
+
     // Disconnect stage event handler
     if (_stageEventId) {
         global.stage.disconnect(_stageEventId);
@@ -118,13 +127,15 @@ function _forwardClickToToolbar(stageX, stageY, rect, eventType, button) {
         pressEvent.set_button(button);
         targetActor.emit('button-press-event', pressEvent);
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+        const releaseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+            _pendingTimeouts = _pendingTimeouts.filter(id => id !== releaseTimeoutId);
             let releaseEvent = Clutter.Event.new(Clutter.EventType.BUTTON_RELEASE);
             releaseEvent.set_coords(targetX, targetY);
             releaseEvent.set_button(button);
             targetActor.emit('button-release-event', releaseEvent);
             return GLib.SOURCE_REMOVE;
         });
+        _pendingTimeouts.push(releaseTimeoutId);
 
         return true;
     }
@@ -254,10 +265,12 @@ function _createToolbarClonesForAllMonitors() {
                 clone.connect('button-release-event', () => {
                     if (elem === screenshotUI._captureButton) {
                         elem.set_pressed(true);
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                        const pressTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                            _pendingTimeouts = _pendingTimeouts.filter(id => id !== pressTimeoutId);
                             elem.set_pressed(false);
                             return GLib.SOURCE_REMOVE;
                         });
+                        _pendingTimeouts.push(pressTimeoutId);
                     } else if (elem.toggle_mode) {
                         const isPointerButton = (elem === screenshotUI._showPointerButtonContainer);
 
@@ -363,11 +376,13 @@ function _createToolbarClonesForAllMonitors() {
                         actorToClick.set_pressed(true);
                         actorToClick.add_style_pseudo_class('active');
 
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                        const captureTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                            _pendingTimeouts = _pendingTimeouts.filter(id => id !== captureTimeoutId);
                             actorToClick.set_pressed(false);
                             actorToClick.remove_style_pseudo_class('active');
                             return GLib.SOURCE_REMOVE;
                         });
+                        _pendingTimeouts.push(captureTimeoutId);
                         return Clutter.EVENT_STOP;
                     }
 
@@ -413,10 +428,12 @@ export function patchScreenshotUI(settings) {
             await openPromise;
 
             // Create clones after UI opens
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            const cloneTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _pendingTimeouts = _pendingTimeouts.filter(id => id !== cloneTimeoutId);
                 _createToolbarClonesForAllMonitors();
                 return GLib.SOURCE_REMOVE;
             });
+            _pendingTimeouts.push(cloneTimeoutId);
             return;
         }
 
