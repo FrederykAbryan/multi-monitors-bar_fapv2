@@ -185,11 +185,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                             this.add_child(container);
                         } else {
                             // For other indicators, use clone approach
-                            // Container is FILL to get full-height hover, but clone inside is centered
+                            // Container is centered to prevent clone from stretching
                             const container = new St.BoxLayout({
                                 style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
+                                y_align: Clutter.ActorAlign.CENTER,
+                                y_expand: false,
                             });
                             this._createSimpleClone(container, sourceChild);
                             this.add_child(container);

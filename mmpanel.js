@@ -405,6 +405,16 @@ const MultiMonitorsPanel = GObject.registerClass(
                     return;
                 const bgColor = mainNode.get_background_color();
                 if (bgColor) {
+                    // Only apply inline background if the main panel actually has
+                    // a non-transparent background color from its theme.  When a
+                    // theming extension (e.g. Blur My Shell) sets the panel
+                    // transparent, we should NOT override with an inline style so
+                    // that the theme / blur effect can also apply to this panel.
+                    if (bgColor.alpha === 0) {
+                        // Clear any previously set inline style so CSS can take over
+                        this.set_style(null);
+                        return;
+                    }
                     const r = bgColor.red, g = bgColor.green, b = bgColor.blue;
                     const a = (bgColor.alpha / 255.0).toFixed(2);
                     this.set_style(`background-color: rgba(${r},${g},${b},${a});`);
@@ -622,11 +632,12 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _hideIndicators() {
-            for (let role in MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS) {
+            for (let role in this.statusArea) {
                 let indicator = this.statusArea[role];
                 if (!indicator)
                     continue;
-                indicator.container.hide();
+                if (indicator.container)
+                    indicator.container.hide();
             }
         }
 
@@ -774,6 +785,14 @@ const MultiMonitorsPanel = GObject.registerClass(
                 'keyboard',          // Keyboard layout (only needed on primary)
                 'power',             // Power indicator (only needed on primary)
             ];
+
+            // Indicators disabled via settings should also be excluded
+            if (!this._settings.get_boolean(SHOW_ACTIVITIES_ID))
+                excludedIndicators.push('activities');
+            if (!this._settings.get_boolean(SHOW_DATE_TIME_ID))
+                excludedIndicators.push('dateMenu');
+            if (!this._settings.get_boolean(SHOW_APP_MENU_ID))
+                excludedIndicators.push('appMenu');
 
             // Get all indicators from main panel's three boxes
             const leftIndicators = [];
