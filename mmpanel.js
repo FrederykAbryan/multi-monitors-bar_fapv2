@@ -333,6 +333,14 @@ const MultiMonitorsPanel = GObject.registerClass(
             Main.ctrlAltTabManager.addGroup(this, _("Top Bar"), 'focus-top-bar-symbolic',
                 { sortGroup: CtrlAltTab.SortGroup.TOP });
 
+            // Themes like Yaru style the panel via #panel (CSS ID selector).
+            // Having two actors named 'panel' can prevent the theme from applying
+            // background-color to the secondary panel, leaving it transparent.
+            // Copy the main panel's background color explicitly.
+            this._syncPanelStyle();
+            this._mainPanelStyleChangedId = Main.panel.connect('style-changed',
+                () => this._syncPanelStyle());
+
             this._updatedId = Main.sessionMode.connect('updated', this._updatePanel.bind(this));
 
             this._workareasChangedId = global.display.connect('workareas-changed', () => this.queue_relayout());
@@ -390,6 +398,22 @@ const MultiMonitorsPanel = GObject.registerClass(
             });
         }
 
+        _syncPanelStyle() {
+            try {
+                const mainNode = Main.panel.get_theme_node();
+                if (!mainNode)
+                    return;
+                const bgColor = mainNode.get_background_color();
+                if (bgColor) {
+                    const r = bgColor.red, g = bgColor.green, b = bgColor.blue;
+                    const a = (bgColor.alpha / 255.0).toFixed(2);
+                    this.set_style(`background-color: rgba(${r},${g},${b},${a});`);
+                }
+            } catch(e) {
+                // Fallback: don't override, let theme CSS handle it
+            }
+        }
+
         vfunc_map() {
             super.vfunc_map();
             this._updatePanel();
@@ -413,6 +437,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._extensionUpdateTimeoutId = null;
             }
 
+            if (this._mainPanelStyleChangedId) {
+                Main.panel.disconnect(this._mainPanelStyleChangedId);
+                this._mainPanelStyleChangedId = null;
+            }
             if (this._workareasChangedId) {
                 global.display.disconnect(this._workareasChangedId);
                 this._workareasChangedId = null;
