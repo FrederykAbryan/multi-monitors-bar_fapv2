@@ -115,6 +115,49 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
 }
 
 Common.copyClass(WorkspaceThumbnail.WorkspaceThumbnail, MultiMonitorsWorkspaceThumbnailClass);
+
+// Override destroy to ensure proper cleanup
+MultiMonitorsWorkspaceThumbnailClass.prototype.destroy = function() {
+    // Mark as removed to prevent further operations
+    this._removed = true;
+    
+    // Disconnect all our signal connections
+    if (this._windowAddedId) {
+        this.metaWorkspace.disconnect(this._windowAddedId);
+        this._windowAddedId = 0;
+    }
+    if (this._windowRemovedId) {
+        this.metaWorkspace.disconnect(this._windowRemovedId);
+        this._windowRemovedId = 0;
+    }
+    if (this._windowEnteredMonitorId) {
+        global.display.disconnect(this._windowEnteredMonitorId);
+        this._windowEnteredMonitorId = 0;
+    }
+    if (this._windowLeftMonitorId) {
+        global.display.disconnect(this._windowLeftMonitorId);
+        this._windowLeftMonitorId = 0;
+    }
+    
+    // Disconnect minimized signals
+    if (this._minimizedChangedIds) {
+        for (let i = 0; i < this._minimizedChangedIds.length; i++) {
+            if (this._allWindows[i]) {
+                this._allWindows[i].disconnect(this._minimizedChangedIds[i]);
+            }
+        }
+        this._minimizedChangedIds = [];
+    }
+    
+    // Clean up background manager
+    if (this._bgManager) {
+        this._bgManager.destroy();
+        this._bgManager = null;
+    }
+    
+    // Call parent destroy
+    St.Widget.prototype.destroy.call(this);
+};
 export const MultiMonitorsWorkspaceThumbnail = GObject.registerClass({
     Properties: {
         'collapse-fraction': GObject.ParamSpec.double(

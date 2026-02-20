@@ -17,6 +17,7 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 
 import St from 'gi://St';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
@@ -90,6 +91,38 @@ export class MultiMonitorsLayoutManager {
 		this.statusIndicatorsController = null;
 		this._layoutManager_updateHotCorners = null;
 		this._changedEnableHotCornersId = null;
+		this._blurMyShellStateChangedId = null;
+
+		if (this._settings.get_boolean('enable-blur-my-shell')) {
+			this._setupBlurMyShellWatcher();
+		}
+	}
+
+	_setupBlurMyShellWatcher() {
+		try {
+			if (!Main.extensionManager) return;
+
+			this._blurMyShellStateChangedId = Main.extensionManager.connect('extension-state-changed',
+				(manager, extension) => {
+					if (extension.uuid === 'blur-my-shell@aunetx' && this._settings.get_boolean('enable-blur-my-shell')) {
+						this._refreshBlurMyShellIntegration();
+					}
+				}
+			);
+		} catch (e) {
+			console.debug('[Multi Monitors Add-On] Blur watcher setup failed:', String(e));
+		}
+	}
+
+	_refreshBlurMyShellIntegration() {
+		const mmPanelRef = getMMPanelArray();
+		if (mmPanelRef) {
+			for (const panel of mmPanelRef) {
+				if (panel) {
+					this._registerPanelWithBlurMyShell(panel);
+				}
+			}
+		}
 	}
 
 	showPanel() {
@@ -178,6 +211,11 @@ export class MultiMonitorsLayoutManager {
 			this._monitorsChangedId = null;
 		}
 
+		if (this._blurMyShellStateChangedId && Main.extensionManager) {
+			Main.extensionManager.disconnect(this._blurMyShellStateChangedId);
+			this._blurMyShellStateChangedId = null;
+		}
+
 		let panels2remove = this._monitorIds.length;
 		for (let i = 0; i < panels2remove; i++) {
 			this._monitorIds.pop();
@@ -231,6 +269,42 @@ export class MultiMonitorsLayoutManager {
 			mmPanelRef.push(panel);
 		}
 		this.mmPanelBox.push(mmPanelBox);
+		
+		if (this._settings.get_boolean('enable-blur-my-shell')) {
+			this._registerPanelWithBlurMyShell(panel);
+			GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+				this._registerPanelWithBlurMyShell(panel);
+				return GLib.SOURCE_REMOVE;
+			});
+			GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+				this._registerPanelWithBlurMyShell(panel);
+				return GLib.SOURCE_REMOVE;
+			});
+		}
+	}
+	
+	_registerPanelWithBlurMyShell(panel) {
+		try {
+			const extensionManager = Main.extensionManager;
+			if (!extensionManager) return;
+
+			const blurMyShellExtension = extensionManager.lookup('blur-my-shell@aunetx');
+			if (!blurMyShellExtension || blurMyShellExtension.state !== 1) return;
+
+			const blurMyShell = blurMyShellExtension.stateObj;
+			if (!blurMyShell || !blurMyShell._panel_blur) return;
+
+			const panelBlur = blurMyShell._panel_blur;
+			if (typeof panelBlur.blur === 'function') {
+				panelBlur.blur(panel);
+			} else if (typeof panelBlur.add_blur === 'function') {
+				panelBlur.add_blur(panel);
+			} else if (typeof panelBlur.maybe_blur_panel === 'function') {
+				panelBlur.maybe_blur_panel(panel);
+			}
+		} catch (e) {
+			console.debug('[Multi Monitors Add-On] Blur integration failed:', String(e));
+		}
 	}
 
 	_popPanel() {

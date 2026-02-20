@@ -269,7 +269,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             super._init({
                 name: 'panel',
                 reactive: true,
-                style_class: 'panel'
+                style_class: 'panel multimonitor-panel'
             });
 
             this.monitorIndex = monitorIndex;
@@ -284,13 +284,13 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.menuManager = new PopupMenu.PopupMenuManager(this);
 
             // GNOME 46 FIX: Create boxes with proper expansion and alignment
-            // Left box should expand and fill available space
+            // Left box should expand horizontally only
             this._leftBox = new St.BoxLayout({
                 name: 'panelLeft',
                 x_expand: true,
-                y_expand: true,  // Allow full height for activities hover
+                y_expand: false,  // FIX: Prevent vertical stretching
                 x_align: Clutter.ActorAlign.START,
-                y_align: Clutter.ActorAlign.FILL
+                y_align: Clutter.ActorAlign.CENTER  // FIX: Center children vertically
             });
             this.add_child(this._leftBox);
 
@@ -298,9 +298,9 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._centerBox = new St.BoxLayout({
                 name: 'panelCenter',
                 x_expand: true,
-                y_expand: true,  // Allow full height
+                y_expand: false,  // FIX: Prevent vertical stretching
                 x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.FILL  // Fill height
+                y_align: Clutter.ActorAlign.CENTER  // FIX: Center children
             });
             this.add_child(this._centerBox);
 
@@ -308,7 +308,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._centerBin = new St.Widget({
                 layout_manager: new Clutter.BinLayout(),
                 x_expand: true,
-                y_expand: true,  // Allow full height for dateMenu hover
+                y_expand: false,  // FIX: Prevent vertical stretching
             });
             this._centerBox.add_child(this._centerBin);
 
@@ -317,7 +317,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                 name: 'panelRight',
                 x_expand: true,
                 y_expand: false,
-                x_align: Clutter.ActorAlign.END
+                x_align: Clutter.ActorAlign.END,
+                y_align: Clutter.ActorAlign.CENTER  // FIX: Center children vertically
             });
             this.add_child(this._rightBox);
 
@@ -360,6 +361,9 @@ const MultiMonitorsPanel = GObject.registerClass(
             // Watch for late-loading extensions (like Apps and Places)
             this._startExtensionWatcher();
 
+            // Start monitoring for dynamically added indicators (like AppIndicators)
+            this._startIndicatorMonitor();
+
             this.connect('destroy', this.destroy.bind(this));
         }
 
@@ -382,6 +386,34 @@ const MultiMonitorsPanel = GObject.registerClass(
                 });
                 this._initialCheckTimeouts.push(timeoutId);
             }
+        }
+
+        _startIndicatorMonitor() {
+            // Monitor for new indicators being added to Main.panel.statusArea
+            // This catches AppIndicators that appear when apps are launched
+            this._knownIndicators = new Set(Object.keys(Main.panel.statusArea || {}));
+
+            // Check every 2 seconds for new indicators
+            this._indicatorMonitorId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+                if (this._destroyed) {
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                const currentIndicators = Object.keys(Main.panel.statusArea || {});
+                const newIndicators = currentIndicators.filter(role => !this._knownIndicators.has(role));
+
+                if (newIndicators.length > 0) {
+                    console.log('[Multi Monitors Add-On] New indicators detected:', newIndicators.join(', '));
+                    // Update known indicators
+                    for (const role of newIndicators) {
+                        this._knownIndicators.add(role);
+                    }
+                    // Refresh panel to add new indicators
+                    this._updatePanel();
+                }
+
+                return GLib.SOURCE_CONTINUE;
+            });
         }
 
         _onExtensionStateChanged(_extensionManager, _extension) {
@@ -421,6 +453,16 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         destroy() {
+            // Mark as destroyed
+            this._destroyed = true;
+
+            // Clean up indicator monitor
+            if (this._indicatorMonitorId) {
+                GLib.source_remove(this._indicatorMonitorId);
+                this._indicatorMonitorId = null;
+            }
+            this._knownIndicators = null;
+
             // Clean up extension watcher
             if (this._extensionStateChangedId) {
                 Main.extensionManager.disconnect(this._extensionStateChangedId);
@@ -570,7 +612,6 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             const allocWidth = contentBox.get_width();
 
-            // Get natural widths of each box to prevent overflow
             const [leftMinWidth, leftNatWidth] = this._leftBox.get_preferred_width(-1);
             const [centerMinWidth, centerNatWidth] = this._centerBox.get_preferred_width(-1);
             const [rightMinWidth, rightNatWidth] = this._rightBox.get_preferred_width(-1);
@@ -632,7 +673,6 @@ const MultiMonitorsPanel = GObject.registerClass(
 
         _ensureIndicator(role) {
 
-            // CRITICAL FIX: Never create activities indicator on primary monitor
             if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
                 return null;
             }
@@ -640,7 +680,6 @@ const MultiMonitorsPanel = GObject.registerClass(
             let indicator = this.statusArea[role];
             if (indicator) {
                 indicator.container.show();
-                // CRITICAL FIX: Return the existing indicator instead of null!
                 return indicator;
             }
             else {
@@ -726,13 +765,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 // Remove any existing children from centerBin first
                 this._centerBin.remove_all_children();
                 container.x_align = Clutter.ActorAlign.CENTER;
-                // Use FILL for dateMenu so hover takes full panel height
-                if (role === 'dateMenu') {
-                    container.y_align = Clutter.ActorAlign.FILL;
-                    container.y_expand = true;
-                } else {
-                    container.y_align = Clutter.ActorAlign.CENTER;
-                }
+                // FIX: Use CENTER alignment to prevent stretching
+                // The hover area is controlled by the button itself, not container expansion
+                container.y_align = Clutter.ActorAlign.CENTER;
+                container.y_expand = false;  // FIX: Prevent container stretching
                 this._centerBin.add_child(container);
             } else {
                 // Add to box at position
@@ -775,12 +811,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 'power',             // Power indicator (only needed on primary)
             ];
 
-            // Get all indicators from main panel's three boxes
             const leftIndicators = [];
             const centerIndicators = [];
             const rightIndicators = [];
 
-            // Helper function to find role for a child actor
             const findRoleForChild = (child) => {
                 for (let role in mainPanel.statusArea) {
                     const indicator = mainPanel.statusArea[role];
@@ -799,7 +833,6 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return null;
             };
 
-            // Scan each box in main panel to preserve order
             if (mainPanel._leftBox) {
                 const children = mainPanel._leftBox.get_children();
                 for (let child of children) {

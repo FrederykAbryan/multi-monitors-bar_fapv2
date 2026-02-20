@@ -52,7 +52,6 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
 
         this._display = Gdk.Display.get_default();
         this._monitors = this._display.get_monitors()
-
         this._addBooleanSwitch(_('Show Panel on additional monitors.'), SHOW_PANEL_ID);
         this._addBooleanSwitch(_('Show Activities-Button on additional monitors.'), SHOW_ACTIVITIES_ID);
         this._addBooleanSwitch(_('Show AppMenu-Button on additional monitors.'), SHOW_APP_MENU_ID);
@@ -63,6 +62,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
             left: _('On the left'),
             auto: _('Auto')
         });
+        this._addBooleanSwitch(_('Enable Blur my Shell integration.'), 'enable-blur-my-shell');
         this._addSettingsBooleanSwitch(_('Enable hot corners.'), this._desktopSettings, ENABLE_HOT_CORNERS);
 
         this._store = new Gtk.ListStore();
@@ -248,6 +248,20 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
 
 		settings.bind(schema_id, gCBox, 'active-id', Gio.SettingsBindFlags.DEFAULT);
 	}
+
+    _addLabel(text) {
+        let gHBox = new Gtk.Box({orientation: Gtk.Orientation.HORIZONTAL,
+                margin_top: 10, margin_end: 10, margin_bottom: 10, margin_start: 10,
+                spacing: 20, hexpand: true});
+        let gLabel = new Gtk.Label({
+            label: text,
+            halign: Gtk.Align.CENTER,
+            use_markup: true
+        });
+        gLabel.set_markup(`<b><span foreground="#00ff00" size="large">${text}</span></b>`);
+        gHBox.append(gLabel);
+        this.add(gHBox);
+    }
 
     _addBooleanSwitch(label, schema_id) {
         this._addSettingsBooleanSwitch(label, this._settings, schema_id);
