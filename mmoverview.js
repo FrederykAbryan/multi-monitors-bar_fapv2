@@ -58,6 +58,7 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         this.monitorIndex = monitorIndex;
 
         this._removed = false;
+        this._isDestroyed = false;
 
         this._contents = new Clutter.Actor();
         this.add_child(this._contents);
@@ -115,23 +116,34 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         });
     }
 
-    destroy() {
+    // Guard against "already disposed" errors -- mark as destroyed before
+    // the GObject dispose chain runs so that any queued callbacks can bail out.
+    _onDestroy() {
+        this._isDestroyed = true;
         if (this._windowAddedId) {
             this.metaWorkspace.disconnect(this._windowAddedId);
-            this._windowAddedId = null;
+            this._windowAddedId = 0;
         }
         if (this._windowRemovedId) {
             this.metaWorkspace.disconnect(this._windowRemovedId);
-            this._windowRemovedId = null;
+            this._windowRemovedId = 0;
         }
         if (this._windowEnteredMonitorId) {
             global.display.disconnect(this._windowEnteredMonitorId);
-            this._windowEnteredMonitorId = null;
+            this._windowEnteredMonitorId = 0;
         }
         if (this._windowLeftMonitorId) {
             global.display.disconnect(this._windowLeftMonitorId);
-            this._windowLeftMonitorId = null;
+            this._windowLeftMonitorId = 0;
         }
+        if (super._onDestroy)
+            super._onDestroy();
+    }
+
+    destroy() {
+        this._isDestroyed = true;
+        this._onDestroy();
+
         for (let i = 0; i < this._allWindows.length; i++) {
             this._allWindows[i].disconnect(this._minimizedChangedIds[i]);
         }
@@ -143,14 +155,6 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
             this._bgManager = null;
         }
 
-        // In GNOME 40+, WorkspaceThumbnail has a destroy method we copied,
-        // but we override it here. To call the one we copied, we'd need access
-        // to it. St.Widget.prototype.destroy.call(this) is the safest base call,
-        // but WorkspaceThumbnail's own logic won't be executed unless we do a trick.
-        // We will just let copyClass handle it if possible, but actually since we define
-        // destroy() here, copyClass will see it and NOT overwrite it, so WorkspaceThumbnail's
-        // destroy gets shadowed.
-        // Let's call the upstream destroy logic by accessing WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy
         if (WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy) {
             WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy.call(this);
         } else {
@@ -290,7 +294,49 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         });
     }
 
+    // Safe thumbnail cleanup that guards against already-disposed objects
+    _destroyThumbnails() {
+        if (this._thumbnails) {
+            for (let thumbnail of this._thumbnails) {
+                try {
+                    if (thumbnail && !thumbnail._isDestroyed) {
+                        thumbnail._isDestroyed = true;
+                        thumbnail.destroy();
+                    }
+                } catch (e) {
+                    // Thumbnail was already disposed by GNOME Shell, ignore
+                }
+            }
+            this._thumbnails = [];
+        }
+
+        // Reset state counters
+        if (this._stateCounts) {
+            for (let key in WorkspaceThumbnail.ThumbnailState)
+                this._stateCounts[WorkspaceThumbnail.ThumbnailState[key]] = 0;
+        }
+
+        // Disconnect workspace signals if still connected
+        if (this._switchWorkspaceNotifyId && this._switchWorkspaceNotifyId > 0) {
+            global.window_manager.disconnect(this._switchWorkspaceNotifyId);
+            this._switchWorkspaceNotifyId = 0;
+        }
+        if (this._nWorkspacesNotifyId && this._nWorkspacesNotifyId > 0) {
+            global.workspace_manager.disconnect(this._nWorkspacesNotifyId);
+            this._nWorkspacesNotifyId = 0;
+        }
+        if (this._syncStackingId && this._syncStackingId > 0) {
+            Main.overview.disconnect(this._syncStackingId);
+            this._syncStackingId = 0;
+        }
+        if (this._workareasChangedId && this._workareasChangedId > 0) {
+            global.display.disconnect(this._workareasChangedId);
+            this._workareasChangedId = 0;
+        }
+    }
+
     destroy() {
+        this._isDestroyed = true;
         this._destroyThumbnails();
         this._scrollAdjustment.disconnect(this._scrollAdjustmentNotifyValueId);
         Main.overview.disconnect(this._showingId);
@@ -310,6 +356,9 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
     }
 
     addThumbnails(start, count) {
+        if (this._isDestroyed)
+            return;
+
         let workspaceManager = global.workspace_manager;
 
         // Validate porthole before creating thumbnails to prevent NaN/zero dimension errors
@@ -326,6 +375,8 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
             let thumbnail = new MultiMonitorsWorkspaceThumbnail(metaWorkspace, this._monitorIndex);
             thumbnail.setPorthole(this._porthole.x, this._porthole.y,
                 this._porthole.width, this._porthole.height);
+            // Track disposal so we never touch a dead thumbnail
+            thumbnail.connect('destroy', () => { thumbnail._isDestroyed = true; });
             this._thumbnails.push(thumbnail);
             this.add_child(thumbnail);
 
@@ -369,6 +420,49 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
 }
 
 Common.copyClass(WorkspaceThumbnail.ThumbnailsBox, MultiMonitorsThumbnailsBoxClass);
+
+// Patch methods copied from upstream ThumbnailsBox to guard against
+// accessing already-disposed thumbnail widgets (GNOME 49 compatibility fix).
+{
+    const _origQueueUpdateStates = MultiMonitorsThumbnailsBoxClass.prototype._queueUpdateStates;
+    if (_origQueueUpdateStates) {
+        MultiMonitorsThumbnailsBoxClass.prototype._queueUpdateStates = function() {
+            if (this._isDestroyed) return;
+            if (this._thumbnails)
+                this._thumbnails = this._thumbnails.filter(t => t && !t._isDestroyed);
+            return _origQueueUpdateStates.call(this);
+        };
+    }
+
+    const _origUpdateStates = MultiMonitorsThumbnailsBoxClass.prototype._updateStates;
+    if (_origUpdateStates) {
+        MultiMonitorsThumbnailsBoxClass.prototype._updateStates = function() {
+            if (this._isDestroyed) return;
+            if (this._thumbnails)
+                this._thumbnails = this._thumbnails.filter(t => t && !t._isDestroyed);
+            try {
+                return _origUpdateStates.call(this);
+            } catch (e) {
+                if (!e.message?.includes('disposed'))
+                    throw e;
+            }
+        };
+    }
+
+    const _origCreateThumbnails = MultiMonitorsThumbnailsBoxClass.prototype._createThumbnails;
+    if (_origCreateThumbnails) {
+        MultiMonitorsThumbnailsBoxClass.prototype._createThumbnails = function() {
+            if (this._isDestroyed) return;
+            try {
+                return _origCreateThumbnails.call(this);
+            } catch (e) {
+                if (!e.message?.includes('disposed'))
+                    throw e;
+            }
+        };
+    }
+}
+
 export const MultiMonitorsThumbnailsBox = GObject.registerClass({
     Properties: {
         'indicator-y': GObject.ParamSpec.double(

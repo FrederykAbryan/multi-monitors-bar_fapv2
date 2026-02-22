@@ -61,6 +61,12 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_showThumbnailsSlider() {
+		// We now allow mmOverview even if thumbnails are 'none', because we want Search and App Grid
+		// if (this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID) === 'none') {
+		// 	this._hideThumbnailsSlider();
+		// 	return;
+		// }
+
 		log('[MultiMonitors] _showThumbnailsSlider called');
 
 		if (this._settings.get_boolean('force-workspaces-on-all-displays')) {

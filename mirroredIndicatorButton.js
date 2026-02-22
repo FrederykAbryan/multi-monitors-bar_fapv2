@@ -170,6 +170,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         style_class: 'mm-quick-settings-box',
                         y_align: Clutter.ActorAlign.FILL,
                         y_expand: true,
+                        x_align: Clutter.ActorAlign.FILL,
+                        x_expand: true,
                     });
                     this._createQuickSettingsClone(container, sourceChild);
                     this.add_child(container);
@@ -340,6 +342,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._quickSettingsContainer = parent;
             this._lastSourceW = 0;
             this._lastSourceH = 0;
+            this._normalCloneSize = { width: 0, height: 0 };
+            this._sizeCaptured = false;
+            this._isInOverview = false;
 
             // Sync clone size to source's actual allocation (not preferred size)
             const syncSize = () => {
@@ -356,6 +361,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         this._lastSourceW = w;
                         this._lastSourceH = h;
                         this._quickSettingsClone.set_size(w, h);
+                    }
+
+                    // Also capture normal size for overview counter-scale
+                    if (!this._sizeCaptured && w > 0 && h > 0) {
+                        this._normalCloneSize = { width: w, height: h };
+                        this._sizeCaptured = true;
                     }
                 } catch (e) {
                     // Source may not have allocation yet
@@ -378,16 +389,145 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return GLib.SOURCE_REMOVE;
             });
 
+            // When overview shows - apply counter-scale to maintain visual size
+            this._overviewShowingId = Main.overview.connect('showing', () => {
+                if (this._quickSettingsClone && !this._isInOverview) {
+                    this._isInOverview = true;
+
+                    // Capture size if not yet captured
+                    if (!this._sizeCaptured) {
+                        try { syncSize(); } catch (e) { }
+                    }
+
+                    // Set fixed size on container to prevent shrinking
+                    const horizontalPadding = 16;
+                    if (this._sizeCaptured) {
+                        this._quickSettingsContainer.set_size(
+                            this._normalCloneSize.width + horizontalPadding,
+                            this._normalCloneSize.height
+                        );
+                    }
+
+                    // Monitor clone size changes during overview and apply counter-scale
+                    this._startOverviewSizeMonitor();
+                }
+            });
+
+            // When overview hides - remove fixed size and scale
+            this._overviewHiddenId = Main.overview.connect('hidden', () => {
+                if (this._quickSettingsClone && this._isInOverview) {
+                    this._isInOverview = false;
+
+                    // Stop size monitoring
+                    this._stopOverviewSizeMonitor();
+
+                    // Remove fixed size
+                    this._quickSettingsContainer.set_size(-1, -1);
+
+                    // Reset any scale transform
+                    this._quickSettingsClone.set_scale(1.0, 1.0);
+                    this._quickSettingsClone.set_pivot_point(0, 0);
+
+                    // Re-capture size for next overview
+                    if (this._captureNormalHeightTimeoutId) {
+                        GLib.source_remove(this._captureNormalHeightTimeoutId);
+                        this._captureNormalHeightTimeoutId = null;
+                    }
+                    this._captureNormalHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                        if (this._quickSettingsClone) {
+                            try { syncSize(); } catch (e) { }
+                        }
+                        this._captureNormalHeightTimeoutId = null;
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
+            });
+
             // Monitor fullscreen state changes on primary monitor
             this._fullscreenChangedId = global.display.connect('in-fullscreen-changed',
                 this._onQuickSettingsFullscreenChanged.bind(this));
         }
 
+        _startOverviewSizeMonitor() {
+            // Monitor clone size continuously during overview and apply counter-scale
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+            }
+
+            const updateScale = () => {
+                if (!this._quickSettingsClone || !this._isInOverview || !this._sizeCaptured) {
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                const [currentW, currentH] = this._quickSettingsClone.get_size();
+                const targetW = this._normalCloneSize.width;
+                const targetH = this._normalCloneSize.height;
+
+                if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
+                    // Calculate scale needed to restore visual size
+                    let scaleX = targetW / currentW;
+                    let scaleY = targetH / currentH;
+
+                    // Cap maximum scale to 1.1 (10% increase) to prevent explosion on GNOME 49
+                    // This means we only correct small shrinking, and accept larger shrinking
+                    // to avoid visual glitches or huge icons
+                    const maxScale = 1.1;
+                    scaleX = Math.min(scaleX, maxScale);
+                    scaleY = Math.min(scaleY, maxScale);
+
+                    // Only apply if shrinking detected (and significant enough to matter)
+                    if (scaleX > 1.01 || scaleY > 1.01) {
+                        this._quickSettingsClone.set_pivot_point(0.5, 0.5);
+                        this._quickSettingsClone.set_scale(scaleX, scaleY);
+                    } else {
+                        // Reset if no significant shrinking
+                        this._quickSettingsClone.set_scale(1.0, 1.0);
+                    }
+                }
+
+                return this._isInOverview ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+            };
+
+            // Check every 50ms during overview transition
+            this._overviewSizeMonitorId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, updateScale);
+        }
+
+        _stopOverviewSizeMonitor() {
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
+        }
+
         _onQuickSettingsFullscreenChanged() {
             if (!this._quickSettingsClone) return;
+
             // The allocation sync will handle size changes from fullscreen
             // Just queue a relayout to pick up the new source allocation
             this._quickSettingsClone.queue_relayout();
+
+            const isPrimaryFullscreen = this._isPrimaryMonitorFullscreen();
+
+            if (isPrimaryFullscreen) {
+                // Entering fullscreen on primary - adjust alignment
+                this._quickSettingsClone.y_align = Clutter.ActorAlign.END;
+
+                // Set fixed size if captured
+                if (this._sizeCaptured) {
+                    this._quickSettingsContainer.set_size(
+                        this._normalCloneSize.width,
+                        this._normalCloneSize.height + 10  // Add padding for downward shift
+                    );
+                }
+            } else {
+                // Exiting fullscreen on primary - restore alignment
+                this._quickSettingsClone.y_align = Clutter.ActorAlign.FILL;
+
+                // Remove fixed size if not in overview
+                if (!this._isInOverview) {
+                    this._quickSettingsContainer.set_size(-1, -1);
+                }
+            }
         }
 
         _applyNormalMode() {
@@ -496,6 +636,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _copyIconsFromSource(container, source) {
+            // Guard against accessing disposed actors
+            try {
+                if (!container || !source) return;
+                // Test if the actor is still alive by accessing a property
+                container.visible;
+                source.visible;
+            } catch (e) {
+                return; // Actor already disposed
+            }
+
             // Remove existing children
             container.remove_all_children();
 
@@ -545,12 +695,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Recursively find all St.Icon and St.Label instances in an actor tree
             // This preserves their order for proper display (e.g., Vitals: icon + number)
             const widgets = [];
-            if (actor instanceof St.Icon || actor instanceof St.Label) {
-                widgets.push(actor);
-            }
-            const children = actor.get_children ? actor.get_children() : [];
-            for (const child of children) {
-                widgets.push(...this._findAllDisplayWidgets(child));
+            try {
+                if (actor instanceof St.Icon || actor instanceof St.Label) {
+                    widgets.push(actor);
+                }
+                const children = actor.get_children ? actor.get_children() : [];
+                for (const child of children) {
+                    widgets.push(...this._findAllDisplayWidgets(child));
+                }
+            } catch (e) {
+                // Actor disposed during traversal, return what we have
             }
             return widgets;
         }
@@ -569,10 +723,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
                 try {
                     if (this._iconContainer && this._iconSource) {
+                        // Verify actors are still alive before accessing
+                        this._iconContainer.visible;
+                        this._iconSource.visible;
                         this._copyIconsFromSource(this._iconContainer, this._iconSource);
                     }
                     return GLib.SOURCE_CONTINUE;
                 } catch (e) {
+                    // Container or source disposed, stop syncing
                     this._iconSyncId = null;
                     return GLib.SOURCE_REMOVE;
                 }
@@ -582,10 +740,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
                 try {
                     if (this._iconContainer) {
+                        this._iconContainer.visible;
                         this._syncLabelTexts(this._iconContainer);
                     }
                     return GLib.SOURCE_CONTINUE;
                 } catch (e) {
+                    // Container disposed, stop syncing
                     this._labelSyncId = null;
                     return GLib.SOURCE_REMOVE;
                 }
@@ -594,11 +754,19 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _syncLabelTexts(container) {
             // Update label text from source labels
-            const children = container.get_children();
-            for (const child of children) {
-                if (child instanceof St.Label && child._sourceLabel) {
-                    child.text = child._sourceLabel.text;
+            try {
+                const children = container.get_children();
+                for (const child of children) {
+                    if (child instanceof St.Label && child._sourceLabel) {
+                        try {
+                            child.text = child._sourceLabel.text;
+                        } catch (e) {
+                            // Source label disposed, skip
+                        }
+                    }
                 }
+            } catch (e) {
+                // Container disposed
             }
         }
 
@@ -640,13 +808,17 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _findIconInActor(actor) {
             // Recursively find St.Icon in an actor tree
-            if (actor instanceof St.Icon) {
-                return actor;
-            }
-            const children = actor.get_children ? actor.get_children() : [];
-            for (const child of children) {
-                const found = this._findIconInActor(child);
-                if (found) return found;
+            try {
+                if (actor instanceof St.Icon) {
+                    return actor;
+                }
+                const children = actor.get_children ? actor.get_children() : [];
+                for (const child of children) {
+                    const found = this._findIconInActor(child);
+                    if (found) return found;
+                }
+            } catch (e) {
+                // Actor disposed during traversal
             }
             return null;
         }
@@ -1096,9 +1268,29 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._qsInitialSyncId = null;
             }
 
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
+
+            if (this._captureNormalHeightTimeoutId) {
+                GLib.source_remove(this._captureNormalHeightTimeoutId);
+                this._captureNormalHeightTimeoutId = null;
+            }
+
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
+
             if (this._overviewShowingId) {
                 Main.overview.disconnect(this._overviewShowingId);
                 this._overviewShowingId = null;
+            }
+
+            if (this._fullscreenChangedId) {
+                global.display.disconnect(this._fullscreenChangedId);
+                this._fullscreenChangedId = null;
             }
 
             if (this._fullscreenChangedId) {
