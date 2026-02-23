@@ -288,20 +288,40 @@ function _createToolbarClonesForAllMonitors() {
                         });
                         _pendingTimeouts.push(pressTimeoutId);
                     } else if (elem.toggle_mode) {
-                        const isPointerButton = (elem === screenshotUI._showPointerButtonContainer);
+                        const isPointerButton = (elem === screenshotUI._showPointerButtonContainer) ||
+                            (screenshotUI._showPointerButton && elem === screenshotUI._showPointerButton);
+
+                        let currentChecked = false;
+                        if (typeof elem.get_checked === 'function') {
+                            currentChecked = elem.get_checked();
+                        } else if (elem.checked !== undefined) {
+                            currentChecked = elem.checked;
+                        }
 
                         if (isPointerButton) {
-                            if (elem.get_checked) {
-                                elem.set_checked(!elem.get_checked());
+                            if (typeof elem.set_checked === 'function') {
+                                elem.set_checked(!currentChecked);
+                            } else {
+                                elem.checked = !currentChecked;
                             }
                         } else {
-                            if (elem.set_checked) {
+                            if (typeof elem.set_checked === 'function') {
                                 elem.set_checked(true);
+                            } else {
+                                elem.checked = true;
                             }
                         }
-                        elem.emit('clicked', 0);
+                        if (typeof elem.clicked === 'function') {
+                            elem.clicked(0);
+                        } else {
+                            elem.emit('clicked', 0);
+                        }
                     } else {
-                        elem.emit('clicked', 0);
+                        if (typeof elem.clicked === 'function') {
+                            elem.clicked(0);
+                        } else {
+                            elem.emit('clicked', 0);
+                        }
                     }
                     return Clutter.EVENT_STOP;
                 });
@@ -374,11 +394,36 @@ function _createToolbarClonesForAllMonitors() {
                 if (isButton) {
 
                     if (actorToClick.toggle_mode) {
-                        if (typeof actorToClick.set_checked === 'function') {
-                            actorToClick.set_checked(true);
-                            actorToClick.emit('clicked', 0);
-                            return Clutter.EVENT_STOP;
+                        const isPointerButton = (screenshotUI._showPointerButtonContainer && (actorToClick === screenshotUI._showPointerButtonContainer || actorToClick.get_parent() === screenshotUI._showPointerButtonContainer)) ||
+                            (screenshotUI._showPointerButton && actorToClick === screenshotUI._showPointerButton);
+
+                        let currentChecked = false;
+                        if (typeof actorToClick.get_checked === 'function') {
+                            currentChecked = actorToClick.get_checked();
+                        } else if (actorToClick.checked !== undefined) {
+                            currentChecked = actorToClick.checked;
                         }
+
+                        if (isPointerButton) {
+                            if (typeof actorToClick.set_checked === 'function') {
+                                actorToClick.set_checked(!currentChecked);
+                            } else {
+                                actorToClick.checked = !currentChecked;
+                            }
+                        } else {
+                            if (typeof actorToClick.set_checked === 'function') {
+                                actorToClick.set_checked(true);
+                            } else {
+                                actorToClick.checked = true;
+                            }
+                        }
+
+                        if (typeof actorToClick.clicked === 'function') {
+                            actorToClick.clicked(0);
+                        } else {
+                            actorToClick.emit('clicked', 0);
+                        }
+                        return Clutter.EVENT_STOP;
                     }
 
                     // --- CASE 2: Capture Button ---
