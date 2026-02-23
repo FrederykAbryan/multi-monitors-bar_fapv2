@@ -264,10 +264,26 @@ function _createToolbarClonesForAllMonitors() {
             if (isDuplicateToken || isCloseButton) {
                 clone.connect('button-release-event', () => {
                     if (elem === screenshotUI._captureButton) {
-                        elem.set_pressed(true);
+                        if (typeof elem.set_pressed === 'function') {
+                            elem.set_pressed(true);
+                        } else if (typeof elem.add_style_pseudo_class === 'function') {
+                            elem.add_style_pseudo_class('active');
+                        }
+
                         const pressTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
                             _pendingTimeouts = _pendingTimeouts.filter(id => id !== pressTimeoutId);
-                            elem.set_pressed(false);
+                            if (typeof elem.set_pressed === 'function') {
+                                elem.set_pressed(false);
+                            } else {
+                                if (typeof elem.remove_style_pseudo_class === 'function') {
+                                    elem.remove_style_pseudo_class('active');
+                                }
+                                if (typeof elem.clicked === 'function') {
+                                    elem.clicked(0);
+                                } else if (typeof elem.emit === 'function') {
+                                    elem.emit('clicked', 0);
+                                }
+                            }
                             return GLib.SOURCE_REMOVE;
                         });
                         _pendingTimeouts.push(pressTimeoutId);
@@ -373,13 +389,26 @@ function _createToolbarClonesForAllMonitors() {
                         (actorToClick.has_style_class_name && actorToClick.has_style_class_name('screenshot-ui-capture-button'));
 
                     if (isCaptureButton) {
-                        actorToClick.set_pressed(true);
-                        actorToClick.add_style_pseudo_class('active');
+                        if (typeof actorToClick.set_pressed === 'function') {
+                            actorToClick.set_pressed(true);
+                        } else if (typeof actorToClick.add_style_pseudo_class === 'function') {
+                            actorToClick.add_style_pseudo_class('active');
+                        }
 
                         const captureTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
                             _pendingTimeouts = _pendingTimeouts.filter(id => id !== captureTimeoutId);
-                            actorToClick.set_pressed(false);
-                            actorToClick.remove_style_pseudo_class('active');
+                            if (typeof actorToClick.set_pressed === 'function') {
+                                actorToClick.set_pressed(false);
+                            } else {
+                                if (typeof actorToClick.remove_style_pseudo_class === 'function') {
+                                    actorToClick.remove_style_pseudo_class('active');
+                                }
+                                if (typeof actorToClick.clicked === 'function') {
+                                    actorToClick.clicked(0);
+                                } else if (typeof actorToClick.emit === 'function') {
+                                    actorToClick.emit('clicked', 0);
+                                }
+                            }
                             return GLib.SOURCE_REMOVE;
                         });
                         _pendingTimeouts.push(captureTimeoutId);
