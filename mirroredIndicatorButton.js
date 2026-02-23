@@ -34,6 +34,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._role = role;
             this._panel = panel;
 
+            // Ensure cleanup happens when the underlying Clutter object is destroyed
+            // This captures cases where mmpanel implicitely destroys children
+            this.connect('destroy', this._cleanup.bind(this));
+
             if (role === 'activities') {
                 this._initActivitiesButton();
             } else {
@@ -199,8 +203,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     }
 
                     this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                        updateClock();
-                        return GLib.SOURCE_CONTINUE;
+                        try {
+                            updateClock();
+                            return GLib.SOURCE_CONTINUE;
+                        } catch (e) {
+                            this._clockUpdateId = null;
+                            return GLib.SOURCE_REMOVE;
+                        }
                     });
 
                     this.add_child(clockDisplay);
@@ -264,8 +273,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                updateClock();
-                return GLib.SOURCE_CONTINUE;
+                try {
+                    updateClock();
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._clockUpdateId = null;
+                    return GLib.SOURCE_REMOVE;
+                }
             });
 
             container.add_child(clockDisplay);
@@ -346,7 +360,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._captureHeightTimeoutId = null;
             }
             this._captureHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                captureSize();
+                try {
+                    captureSize();
+                } catch (e) { }
                 this._captureHeightTimeoutId = null;
                 return GLib.SOURCE_REMOVE;
             });
@@ -397,12 +413,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         this._captureNormalHeightTimeoutId = null;
                     }
                     this._captureNormalHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                        if (this._quickSettingsClone) {
-                            const [w, h] = this._quickSettingsClone.get_size();
-                            if (w > 0 && h > 0) {
-                                this._normalCloneSize = { width: w, height: h };
+                        try {
+                            if (this._quickSettingsClone) {
+                                const [w, h] = this._quickSettingsClone.get_size();
+                                if (w > 0 && h > 0) {
+                                    this._normalCloneSize = { width: w, height: h };
+                                }
                             }
-                        }
+                        } catch (e) { }
                         this._captureNormalHeightTimeoutId = null;
                         return GLib.SOURCE_REMOVE;
                     });
@@ -421,37 +439,42 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             const updateScale = () => {
-                if (!this._quickSettingsClone || !this._isInOverview || !this._sizeCaptured) {
+                try {
+                    if (!this._quickSettingsClone || !this._isInOverview || !this._sizeCaptured) {
+                        return GLib.SOURCE_REMOVE;
+                    }
+
+                    const [currentW, currentH] = this._quickSettingsClone.get_size();
+                    const targetW = this._normalCloneSize.width;
+                    const targetH = this._normalCloneSize.height;
+
+                    if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
+                        // Calculate scale needed to restore visual size
+                        let scaleX = targetW / currentW;
+                        let scaleY = targetH / currentH;
+
+                        // Cap maximum scale to 1.1 (10% increase) to prevent explosion on GNOME 49
+                        // This means we only correct small shrinking, and accept larger shrinking
+                        // to avoid visual glitches or huge icons
+                        const maxScale = 1.1;
+                        scaleX = Math.min(scaleX, maxScale);
+                        scaleY = Math.min(scaleY, maxScale);
+
+                        // Only apply if shrinking detected (and significant enough to matter)
+                        if (scaleX > 1.01 || scaleY > 1.01) {
+                            this._quickSettingsClone.set_pivot_point(0.5, 0.5);
+                            this._quickSettingsClone.set_scale(scaleX, scaleY);
+                        } else {
+                            // Reset if no significant shrinking
+                            this._quickSettingsClone.set_scale(1.0, 1.0);
+                        }
+                    }
+
+                    return this._isInOverview ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+                } catch (e) {
+                    this._overviewSizeMonitorId = null;
                     return GLib.SOURCE_REMOVE;
                 }
-
-                const [currentW, currentH] = this._quickSettingsClone.get_size();
-                const targetW = this._normalCloneSize.width;
-                const targetH = this._normalCloneSize.height;
-
-                if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
-                    // Calculate scale needed to restore visual size
-                    let scaleX = targetW / currentW;
-                    let scaleY = targetH / currentH;
-
-                    // Cap maximum scale to 1.1 (10% increase) to prevent explosion on GNOME 49
-                    // This means we only correct small shrinking, and accept larger shrinking
-                    // to avoid visual glitches or huge icons
-                    const maxScale = 1.1;
-                    scaleX = Math.min(scaleX, maxScale);
-                    scaleY = Math.min(scaleY, maxScale);
-
-                    // Only apply if shrinking detected (and significant enough to matter)
-                    if (scaleX > 1.01 || scaleY > 1.01) {
-                        this._quickSettingsClone.set_pivot_point(0.5, 0.5);
-                        this._quickSettingsClone.set_scale(scaleX, scaleY);
-                    } else {
-                        // Reset if no significant shrinking
-                        this._quickSettingsClone.set_scale(1.0, 1.0);
-                    }
-                }
-
-                return this._isInOverview ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
             };
 
             // Check every 50ms during overview transition
@@ -513,27 +536,32 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const endTime = startTime + (duration * 1000);
 
             const checkSize = () => {
-                if (!this._quickSettingsSource) {
-                    return GLib.SOURCE_REMOVE;
-                }
+                try {
+                    if (!this._quickSettingsSource) {
+                        return GLib.SOURCE_REMOVE;
+                    }
 
-                // Get source size (max of actual and preferred)
-                const [minW, natW] = this._quickSettingsSource.get_preferred_width(-1);
-                const [actW] = this._quickSettingsSource.get_size();
-                const sourceWidth = Math.max(natW, minW, actW);
+                    // Get source size (max of actual and preferred)
+                    const [minW, natW] = this._quickSettingsSource.get_preferred_width(-1);
+                    const [actW] = this._quickSettingsSource.get_size();
+                    const sourceWidth = Math.max(natW, minW, actW);
 
-                // Track max observed width
-                if (sourceWidth > (this._cachedWidth || 0)) {
-                    this._cachedWidth = sourceWidth;
-                }
+                    // Track max observed width
+                    if (sourceWidth > (this._cachedWidth || 0)) {
+                        this._cachedWidth = sourceWidth;
+                    }
 
-                // Stop after duration
-                if (GLib.get_monotonic_time() > endTime) {
+                    // Stop after duration
+                    if (GLib.get_monotonic_time() > endTime) {
+                        this._monitorTimeoutId = null;
+                        return GLib.SOURCE_REMOVE;
+                    }
+
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
                     this._monitorTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 }
-
-                return GLib.SOURCE_CONTINUE;
             };
 
             this._monitorTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, checkSize);
@@ -665,18 +693,28 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Full rebuild every 5 seconds to catch added/removed icons
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
-                if (this._iconContainer && this._iconSource) {
-                    this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                try {
+                    if (this._iconContainer && this._iconSource) {
+                        this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._iconSyncId = null;
+                    return GLib.SOURCE_REMOVE;
                 }
-                return GLib.SOURCE_CONTINUE;
             });
 
             // Sync label text more frequently (every 2 seconds) for Vitals-like extensions
             this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-                if (this._iconContainer) {
-                    this._syncLabelTexts(this._iconContainer);
+                try {
+                    if (this._iconContainer) {
+                        this._syncLabelTexts(this._iconContainer);
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._labelSyncId = null;
+                    return GLib.SOURCE_REMOVE;
                 }
-                return GLib.SOURCE_CONTINUE;
             });
         }
 
@@ -831,8 +869,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._forwardClickTimeoutId = null;
                 }
                 this._forwardClickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                    this._sourceIndicator.emit('button-release-event', event);
-                    this.remove_style_pseudo_class('active');
+                    try {
+                        this._sourceIndicator.emit('button-release-event', event);
+                        this.remove_style_pseudo_class('active');
+                    } catch (e) { }
                     this._forwardClickTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
@@ -909,7 +949,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._arcMenuTimeoutId = null;
                 }
                 this._arcMenuTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this.remove_style_pseudo_class('active');
+                    try {
+                        this.remove_style_pseudo_class('active');
+                    } catch (e) { }
                     this._arcMenuTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
@@ -1136,7 +1178,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
-        destroy() {
+        _cleanup() {
+            if (this._isCleanedUp) return;
+            this._isCleanedUp = true;
+
             if (this._clockUpdateId) {
                 GLib.source_remove(this._clockUpdateId);
                 this._clockUpdateId = null;
@@ -1250,6 +1295,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._nWorkspacesChangedId = null;
                 }
             }
+        }
+
+        destroy() {
+            this._cleanup();
             super.destroy();
         }
     });
