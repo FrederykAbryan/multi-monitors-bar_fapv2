@@ -269,7 +269,11 @@ const MultiMonitorsPanel = GObject.registerClass(
             super._init({
                 name: 'panel',
                 reactive: true,
-                style_class: 'panel'
+                style_class: 'panel multimonitor-panel',
+                x_expand: true,
+                y_expand: true,
+                x_align: Clutter.ActorAlign.FILL,
+                y_align: Clutter.ActorAlign.FILL
             });
 
             this.monitorIndex = monitorIndex;

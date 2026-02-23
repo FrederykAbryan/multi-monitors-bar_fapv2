@@ -64,6 +64,12 @@
         menu.</description>
     </key>
 
+    <key name="enable-blur-my-shell" type="b">
+      <default>true</default>
+      <summary>Enable Blur my Shell integration.</summary>
+      <description>Automatically register secondary panels with Blur my Shell extension for blur effects.</description>
+    </key>
+
     <key name="screenshot-on-all-monitors" type="b">
       <default>false</default>
       <summary>Show screenshot tools on all monitors.</summary>

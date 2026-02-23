@@ -64,6 +64,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
             left: _('On the left'),
             auto: _('Auto')
         });
+        this._addBooleanSwitch(_('Enable Blur my Shell integration.'), 'enable-blur-my-shell');
         this._addSettingsBooleanSwitch(_('Enable hot corners.'), this._desktopSettings, ENABLE_HOT_CORNERS);
         this._addBooleanSwitch(_('Show screenshot tools on all monitors.'), SCREENSHOT_ON_ALL_MONITORS_ID);
 
