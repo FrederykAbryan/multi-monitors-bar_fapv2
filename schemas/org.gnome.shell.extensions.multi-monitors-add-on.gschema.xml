@@ -85,5 +85,12 @@
         displays. Disabling this may affect the workspaces thumbnail slider on secondary monitors.</description>
     </key>
 
+    <key name="show-overview-on-extended-monitors" type="b">
+      <default>true</default>
+      <summary>Show App Grid and Search on extended monitors.</summary>
+      <description>When enabled, the custom overview (App Grid and Search) is shown on extended
+        monitors. Disabling this completely hides the overview from secondary displays.</description>
+    </key>
+
   </schema>
 </schemalist>

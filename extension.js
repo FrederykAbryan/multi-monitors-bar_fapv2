@@ -68,6 +68,11 @@ export default class MultiMonitorsExtension extends Extension {
 				this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, true);
 		}
 
+		if (!this._settings.get_boolean('show-overview-on-extended-monitors')) {
+			this._hideThumbnailsSlider();
+			return;
+		}
+
 		if (mmOverview) {
 			log('[MultiMonitors] mmOverview already exists, returning');
 			return;
@@ -171,7 +176,13 @@ export default class MultiMonitorsExtension extends Extension {
 				if (!this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
 					this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, true);
 			}
-			this._relayout();
+			this._hideThumbnailsSlider();
+			this._showThumbnailsSlider();
+		});
+
+		this._showOverviewId = this._settings.connect('changed::show-overview-on-extended-monitors', () => {
+			this._hideThumbnailsSlider();
+			this._showThumbnailsSlider();
 		});
 
 		mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
@@ -226,6 +237,11 @@ export default class MultiMonitorsExtension extends Extension {
 		if (this._forceWorkspacesId) {
 			this._settings.disconnect(this._forceWorkspacesId);
 			this._forceWorkspacesId = null;
+		}
+
+		if (this._showOverviewId) {
+			this._settings.disconnect(this._showOverviewId);
+			this._showOverviewId = null;
 		}
 
 		if (this._showPanelId) {

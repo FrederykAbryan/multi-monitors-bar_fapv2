@@ -33,6 +33,7 @@ const TRANSFER_INDICATORS_ID = 'transfer-indicators';
 const ENABLE_HOT_CORNERS = 'enable-hot-corners';
 const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
 const FORCE_WORKSPACES_ON_ALL_DISPLAYS_ID = 'force-workspaces-on-all-displays';
+const SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID = 'show-overview-on-extended-monitors';
 const Columns = {
     INDICATOR_NAME: 0,
     MONITOR_NUMBER: 1
@@ -69,6 +70,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._addSettingsBooleanSwitch(_('Enable hot corners.'), this._desktopSettings, ENABLE_HOT_CORNERS);
         this._addBooleanSwitch(_('Show screenshot tools on all monitors.'), SCREENSHOT_ON_ALL_MONITORS_ID);
         this._addBooleanSwitch(_('Force workspaces on all displays.'), FORCE_WORKSPACES_ON_ALL_DISPLAYS_ID);
+        this._addBooleanSwitch(_('Show App Grid and Search on extended monitors.'), SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID);
 
         this._store = new Gtk.ListStore();
         this._store.set_column_types([GObject.TYPE_STRING, GObject.TYPE_INT]);
