@@ -32,6 +32,7 @@ export const copyClass = Common.copyClass;
 import * as MMLayout from './mmlayout.js';
 import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
+import * as ScreenshotPatch from './screenshotPatch.js';
 
 const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
@@ -57,21 +58,28 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_showThumbnailsSlider() {
-		if (this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID) === 'none') {
-			this._hideThumbnailsSlider();
-			return;
-		}
+		// We now allow mmOverview even if thumbnails are 'none', because we want Search and App Grid
+		// if (this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID) === 'none') {
+		// 	this._hideThumbnailsSlider();
+		// 	return;
+		// }
+
+		log('[MultiMonitors] _showThumbnailsSlider called');
 
 		if (this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
 			this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, false);
 
-		if (mmOverview)
+		if (mmOverview) {
+			log('[MultiMonitors] mmOverview already exists, returning');
 			return;
+		}
 
 		mmOverview = [];
+		log('[MultiMonitors] Creating mmOverview array');
 
 		for (let idx = 0; idx < Main.layoutManager.monitors.length; idx++) {
 			if (idx != Main.layoutManager.primaryIndex) {
+				log('[MultiMonitors] Creating overview for monitor ' + idx);
 				mmOverview[idx] = new MMOverview.MultiMonitorsOverview(idx, this._settings);
 			}
 		}
@@ -187,9 +195,15 @@ export default class MultiMonitorsExtension extends Extension {
 			}
 			return indicator;
 		};
+
+		// Patch screenshot UI to open on cursor's monitor (or all monitors based on setting)
+		ScreenshotPatch.patchScreenshotUI(this._settings);
 	}
 
 	disable() {
+		// Unpatch screenshot UI
+		ScreenshotPatch.unpatchScreenshotUI();
+
 		if (this._relayoutId) {
 			Main.layoutManager.disconnect(this._relayoutId);
 			this._relayoutId = null;

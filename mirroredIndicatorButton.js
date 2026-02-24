@@ -34,6 +34,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._role = role;
             this._panel = panel;
 
+            // Ensure cleanup happens when the underlying Clutter object is destroyed
+            // This captures cases where mmpanel implicitely destroys children
+            this.connect('destroy', this._cleanup.bind(this));
+
             if (role === 'activities') {
                 this._initActivitiesButton();
             } else {
@@ -116,6 +120,32 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._sourceIndicator = Main.panel.statusArea[role] || null;
 
             if (this._sourceIndicator) {
+                // Check if the source indicator has any visible content
+                const sourceChild = this._sourceIndicator.get_first_child();
+                if (!sourceChild) {
+                    // No child content - mark as empty and hide
+                    this._isEmpty = true;
+                    this.visible = false;
+                    return;
+                }
+
+                // Additional check: if the source indicator or its child is not visible, skip
+                if (!this._sourceIndicator.visible) {
+                    this._isEmpty = true;
+                    this.visible = false;
+                    return;
+                }
+
+                // Check for empty BoxLayout with no visible children
+                if (sourceChild instanceof St.BoxLayout) {
+                    const visibleChildren = sourceChild.get_children().filter(c => c.visible);
+                    if (visibleChildren.length === 0) {
+                        this._isEmpty = true;
+                        this.visible = false;
+                        return;
+                    }
+                }
+
                 this._createIndicatorClone();
             } else {
                 this._createFallbackIcon();
@@ -125,81 +155,99 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _createIndicatorClone() {
             try {
                 const sourceChild = this._sourceIndicator.get_first_child();
-                if (sourceChild && sourceChild instanceof St.BoxLayout) {
-                    // For dateMenu, create a real label (not a clone) for independent hover
-                    if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
-                        // Create clock label directly - no extra container
-                        const clockDisplay = new St.Label({
-                            style_class: 'clock',
-                            y_align: Clutter.ActorAlign.CENTER,
-                            y_expand: true,
-                        });
+                if (!sourceChild) {
+                    this._createFallbackIcon();
+                    return;
+                }
 
-                        const updateClock = () => {
-                            if (this._sourceIndicator._clockDisplay) {
-                                clockDisplay.text = this._sourceIndicator._clockDisplay.text;
-                            }
-                        };
+                // 1. Quick Settings (Handle explicitly regardless of structure)
+                if (this._role === 'quickSettings') {
+                    this.add_style_class_name('mm-quick-settings');
+                    // Use FILL for full panel height hover detection
+                    this.y_expand = true;
+                    this.y_align = Clutter.ActorAlign.FILL;
+                    const container = new St.BoxLayout({
+                        style_class: 'mm-quick-settings-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                        // Ensure width expands
+                        x_align: Clutter.ActorAlign.FILL,
+                        x_expand: true
+                    });
+                    this._createQuickSettingsClone(container, sourceChild);
+                    this.add_child(container);
+                    return;
+                }
 
-                        updateClock();
+                // 2. Date Menu (Try optimizing with Label copy, fallback to simple clone)
+                if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
+                    // Create clock label directly - no extra container
+                    const clockDisplay = new St.Label({
+                        style_class: 'clock',
+                        y_align: Clutter.ActorAlign.CENTER,
+                        y_expand: true,
+                    });
 
-                        // Remove existing timeout before creating new one
-                        if (this._clockUpdateId) {
-                            GLib.source_remove(this._clockUpdateId);
-                            this._clockUpdateId = null;
+                    const updateClock = () => {
+                        if (this._sourceIndicator._clockDisplay) {
+                            clockDisplay.text = this._sourceIndicator._clockDisplay.text;
                         }
+                    };
 
-                        this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                    updateClock();
+
+                    // Remove existing timeout before creating new one
+                    if (this._clockUpdateId) {
+                        GLib.source_remove(this._clockUpdateId);
+                        this._clockUpdateId = null;
+                    }
+
+                    this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+                        try {
                             updateClock();
                             return GLib.SOURCE_CONTINUE;
-                        });
-
-                        this.add_child(clockDisplay);
-                        this._clockDisplay = clockDisplay;
-                    } else {
-                        // For quickSettings, use FILL for full-height hover area
-                        // The clipping container inside handles the fixed visual content height
-                        if (this._role === 'quickSettings') {
-                            this.add_style_class_name('mm-quick-settings');
-                            // Use FILL for full panel height hover detection
-                            this.y_expand = true;
-                            this.y_align = Clutter.ActorAlign.FILL;
-                            const container = new St.BoxLayout({
-                                style_class: 'mm-quick-settings-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createQuickSettingsClone(container, sourceChild);
-                            this.add_child(container);
-                        } else if (this._role === 'favorites-menu' || this._role.toLowerCase().includes('favorites') || this._role.toLowerCase().includes('favorite')) {
-                            // For favorites-menu@fthx extension (registers as 'Favorites Menu Button'), use real widget copy
-                            this.add_style_class_name('mm-favorites-menu');
-                            this.y_expand = true;
-                            this.y_align = Clutter.ActorAlign.FILL;
-                            const container = new St.BoxLayout({
-                                style_class: 'mm-favorites-menu-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createFillClone(container, sourceChild);
-                            this.add_child(container);
-                        } else {
-                            // For other indicators, use clone approach
-                            // Container is FILL to get full-height hover, but clone inside is centered
-                            const container = new St.BoxLayout({
-                                style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
-                                y_align: Clutter.ActorAlign.FILL,
-                                y_expand: true,
-                            });
-                            this._createSimpleClone(container, sourceChild);
-                            this.add_child(container);
+                        } catch (e) {
+                            this._clockUpdateId = null;
+                            return GLib.SOURCE_REMOVE;
                         }
-                    }
+                    });
+
+                    this.add_child(clockDisplay);
+                    this._clockDisplay = clockDisplay;
+                    return;
+                }
+
+                // 3. Favorites Menu (Special handling)
+                if (this._role === 'favorites-menu' || (this._role && (this._role.toLowerCase().includes('favorites') || this._role.toLowerCase().includes('favorite')))) {
+                    this.add_style_class_name('mm-favorites-menu');
+                    this.y_expand = true;
+                    this.y_align = Clutter.ActorAlign.FILL;
+                    const container = new St.BoxLayout({
+                        style_class: 'mm-favorites-menu-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                    });
+                    this._createFillClone(container, sourceChild);
+                    this.add_child(container);
+                    return;
+                }
+
+                // 4. Generic Handling
+                if (sourceChild instanceof St.BoxLayout) {
+                    // Container is FILL to get full-height hover, but clone inside is centered
+                    const container = new St.BoxLayout({
+                        style_class: sourceChild.get_style_class_name() || 'panel-status-menu-box',
+                        y_align: Clutter.ActorAlign.FILL,
+                        y_expand: true,
+                    });
+                    this._createSimpleClone(container, sourceChild);
+                    this.add_child(container);
                 } else {
                     this._createSimpleClone(this, sourceChild);
                 }
+
             } catch (e) {
-                console.error('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
+                console.debug('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                 this._createFallbackIcon();
             }
         }
@@ -225,8 +273,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                updateClock();
-                return GLib.SOURCE_CONTINUE;
+                try {
+                    updateClock();
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._clockUpdateId = null;
+                    return GLib.SOURCE_REMOVE;
+                }
             });
 
             container.add_child(clockDisplay);
@@ -276,67 +329,163 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 source: source,
                 y_align: Clutter.ActorAlign.FILL,
                 y_expand: true,
-                x_align: Clutter.ActorAlign.START,
-                x_expand: false,
+                x_align: Clutter.ActorAlign.FILL,
+                x_expand: true,
             });
 
-            // Add clone directly to parent (no container in normal mode)
+            // Add clone directly to parent
             parent.add_child(clone);
 
             this._quickSettingsClone = clone;
-            this._quickSettingsClipContainer = null;
             this._quickSettingsSource = source;
             this._quickSettingsContainer = parent;
-            this._normalCloneHeight = 0;
+            this._normalCloneSize = { width: 0, height: 0 };
+            this._sizeCaptured = false;
+            this._isInOverview = false;
 
-            // When overview shows - capture height and wrap in clipping container
+            // Capture normal size IMMEDIATELY on first allocation (before any overview)
+            const captureSize = () => {
+                if (!this._sizeCaptured && this._quickSettingsClone) {
+                    const [w, h] = this._quickSettingsClone.get_size();
+                    if (w > 0 && h > 0) {
+                        this._normalCloneSize = { width: w, height: h };
+                        this._sizeCaptured = true;
+                    }
+                }
+            };
+
+            // Try to capture size after a brief delay (once layout settles)
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
+            this._captureHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                try {
+                    captureSize();
+                } catch (e) { }
+                this._captureHeightTimeoutId = null;
+                return GLib.SOURCE_REMOVE;
+            });
+
+            // When overview shows - apply counter-scale to maintain visual size
             this._overviewShowingId = Main.overview.connect('showing', () => {
-                if (this._quickSettingsClone && !this._quickSettingsClipContainer) {
-                    // Capture current height only
-                    const [, h] = this._quickSettingsClone.get_size();
-                    this._normalCloneHeight = h;
+                if (this._quickSettingsClone && !this._isInOverview) {
+                    this._isInOverview = true;
 
-                    // Create clipping container - height locked, width dynamic
-                    const clipContainer = new St.Widget({
-                        style_class: 'mm-quick-settings-clip',
-                        x_expand: true,  // Allow width to grow
-                        y_expand: false,
-                        y_align: Clutter.ActorAlign.FILL,
-                        clip_to_allocation: true,
-                    });
-
-                    // Lock only the height, let width be auto
-                    if (h > 0) {
-                        clipContainer.set_height(h);
+                    // Capture size if not yet captured
+                    if (!this._sizeCaptured) {
+                        captureSize();
                     }
 
-                    // Reparent clone into container
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClone);
-                    clipContainer.add_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.add_child(clipContainer);
-                    this._quickSettingsClipContainer = clipContainer;
+                    // Set fixed size on container to prevent shrinking
+                    // Add horizontal padding (16px total - 8px each side) to maintain visual padding
+                    const horizontalPadding = 16;
+                    if (this._sizeCaptured) {
+                        this._quickSettingsContainer.set_size(
+                            this._normalCloneSize.width + horizontalPadding,
+                            this._normalCloneSize.height
+                        );
+                    }
+
+                    // Monitor clone size changes during overview and apply counter-scale
+                    this._startOverviewSizeMonitor();
                 }
             });
 
-            // When overview hides - remove clipping container, put clone back directly
+            // When overview hides - remove fixed size and scale
             this._overviewHiddenId = Main.overview.connect('hidden', () => {
-                if (this._quickSettingsClipContainer && this._quickSettingsClone) {
-                    // Reparent clone back to parent directly
-                    this._quickSettingsClipContainer.remove_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClipContainer);
-                    this._quickSettingsContainer.add_child(this._quickSettingsClone);
+                if (this._quickSettingsClone && this._isInOverview) {
+                    this._isInOverview = false;
 
-                    // Destroy clip container
-                    this._quickSettingsClipContainer.destroy();
-                    this._quickSettingsClipContainer = null;
+                    // Stop size monitoring
+                    this._stopOverviewSizeMonitor();
 
-                    this._quickSettingsClone.queue_relayout();
+                    // Remove fixed size
+                    this._quickSettingsContainer.set_size(-1, -1);
+
+                    // Reset any scale transform
+                    this._quickSettingsClone.set_scale(1.0, 1.0);
+                    this._quickSettingsClone.set_pivot_point(0, 0);
+
+                    // Re-capture size for next overview
+                    if (this._captureNormalHeightTimeoutId) {
+                        GLib.source_remove(this._captureNormalHeightTimeoutId);
+                        this._captureNormalHeightTimeoutId = null;
+                    }
+                    this._captureNormalHeightTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                        try {
+                            if (this._quickSettingsClone) {
+                                const [w, h] = this._quickSettingsClone.get_size();
+                                if (w > 0 && h > 0) {
+                                    this._normalCloneSize = { width: w, height: h };
+                                }
+                            }
+                        } catch (e) { }
+                        this._captureNormalHeightTimeoutId = null;
+                        return GLib.SOURCE_REMOVE;
+                    });
                 }
             });
 
             // Monitor fullscreen state changes on primary monitor
             this._fullscreenChangedId = global.display.connect('in-fullscreen-changed',
                 this._onQuickSettingsFullscreenChanged.bind(this));
+        }
+
+        _startOverviewSizeMonitor() {
+            // Monitor clone size continuously during overview and apply counter-scale
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+            }
+
+            const updateScale = () => {
+                try {
+                    if (!this._quickSettingsClone || !this._isInOverview || !this._sizeCaptured) {
+                        return GLib.SOURCE_REMOVE;
+                    }
+
+                    const [currentW, currentH] = this._quickSettingsClone.get_size();
+                    const targetW = this._normalCloneSize.width;
+                    const targetH = this._normalCloneSize.height;
+
+                    if (currentW > 0 && currentH > 0 && targetW > 0 && targetH > 0) {
+                        // Calculate scale needed to restore visual size
+                        let scaleX = targetW / currentW;
+                        let scaleY = targetH / currentH;
+
+                        // Cap maximum scale to 1.1 (10% increase) to prevent explosion on GNOME 49
+                        // This means we only correct small shrinking, and accept larger shrinking
+                        // to avoid visual glitches or huge icons
+                        const maxScale = 1.1;
+                        scaleX = Math.min(scaleX, maxScale);
+                        scaleY = Math.min(scaleY, maxScale);
+
+                        // Only apply if shrinking detected (and significant enough to matter)
+                        if (scaleX > 1.01 || scaleY > 1.01) {
+                            this._quickSettingsClone.set_pivot_point(0.5, 0.5);
+                            this._quickSettingsClone.set_scale(scaleX, scaleY);
+                        } else {
+                            // Reset if no significant shrinking
+                            this._quickSettingsClone.set_scale(1.0, 1.0);
+                        }
+                    }
+
+                    return this._isInOverview ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+                } catch (e) {
+                    this._overviewSizeMonitorId = null;
+                    return GLib.SOURCE_REMOVE;
+                }
+            };
+
+            // Check every 50ms during overview transition
+            this._overviewSizeMonitorId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, updateScale);
+        }
+
+        _stopOverviewSizeMonitor() {
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
         }
 
         _onQuickSettingsFullscreenChanged() {
@@ -346,45 +495,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const isPrimaryFullscreen = this._isPrimaryMonitorFullscreen();
 
             if (isPrimaryFullscreen) {
-                // Entering fullscreen on primary - apply clipping container if not already
-                if (!this._quickSettingsClipContainer) {
-                    const [, h] = this._quickSettingsClone.get_size();
-                    this._normalCloneHeight = h;
-
-                    // Make container taller than the clone to give room for alignment
-                    const containerHeight = h + 10; // Add 10px for downward shift
-
-                    const clipContainer = new St.Widget({
-                        style_class: 'mm-quick-settings-clip',
-                        x_expand: true,
-                        y_expand: false,
-                        y_align: Clutter.ActorAlign.FILL,
-                        clip_to_allocation: true,
-                    });
-
-                    clipContainer.set_height(containerHeight);
-
-                    this._quickSettingsContainer.remove_child(this._quickSettingsClone);
-                    clipContainer.add_child(this._quickSettingsClone);
-                    this._quickSettingsContainer.add_child(clipContainer);
-                    this._quickSettingsClipContainer = clipContainer;
-                } else {
-                    // Container already exists, just update height for fullscreen mode
-                    if (this._normalCloneHeight > 0) {
-                        this._quickSettingsClipContainer.set_height(this._normalCloneHeight + 10);
-                    }
-                }
-
-                // Adjust alignment for fullscreen - move down
+                // Entering fullscreen on primary - adjust alignment
                 this._quickSettingsClone.y_align = Clutter.ActorAlign.END;
+
+                // Set fixed size if captured
+                if (this._sizeCaptured) {
+                    this._quickSettingsContainer.set_size(
+                        this._normalCloneSize.width,
+                        this._normalCloneSize.height + 10  // Add padding for downward shift
+                    );
+                }
             } else {
-                // Exiting fullscreen on primary - restore alignment and height
-                // but KEEP the clipping container to prevent size issues
+                // Exiting fullscreen on primary - restore alignment
                 this._quickSettingsClone.y_align = Clutter.ActorAlign.FILL;
 
-                if (this._quickSettingsClipContainer && this._normalCloneHeight > 0) {
-                    // Restore original height (no extra padding)
-                    this._quickSettingsClipContainer.set_height(this._normalCloneHeight);
+                // Remove fixed size if not in overview
+                if (!this._isInOverview) {
+                    this._quickSettingsContainer.set_size(-1, -1);
                 }
             }
         }
@@ -409,27 +536,32 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const endTime = startTime + (duration * 1000);
 
             const checkSize = () => {
-                if (!this._quickSettingsSource) {
-                    return GLib.SOURCE_REMOVE;
-                }
+                try {
+                    if (!this._quickSettingsSource) {
+                        return GLib.SOURCE_REMOVE;
+                    }
 
-                // Get source size (max of actual and preferred)
-                const [minW, natW] = this._quickSettingsSource.get_preferred_width(-1);
-                const [actW] = this._quickSettingsSource.get_size();
-                const sourceWidth = Math.max(natW, minW, actW);
+                    // Get source size (max of actual and preferred)
+                    const [minW, natW] = this._quickSettingsSource.get_preferred_width(-1);
+                    const [actW] = this._quickSettingsSource.get_size();
+                    const sourceWidth = Math.max(natW, minW, actW);
 
-                // Track max observed width
-                if (sourceWidth > (this._cachedWidth || 0)) {
-                    this._cachedWidth = sourceWidth;
-                }
+                    // Track max observed width
+                    if (sourceWidth > (this._cachedWidth || 0)) {
+                        this._cachedWidth = sourceWidth;
+                    }
 
-                // Stop after duration
-                if (GLib.get_monotonic_time() > endTime) {
+                    // Stop after duration
+                    if (GLib.get_monotonic_time() > endTime) {
+                        this._monitorTimeoutId = null;
+                        return GLib.SOURCE_REMOVE;
+                    }
+
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
                     this._monitorTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 }
-
-                return GLib.SOURCE_CONTINUE;
             };
 
             this._monitorTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, checkSize);
@@ -561,18 +693,28 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Full rebuild every 5 seconds to catch added/removed icons
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
-                if (this._iconContainer && this._iconSource) {
-                    this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                try {
+                    if (this._iconContainer && this._iconSource) {
+                        this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._iconSyncId = null;
+                    return GLib.SOURCE_REMOVE;
                 }
-                return GLib.SOURCE_CONTINUE;
             });
 
             // Sync label text more frequently (every 2 seconds) for Vitals-like extensions
             this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-                if (this._iconContainer) {
-                    this._syncLabelTexts(this._iconContainer);
+                try {
+                    if (this._iconContainer) {
+                        this._syncLabelTexts(this._iconContainer);
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                } catch (e) {
+                    this._labelSyncId = null;
+                    return GLib.SOURCE_REMOVE;
                 }
-                return GLib.SOURCE_CONTINUE;
             });
         }
 
@@ -727,8 +869,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._forwardClickTimeoutId = null;
                 }
                 this._forwardClickTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                    this._sourceIndicator.emit('button-release-event', event);
-                    this.remove_style_pseudo_class('active');
+                    try {
+                        this._sourceIndicator.emit('button-release-event', event);
+                        this.remove_style_pseudo_class('active');
+                    } catch (e) { }
                     this._forwardClickTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
@@ -805,7 +949,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._arcMenuTimeoutId = null;
                 }
                 this._arcMenuTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this.remove_style_pseudo_class('active');
+                    try {
+                        this.remove_style_pseudo_class('active');
+                    } catch (e) { }
                     this._arcMenuTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
@@ -1032,7 +1178,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
-        destroy() {
+        _cleanup() {
+            if (this._isCleanedUp) return;
+            this._isCleanedUp = true;
+
             if (this._clockUpdateId) {
                 GLib.source_remove(this._clockUpdateId);
                 this._clockUpdateId = null;
@@ -1073,6 +1222,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._captureNormalSizeId = null;
             }
 
+            if (this._captureHeightTimeoutId) {
+                GLib.source_remove(this._captureHeightTimeoutId);
+                this._captureHeightTimeoutId = null;
+            }
+
+            if (this._captureNormalHeightTimeoutId) {
+                GLib.source_remove(this._captureNormalHeightTimeoutId);
+                this._captureNormalHeightTimeoutId = null;
+            }
+
+            if (this._overviewSizeMonitorId) {
+                GLib.source_remove(this._overviewSizeMonitorId);
+                this._overviewSizeMonitorId = null;
+            }
+
             if (this._overviewShowingId) {
                 Main.overview.disconnect(this._overviewShowingId);
                 this._overviewShowingId = null;
@@ -1086,6 +1250,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._overviewHiddenId) {
                 Main.overview.disconnect(this._overviewHiddenId);
                 this._overviewHiddenId = null;
+            }
+
+            if (this._fullscreenChangedId) {
+                global.display.disconnect(this._fullscreenChangedId);
+                this._fullscreenChangedId = null;
             }
 
             if (this._sourceSizeChangedId && this._quickSettingsSource) {
@@ -1126,6 +1295,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._nWorkspacesChangedId = null;
                 }
             }
+        }
+
+        destroy() {
+            this._cleanup();
             super.destroy();
         }
     });
