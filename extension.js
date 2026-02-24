@@ -58,16 +58,15 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_showThumbnailsSlider() {
-		// We now allow mmOverview even if thumbnails are 'none', because we want Search and App Grid
-		// if (this._settings.get_string(THUMBNAILS_SLIDER_POSITION_ID) === 'none') {
-		// 	this._hideThumbnailsSlider();
-		// 	return;
-		// }
-
 		log('[MultiMonitors] _showThumbnailsSlider called');
 
-		if (this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
-			this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, false);
+		if (this._settings.get_boolean('force-workspaces-on-all-displays')) {
+			if (this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
+				this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, false);
+		} else {
+			if (!this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
+				this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, true);
+		}
 
 		if (mmOverview) {
 			log('[MultiMonitors] mmOverview already exists, returning');
@@ -151,7 +150,7 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_switchOffThumbnails() {
-		if (this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID)) {
+		if (this._settings.get_boolean('force-workspaces-on-all-displays') && this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID)) {
 			this._settings.set_string(THUMBNAILS_SLIDER_POSITION_ID, 'none');
 		}
 	}
@@ -164,6 +163,16 @@ export default class MultiMonitorsExtension extends Extension {
 
 		this._switchOffThumbnailsMuId = this._mu_settings.connect('changed::' + WORKSPACES_ONLY_ON_PRIMARY_ID,
 			this._switchOffThumbnails.bind(this));
+		this._forceWorkspacesId = this._settings.connect('changed::force-workspaces-on-all-displays', () => {
+			if (this._settings.get_boolean('force-workspaces-on-all-displays')) {
+				if (this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
+					this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, false);
+			} else {
+				if (!this._mu_settings.get_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID))
+					this._mu_settings.set_boolean(WORKSPACES_ONLY_ON_PRIMARY_ID, true);
+			}
+			this._relayout();
+		});
 
 		mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
 
@@ -212,6 +221,11 @@ export default class MultiMonitorsExtension extends Extension {
 		if (this._switchOffThumbnailsMuId) {
 			this._mu_settings.disconnect(this._switchOffThumbnailsMuId);
 			this._switchOffThumbnailsMuId = null;
+		}
+
+		if (this._forceWorkspacesId) {
+			this._settings.disconnect(this._forceWorkspacesId);
+			this._forceWorkspacesId = null;
 		}
 
 		if (this._showPanelId) {

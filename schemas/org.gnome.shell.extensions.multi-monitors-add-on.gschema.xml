@@ -67,7 +67,8 @@
     <key name="enable-blur-my-shell" type="b">
       <default>true</default>
       <summary>Enable Blur my Shell integration.</summary>
-      <description>Automatically register secondary panels with Blur my Shell extension for blur effects.</description>
+      <description>Automatically register secondary panels with Blur my Shell extension for blur
+        effects.</description>
     </key>
 
     <key name="screenshot-on-all-monitors" type="b">
@@ -75,6 +76,13 @@
       <summary>Show screenshot tools on all monitors.</summary>
       <description>When enabled, the screenshot UI tools will be shown on all monitors
         simultaneously. When disabled, they appear only on the monitor where the cursor is.</description>
+    </key>
+
+    <key name="force-workspaces-on-all-displays" type="b">
+      <default>true</default>
+      <summary>Force workspaces on all displays.</summary>
+      <description>When enabled, the extension forces GNOME's workspace setting to span all
+        displays. Disabling this may affect the workspaces thumbnail slider on secondary monitors.</description>
     </key>
 
   </schema>

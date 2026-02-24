@@ -114,6 +114,49 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
             vignette: false
         });
     }
+
+    destroy() {
+        if (this._windowAddedId) {
+            this.metaWorkspace.disconnect(this._windowAddedId);
+            this._windowAddedId = null;
+        }
+        if (this._windowRemovedId) {
+            this.metaWorkspace.disconnect(this._windowRemovedId);
+            this._windowRemovedId = null;
+        }
+        if (this._windowEnteredMonitorId) {
+            global.display.disconnect(this._windowEnteredMonitorId);
+            this._windowEnteredMonitorId = null;
+        }
+        if (this._windowLeftMonitorId) {
+            global.display.disconnect(this._windowLeftMonitorId);
+            this._windowLeftMonitorId = null;
+        }
+        for (let i = 0; i < this._allWindows.length; i++) {
+            this._allWindows[i].disconnect(this._minimizedChangedIds[i]);
+        }
+        this._allWindows = [];
+        this._minimizedChangedIds = [];
+
+        if (this._bgManager) {
+            this._bgManager.destroy();
+            this._bgManager = null;
+        }
+
+        // In GNOME 40+, WorkspaceThumbnail has a destroy method we copied,
+        // but we override it here. To call the one we copied, we'd need access
+        // to it. St.Widget.prototype.destroy.call(this) is the safest base call,
+        // but WorkspaceThumbnail's own logic won't be executed unless we do a trick.
+        // We will just let copyClass handle it if possible, but actually since we define
+        // destroy() here, copyClass will see it and NOT overwrite it, so WorkspaceThumbnail's
+        // destroy gets shadowed.
+        // Let's call the upstream destroy logic by accessing WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy
+        if (WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy) {
+            WorkspaceThumbnail.WorkspaceThumbnail.prototype.destroy.call(this);
+        } else {
+            super.destroy();
+        }
+    }
 }
 
 Common.copyClass(WorkspaceThumbnail.WorkspaceThumbnail, MultiMonitorsWorkspaceThumbnailClass);
@@ -207,16 +250,15 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         mutterSchemaId = String(mutterSchemaId);
 
         console.debug('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
-        if (!this._settings) {
-            try {
-                this._settings = new Gio.Settings({ schema_id: mutterSchemaId });
-            } catch (e) {
-                // If creating Gio.Settings with the mutter schema fails,
-                // fall back to org.gnome.mutter as a last resort
-                this._settings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
-            }
+        try {
+            this._mutterSettings = new Gio.Settings({ schema_id: mutterSchemaId });
+        } catch (e) {
+            // If creating Gio.Settings with the mutter schema fails,
+            // fall back to org.gnome.mutter as a last resort
+            this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
         }
-        this._changedDynamicWorkspacesId = this._settings.connect('changed::dynamic-workspaces',
+
+        this._changedDynamicWorkspacesId = this._mutterSettings.connect('changed::dynamic-workspaces',
             this._updateSwitcherVisibility.bind(this));
 
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
@@ -261,7 +303,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         Main.overview.disconnect(this._windowDragEndId);
         Main.overview.disconnect(this._windowDragCancelledId);
 
-        this._settings.disconnect(this._changedDynamicWorkspacesId);
+        this._mutterSettings.disconnect(this._changedDynamicWorkspacesId);
         Main.layoutManager.disconnect(this._monitorsChangedId);
         global.display.disconnect(this._workareasChangedPortholeId);
         super.destroy();
@@ -318,7 +360,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         // dynamic workspaces setting. This is called when the user changes
         // the org.gnome.mutter dynamic-workspaces setting.
         // The upstream implementation may differ; this is a minimal fallback.
-        if (!this._settings) return;
+        if (!this._mutterSettings) return;
 
         // If dynamic workspaces are disabled and we only have one workspace,
         // we might want to hide the switcher. For now, keep it simple.
