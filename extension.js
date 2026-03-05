@@ -49,6 +49,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._settings = null;
 		this._mu_settings = null;
 		this._mmMonitors = 0;
+		this._primaryIndex = -1;
 		this.syncWorkspacesActualGeometry = null;
 
 		this._switchOffThumbnailsMuId = null;
@@ -147,8 +148,13 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_relayout() {
-		if (this._mmMonitors != Main.layoutManager.monitors.length) {
-			this._mmMonitors = Main.layoutManager.monitors.length;
+		const newCount = Main.layoutManager.monitors.length;
+		const newPrimary = Main.layoutManager.primaryIndex;
+		if (this._mmMonitors !== newCount || this._primaryIndex !== newPrimary) {
+			log('[MultiMonitors] _relayout: monitors ' + this._mmMonitors + '->' + newCount +
+				', primary ' + this._primaryIndex + '->' + newPrimary);
+			this._mmMonitors = newCount;
+			this._primaryIndex = newPrimary;
 			this._hideThumbnailsSlider();
 			this._showThumbnailsSlider();
 		}
@@ -162,6 +168,7 @@ export default class MultiMonitorsExtension extends Extension {
 
 	enable() {
 		this._mmMonitors = 0;
+		this._primaryIndex = -1;
 
 		this._settings = this.getSettings();
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
@@ -261,6 +268,7 @@ export default class MultiMonitorsExtension extends Extension {
 
 		this._hideThumbnailsSlider();
 		this._mmMonitors = 0;
+		this._primaryIndex = -1;
 
 		mmPanel.length = 0;
 

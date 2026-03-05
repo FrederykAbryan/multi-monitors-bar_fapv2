@@ -82,6 +82,7 @@ export class MultiMonitorsLayoutManager {
 		this._desktopSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
 
 		this._monitorIds = [];
+		this._lastPrimaryIndex = Main.layoutManager.primaryIndex;
 		this.mmPanelBox = [];
 		this.mmappMenu = false;
 
@@ -304,6 +305,37 @@ export class MultiMonitorsLayoutManager {
 	}
 
 	_monitorsChanged() {
+		// If the primary monitor changed, do a full teardown + rebuild
+		const currentPrimary = Main.layoutManager.primaryIndex;
+		if (this._lastPrimaryIndex !== currentPrimary) {
+			log('[MultiMonitors] Primary index changed: ' + this._lastPrimaryIndex + ' -> ' + currentPrimary + ', full rebuild');
+			this._lastPrimaryIndex = currentPrimary;
+
+			// Full teardown of existing panels
+			let panels2remove = this._monitorIds.length;
+			for (let i = 0; i < panels2remove; i++) {
+				this._monitorIds.pop();
+				this._popPanel();
+			}
+
+			// Rebuild from scratch for all non-primary monitors
+			for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
+				if (i !== currentPrimary) {
+					let monitor = Main.layoutManager.monitors[i];
+					let monitorId = 'i' + i + 'x' + monitor.x + 'y' + monitor.y +
+						'w' + monitor.width + 'h' + monitor.height;
+					this._monitorIds.push(monitorId);
+					this._pushPanel(i, monitor);
+				}
+			}
+
+			this._showAppMenu();
+			if (this.statusIndicatorsController) {
+				this.statusIndicatorsController.transferIndicators();
+			}
+			return;
+		}
+
 		let monitorChange = Main.layoutManager.monitors.length - this._monitorIds.length - 1;
 		if (monitorChange < 0) {
 			for (let idx = 0; idx < -monitorChange; idx++) {
