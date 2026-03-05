@@ -354,9 +354,12 @@ export class MultiMonitorsLayoutManager {
 				this._popPanel();
 			}
 
+<<<<<<< HEAD
 			// Force synchronous layout recalculation.
 			_forceUpdateRegions();
 
+=======
+>>>>>>> 445cb8d (feat: Handle primary monitor changes by tracking its index and rebuilding multi-monitor panels.)
 			// Rebuild from scratch for all non-primary monitors
 			for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
 				if (i !== currentPrimary) {
