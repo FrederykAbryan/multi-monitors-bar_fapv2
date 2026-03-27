@@ -325,6 +325,10 @@ const MultiMonitorsPanel = GObject.registerClass(
             });
             this.add_child(this._rightBox);
 
+            // Connect drag signals for dragging maximized windows off the panel
+            this.connect('button-press-event', this._onButtonPress.bind(this));
+            this.connect('touch-event', this._onTouchEvent.bind(this));
+
 
             this._showingId = Main.overview.connect('showing', () => {
                 this.add_style_pseudo_class('overview');
@@ -650,7 +654,27 @@ const MultiMonitorsPanel = GObject.registerClass(
             return indicator;
         }
 
-        _getDraggableWindowForPosition(stageX) {
+        _getMonitorIndexForPosition(stageX, stageY) {
+            const monitors = Main.layoutManager.monitors || [];
+            for (let i = 0; i < monitors.length; i++) {
+                const monitor = monitors[i];
+                if (stageX >= monitor.x && stageX < monitor.x + monitor.width &&
+                    stageY >= monitor.y && stageY < monitor.y + monitor.height) {
+                    return i;
+                }
+            }
+
+            // Fallbacks when pointer is outside monitor bounds during transitions.
+            const actorMonitor = typeof Main.layoutManager.findIndexForActor === 'function'
+                ? Main.layoutManager.findIndexForActor(this)
+                : -1;
+            if (actorMonitor !== -1 && actorMonitor !== undefined && actorMonitor !== null)
+                return actorMonitor;
+
+            return this.monitorIndex;
+        }
+
+        _getDraggableWindowForPosition(stageX, monitorIndex = this.monitorIndex) {
             let workspaceManager = global.workspace_manager;
             const windows = workspaceManager.get_active_workspace().list_windows();
             const allWindowsByStacking =
@@ -658,12 +682,93 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             return allWindowsByStacking.find(metaWindow => {
                 let rect = metaWindow.get_frame_rect();
-                return metaWindow.get_monitor() == this.monitorIndex &&
+                return metaWindow.get_monitor() == monitorIndex &&
                     metaWindow.showing_on_its_workspace() &&
                     metaWindow.get_window_type() != Meta.WindowType.DESKTOP &&
                     metaWindow.maximized_vertically &&
                     stageX > rect.x && stageX < rect.x + rect.width;
             });
+        }
+
+        _isInteractiveEventTarget(event) {
+            // Walk up the actor tree from the event target to check if we
+            // hit an interactive child (button/menu) before reaching the panel.
+            const targetActor = global.stage.get_event_actor(event);
+            let actor = targetActor;
+            while (actor && actor !== this) {
+                if (actor !== this._leftBox &&
+                    actor !== this._centerBox &&
+                    actor !== this._rightBox &&
+                    actor !== this._centerBin &&
+                    actor.reactive) {
+                    return true;
+                }
+                actor = actor.get_parent();
+            }
+
+            return false;
+        }
+
+        _tryDragWindow(event) {
+            // Prefer GNOME Shell's own implementation when available so behavior
+            // matches the main monitor exactly on this shell version.
+            if (Main.panel && typeof Main.panel._tryDragWindow === 'function') {
+                try {
+                    return Main.panel._tryDragWindow.call(this, event);
+                } catch (e) {
+                    console.debug('[Multi Monitor Bar] Main panel _tryDragWindow fallback: ' + String(e));
+                }
+            }
+
+            if (Main.modalCount > 0)
+                return Clutter.EVENT_PROPAGATE;
+
+            if (event.get_source && event.get_source() !== this)
+                return Clutter.EVENT_PROPAGATE;
+
+            if (this._isInteractiveEventTarget(event))
+                return Clutter.EVENT_PROPAGATE;
+
+            const type = event.type();
+            const isPress = type === Clutter.EventType.BUTTON_PRESS;
+            if (!isPress && type !== Clutter.EventType.TOUCH_BEGIN)
+                return Clutter.EVENT_PROPAGATE;
+
+            const [x, y] = event.get_coords();
+            const monitorIndex = this._getMonitorIndexForPosition(x, y);
+            const dragWindow = this._getDraggableWindowForPosition(x, monitorIndex);
+            if (!dragWindow)
+                return Clutter.EVENT_PROPAGATE;
+
+            // Let Mutter handle the real drag interaction (including threshold),
+            // matching GNOME Shell panel behavior.
+            const button = event.type() === Clutter.EventType.BUTTON_PRESS
+                ? event.get_button()
+                : -1;
+
+            return global.display.begin_grab_op(
+                dragWindow,
+                Meta.GrabOp.MOVING,
+                false, /* pointer grab */
+                true,  /* frame action */
+                button,
+                event.get_state(),
+                event.get_time(),
+                x, y) ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+        }
+
+        _onButtonPress(_actor, event) {
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY)
+                return Clutter.EVENT_PROPAGATE;
+
+            return this._tryDragWindow(event);
+        }
+
+        _onTouchEvent(_actor, event) {
+            if (event.type() !== Clutter.EventType.TOUCH_BEGIN)
+                return Clutter.EVENT_PROPAGATE;
+
+            return this._tryDragWindow(event);
         }
 
         _addToPanelBox(role, indicator, position, box) {
