@@ -1,6 +1,6 @@
 <schemalist gettext-domain="gnome-shell-extensions">
-  <schema id="org.gnome.shell.extensions.multi-monitors-add-on"
-    path="/org/gnome/shell/extensions/multi-monitors-add-on/">
+  <schema id="org.gnome.shell.extensions.multi-monitors-bar"
+    path="/org/gnome/shell/extensions/multi-monitors-bar/">
 
     <key name="show-indicator" type="b">
       <default>true</default>
@@ -23,7 +23,7 @@
     <key name="show-app-menu" type="b">
       <default>true</default>
       <summary>Show AppMenu-Button on additional monitors.</summary>
-      <description>Change visibility of AppMenu-Button on additional monitors.</description>
+      <description>Change visibility of Activities-Button on additional monitors.</description>
     </key>
 
     <key name="show-date-time" type="b">
