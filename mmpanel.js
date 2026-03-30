@@ -560,17 +560,47 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             let leftWidth, centerWidth, rightWidth;
 
-            // Check if we have enough space for balanced layout
-            if (sideWidth * 2 + centerNatWidth > allocWidth) {
-                // Overflow case: use natural widths and clip
-                leftWidth = Math.min(leftNatWidth, Math.floor(allocWidth * 0.33));
-                rightWidth = Math.min(rightNatWidth, Math.floor(allocWidth * 0.33));
-                centerWidth = Math.max(centerMinWidth, allocWidth - leftWidth - rightWidth);
-            } else {
-                // Normal case: balance sides to keep center truly centered
+            // Check if we have enough space for a perfectly balanced layout
+            if (sideWidth * 2 + centerNatWidth <= allocWidth) {
+                // Case 1: Balanced layout - sides take equal space to keep center truly centered
                 leftWidth = sideWidth;
                 rightWidth = sideWidth;
                 centerWidth = allocWidth - leftWidth - rightWidth;
+            } else if (leftNatWidth + centerNatWidth + rightNatWidth <= allocWidth) {
+                // Case 2: Not balanced, but everything fits by shifting the center box
+                // We keep the center box as centered as possible within the gaps
+                let centerStartIdeal = Math.floor((allocWidth - centerNatWidth) / 2);
+                let centerEndIdeal = centerStartIdeal + centerNatWidth;
+
+                // Adjust ideal center position if it collides with natural sides
+                let centerStart = Math.max(leftNatWidth, centerStartIdeal);
+                let centerEnd = centerStart + centerNatWidth;
+
+                if (centerEnd > allocWidth - rightNatWidth) {
+                    centerEnd = allocWidth - rightNatWidth;
+                    centerStart = centerEnd - centerNatWidth;
+                }
+
+                leftWidth = centerStart;
+                rightWidth = allocWidth - centerEnd;
+                centerWidth = centerEnd - centerStart;
+            } else {
+                // Case 3: Actual overflow - everything DOES NOT fit.
+                // Prioritize giving natural width to left and right, and clip the center clock.
+                // This is better than clipping the right (power button) or left (activities).
+                centerWidth = Math.max(centerMinWidth, allocWidth - leftNatWidth - rightNatWidth);
+                if (centerWidth < 0) centerWidth = 0;
+
+                // Divide remaining space proportionally between left and right
+                let availableSides = allocWidth - centerWidth;
+                let totalSideWidth = leftNatWidth + rightNatWidth;
+
+                if (totalSideWidth > 0) {
+                    leftWidth = Math.floor(availableSides * (leftNatWidth / totalSideWidth));
+                    rightWidth = availableSides - leftWidth;
+                } else {
+                    leftWidth = rightWidth = Math.floor(availableSides / 2);
+                }
             }
 
             // Left box - aligned to start
