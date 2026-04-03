@@ -37,7 +37,7 @@ An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/mult
 **GNOME Shell:** 45, 46, 47, 48, 49
 
 Tested on:
-- Zorin OS 18 (Ubuntu 24.04 LTS) — GNOME 46
+- Fedora 43 — GNOME 49
 
 ## 📦 Installation
 
