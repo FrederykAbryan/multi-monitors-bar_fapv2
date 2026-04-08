@@ -791,9 +791,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         });
                         container.add_child(iconCopy);
                     } else if (widget instanceof St.Label) {
-                        // Skip labels for ArcMenu (user request)
-                        // Use loose check to catch any variation
-                        if (this._role && this._role.toLowerCase().includes('arc')) {
+                        // Skip labels for ArcMenu and Clipboard indicators
+                        // ArcMenu: user request; Clipboard: shows clipboard content as label
+                        if (this._role && (
+                            this._role.toLowerCase().includes('arc') ||
+                            this._role.toLowerCase().includes('clipboard') ||
+                            this._role.toLowerCase().includes('clipman')
+                        )) {
                             continue;
                         }
 
