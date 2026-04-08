@@ -17,7 +17,6 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 
 import St from 'gi://St';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
@@ -153,102 +152,7 @@ export class MultiMonitorsLayoutManager {
 		this.statusIndicatorsController = null;
 		this._layoutManager_updateHotCorners = null;
 		this._changedEnableHotCornersId = null;
-		this._blurMyShellStateChangedId = null;
-		this._workareasChangedBlurId = null;
-		this._blurReRegisterTimeoutId = null;
-		this._blurRetryTimeoutIds = [];
 
-		if (this._settings.get_boolean('enable-blur-my-shell')) {
-			this._setupBlurMyShellWatcher();
-			this._setupWorkareasBlurWatcher();
-		}
-	}
-
-	_setupBlurMyShellWatcher() {
-		try {
-			if (!Main.extensionManager) return;
-
-			this._blurMyShellStateChangedId = Main.extensionManager.connect('extension-state-changed',
-				(manager, extension) => {
-					if (extension.uuid === 'blur-my-shell@aunetx' && this._settings.get_boolean('enable-blur-my-shell')) {
-						this._refreshBlurMyShellIntegration();
-					}
-				}
-			);
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Blur watcher setup failed:', String(e));
-		}
-	}
-
-	_refreshBlurMyShellIntegration() {
-		const mmPanelRef = getMMPanelArray();
-		if (mmPanelRef) {
-			for (const panel of mmPanelRef) {
-				if (panel) {
-					this._registerPanelWithBlurMyShell(panel);
-				}
-			}
-		}
-	}
-
-	// Re-register blur after BMS resets on workareas-changed
-	_setupWorkareasBlurWatcher() {
-		try {
-			this._workareasChangedBlurId = global.display.connect('workareas-changed', () => {
-				if (!this._settings.get_boolean('enable-blur-my-shell')) return;
-
-				// Cancel any pending re-registration
-				if (this._blurReRegisterTimeoutId) {
-					GLib.source_remove(this._blurReRegisterTimeoutId);
-					this._blurReRegisterTimeoutId = null;
-				}
-
-				// BMS resets async (disable + setTimeout(enable, 1)), so wait
-				// long enough for BMS to finish its reset and re-enable
-				this._blurReRegisterTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
-					this._refreshBlurMyShellIntegration();
-					this._blurReRegisterTimeoutId = null;
-					return GLib.SOURCE_REMOVE;
-				});
-			});
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Workareas blur watcher setup failed:', String(e));
-		}
-	}
-
-	_registerPanelWithBlurMyShell(panel) {
-		try {
-			// Primary access path: BMS exposes itself via global.blur_my_shell
-			let panelBlur = null;
-
-			if (global.blur_my_shell && global.blur_my_shell._panel_blur) {
-				panelBlur = global.blur_my_shell._panel_blur;
-			} else {
-				// Fallback: extension manager lookup
-				const extensionManager = Main.extensionManager;
-				if (!extensionManager) return;
-
-				const blurExt = extensionManager.lookup('blur-my-shell@aunetx');
-				if (!blurExt || blurExt.state !== 1) return;
-
-				// GNOME 45+: stateObj points to the extension instance
-				const blurMyShell = blurExt.stateObj || blurExt;
-				if (!blurMyShell || !blurMyShell._panel_blur) return;
-
-				panelBlur = blurMyShell._panel_blur;
-			}
-
-			if (!panelBlur) return;
-
-			// Use maybe_blur_panel which checks if already blurred
-			if (typeof panelBlur.maybe_blur_panel === 'function') {
-				panelBlur.maybe_blur_panel(panel);
-			} else if (typeof panelBlur.blur_panel === 'function') {
-				panelBlur.blur_panel(panel);
-			}
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Blur integration failed:', String(e));
-		}
 	}
 
 	showPanel() {
@@ -336,27 +240,6 @@ export class MultiMonitorsLayoutManager {
 			Main.layoutManager.disconnect(this._monitorsChangedId);
 			this._monitorsChangedId = null;
 		}
-
-		if (this._blurMyShellStateChangedId && Main.extensionManager) {
-			Main.extensionManager.disconnect(this._blurMyShellStateChangedId);
-			this._blurMyShellStateChangedId = null;
-		}
-
-		if (this._workareasChangedBlurId) {
-			global.display.disconnect(this._workareasChangedBlurId);
-			this._workareasChangedBlurId = null;
-		}
-
-		if (this._blurReRegisterTimeoutId) {
-			GLib.source_remove(this._blurReRegisterTimeoutId);
-			this._blurReRegisterTimeoutId = null;
-		}
-
-		// Clean up all pending blur retry timeouts
-		for (const tid of this._blurRetryTimeoutIds) {
-			GLib.source_remove(tid);
-		}
-		this._blurRetryTimeoutIds = [];
 
 		let panels2remove = this._monitorIds.length;
 		for (let i = 0; i < panels2remove; i++) {
@@ -452,23 +335,6 @@ export class MultiMonitorsLayoutManager {
 			mmPanelRef.push(panel);
 		}
 		this.mmPanelBox.push(mmPanelBox);
-
-		if (this._settings.get_boolean('enable-blur-my-shell')) {
-			// Register with increasing delays to outlast BMS async reset cycles
-			// BMS resets on workareas-changed (which panel creation triggers),
-			// clearing all blur then re-enabling after 1ms. Longer delays ensure
-			// we re-register after BMS has fully settled.
-			const delays = [500, 2000, 4000, 6000, 10000];
-			for (const delay of delays) {
-				const tid = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-					this._registerPanelWithBlurMyShell(panel);
-					const idx = this._blurRetryTimeoutIds.indexOf(tid);
-					if (idx >= 0) this._blurRetryTimeoutIds.splice(idx, 1);
-					return GLib.SOURCE_REMOVE;
-				});
-				this._blurRetryTimeoutIds.push(tid);
-			}
-		}
 	}
 
 	_popPanel() {

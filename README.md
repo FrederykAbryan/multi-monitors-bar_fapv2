@@ -26,7 +26,7 @@ An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/mult
 | **Mirrored indicators** | Any status-area indicator (Vitals, GSConnect, etc.) can be transferred to secondary panels |
 | **Indicator exclusion list** | Prevent specific indicators from being transferred (e.g. Fildem) |
 | **Screenshot tools on all monitors** | Clone the screenshot toolbar to every screen, or follow the cursor |
-| **Blur my Shell integration** | Automatically register secondary panels for blur effects |
+| **Blur my Shell integration** | Blur the secondary panels with Blur my Shell |
 | **Overview on extended monitors** | Show App Grid & Search on secondary displays |
 | **Force workspaces on all displays** | Override GNOME's *workspaces-only-on-primary* setting |
 | **Hot corners** | Enable/disable hot corners on all monitors |
@@ -90,7 +90,6 @@ gnome-extensions prefs multi-monitors-bar@frederykabryan
 | Show AppMenu Button | `show-app-menu` | `true` |
 | Show DateTime Menu | `show-date-time` | `true` |
 | Thumbnails Slider Position | `thumbnails-slider-position` | `auto` |
-| Enable Blur my Shell | `enable-blur-my-shell` | `true` |
 | Hot Corners | `enable-hot-corners` | (system default) |
 | Screenshot on All Monitors | `screenshot-on-all-monitors` | `false` |
 | Force Workspaces on All Displays | `force-workspaces-on-all-displays` | `true` |
