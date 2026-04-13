@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://extensions.gnome.org/extension/XXXX/multi-monitor-bar/">GNOME Extensions</a> ·
+  <a href="https://extensions.gnome.org/extension/8773/multi-monitor-bar/">GNOME Extensions</a> ·
   <a href="https://github.com/FrederykAbryan/multi-monitors-bar_fapv2">GitHub</a> ·
   <a href="#donations">Donate</a>
 </p>
