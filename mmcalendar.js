@@ -64,7 +64,7 @@ const MultiMonitorsTodayButton = GObject.registerClass(
             hbox.add_child(this._dateLabel);
 
             this._calendar = calendar;
-            this._calendar.connect('selected-date-changed', (_calendar, datetime) => {
+            this._selectedDateChangedId = this._calendar.connect('selected-date-changed', (_calendar, datetime) => {
                 // Make the button reactive only if the selected date is not the
                 // current date.
                 this.reactive = !DateMenu._isToday(DateMenu._gDateTimeToDate(datetime));
@@ -86,6 +86,15 @@ const MultiMonitorsTodayButton = GObject.registerClass(
             this._dayLabel.set_text(dayText);
             this._dateLabel.set_text(dateText);
             this.accessible_name = `${dayText} ${dateText}`;
+        }
+
+        destroy() {
+            if (this._calendar && this._selectedDateChangedId) {
+                this._calendar.disconnect(this._selectedDateChangedId);
+                this._selectedDateChangedId = 0;
+            }
+
+            super.destroy();
         }
     });
 

@@ -463,6 +463,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._updatedId = null;
             }
 
+            for (const role in this.statusArea) {
+                this._disconnectIndicatorSignals(this.statusArea[role]);
+            }
+
             super.destroy();
         }
 
@@ -471,13 +475,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             // Don't show activities button on primary monitor - it already has one
             if (this.monitorIndex === Main.layoutManager.primaryIndex) {
                 // Remove any existing activities button on primary monitor
-                if (this.statusArea[name]) {
-                    let indicator = this.statusArea[name];
-                    if (indicator.menu)
-                        this.menuManager.removeMenu(indicator.menu);
-                    indicator.destroy();
-                    delete this.statusArea[name];
-                }
+                this._destroyIndicator(name);
                 return;
             }
 
@@ -492,13 +490,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                 if (this.statusArea[name])
                     this.statusArea[name].visible = true;
             } else {
-                if (this.statusArea[name]) {
-                    let indicator = this.statusArea[name];
-                    if (indicator.menu)
-                        this.menuManager.removeMenu(indicator.menu);
-                    indicator.destroy();
-                    delete this.statusArea[name];
-                }
+                this._destroyIndicator(name);
             }
         }
 
@@ -525,12 +517,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                     this.statusArea[name].visible = true;
                 }
             } else {
-                if (this.statusArea[name]) {
-                    let indicator = this.statusArea[name];
-                    this.menuManager.removeMenu(indicator.menu);
-                    indicator.destroy();
-                    delete this.statusArea[name];
-                }
+                this._destroyIndicator(name);
             }
         }
 
@@ -545,12 +532,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                 }
             }
             else {
-                if (this.statusArea[name]) {
-                    let indicator = this.statusArea[name];
-                    this.menuManager.removeMenu(indicator.menu);
-                    indicator.destroy();
-                    delete this.statusArea[name];
-                }
+                this._destroyIndicator(name);
             }
         }
 
@@ -627,6 +609,40 @@ const MultiMonitorsPanel = GObject.registerClass(
                     continue;
                 indicator.container.hide();
             }
+        }
+
+        _disconnectIndicatorSignals(indicator) {
+            if (!indicator)
+                return;
+
+            if (indicator._mmDestroyId) {
+                try {
+                    indicator.disconnect(indicator._mmDestroyId);
+                } catch (_e) {
+                }
+                indicator._mmDestroyId = 0;
+            }
+
+            if (indicator._mmMenuSetId) {
+                try {
+                    indicator.disconnect(indicator._mmMenuSetId);
+                } catch (_e) {
+                }
+                indicator._mmMenuSetId = 0;
+            }
+        }
+
+        _destroyIndicator(role) {
+            const indicator = this.statusArea[role];
+            if (!indicator)
+                return;
+
+            if (indicator.menu)
+                this.menuManager.removeMenu(indicator.menu);
+
+            this._disconnectIndicatorSignals(indicator);
+            indicator.destroy();
+            delete this.statusArea[role];
         }
 
         _ensureIndicator(role) {
@@ -802,16 +818,22 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.statusArea[role] = indicator;
 
             // Connect signals (like main Panel does)
-            indicator.connect('destroy', () => {
-                delete this.statusArea[role];
-            });
+            if (!indicator._mmDestroyId) {
+                indicator._mmDestroyId = indicator.connect('destroy', () => {
+                    indicator._mmDestroyId = 0;
+                    indicator._mmMenuSetId = 0;
+                    delete this.statusArea[role];
+                });
+            }
 
             // Handle menu-set signal
-            indicator.connect('menu-set', () => {
-                if (!indicator.menu)
-                    return;
-                this.menuManager.addMenu(indicator.menu);
-            });
+            if (!indicator._mmMenuSetId) {
+                indicator._mmMenuSetId = indicator.connect('menu-set', () => {
+                    if (!indicator.menu)
+                        return;
+                    this.menuManager.addMenu(indicator.menu);
+                });
+            }
 
             // Critical: Remove from existing parent BEFORE adding (like main Panel)
             const parent = container.get_parent();
@@ -972,10 +994,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                         // Skip indicators that are marked as empty (phantom buttons)
                         if (indicator._isEmpty) {
                             // Destroy the empty indicator to clean up
-                            if (this.statusArea[role] === indicator) {
-                                delete this.statusArea[role];
-                            }
-                            indicator.destroy();
+                            this._destroyIndicator(role);
                             continue;
                         }
                         this._addToPanelBox(role, indicator, i + nChildren, box);
@@ -1008,9 +1027,8 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
             const ind = this.statusArea[role];
             const cont = ind.container || ind;
             if (cont.get_parent()) cont.get_parent().remove_child(cont);
-            ind.destroy();
-            delete this.statusArea[role];
         }
+        this._destroyIndicator(role);
         return;
     }
 

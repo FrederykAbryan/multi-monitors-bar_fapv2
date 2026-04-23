@@ -82,11 +82,11 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         this._allWindows = [];
         this._minimizedChangedIds = [];
         for (let i = 0; i < windows.length; i++) {
-            let minimizedChangedId =
-                windows[i].meta_window.connect('notify::minimized',
-                    this._updateMinimized.bind(this));
             this._allWindows.push(windows[i].meta_window);
-            this._minimizedChangedIds.push(minimizedChangedId);
+            this._minimizedChangedIds.push(
+                windows[i].meta_window.connectObject('notify::minimized',
+                    this._updateMinimized.bind(this),
+                    this));
 
             if (this._isMyWindow(windows[i]) && this._isOverviewWindow(windows[i]))
                 this._addWindowClone(windows[i]);

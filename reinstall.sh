@@ -19,7 +19,7 @@ echo "Copying files..."
 # added modules (e.g. mmPanelConstants.js, statusIndicatorsController.js,
 # mirroredIndicatorButton.js) are included automatically.
 # Exclude VCS metadata, zip files, and problematic workspace indicator file.
-rsync -a --exclude='.git' --exclude='.gitignore' --exclude='*.zip' --exclude='mmworkspaceindicator.js' --exclude='.claude' "$SOURCE_DIR/" "$EXT_DIR/"
+rsync -a --exclude='.git' --exclude='.gitignore' --exclude='*.zip' --exclude='schemas/gschemas.compiled' --exclude='mmworkspaceindicator.js' --exclude='.claude' "$SOURCE_DIR/" "$EXT_DIR/"
 
 echo "Compiling schemas..."
 glib-compile-schemas "$EXT_DIR/schemas/"
