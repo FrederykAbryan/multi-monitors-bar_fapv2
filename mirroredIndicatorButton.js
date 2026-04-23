@@ -755,7 +755,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Create static icon copies for problematic extensions (Tiling Shell, etc.)
             // These are immune to source changes during fullscreen
             const container = new St.BoxLayout({
-                style_class: 'panel-status-menu-box',
+                // Preserve source classes (e.g., vitals-panel-menu) so mirrored
+                // indicators keep extension-specific spacing on secondary monitors.
+                style_class: source.get_style_class_name() || 'panel-status-menu-box',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: false,
@@ -775,6 +777,67 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _copyIconsFromSource(container, source) {
             // Remove existing children
             container.remove_all_children();
+
+            // Preserve one level of grouping for indicators like Vitals where
+            // spacing is defined on each child metric box.
+            if (source instanceof St.BoxLayout) {
+                const sourceChildren = source.get_children();
+                let preservedAnyGroups = false;
+
+                for (const child of sourceChildren) {
+                    if (!(child instanceof St.BoxLayout))
+                        continue;
+
+                    const groupCopy = new St.BoxLayout({
+                        style_class: child.get_style_class_name() || '',
+                        x_align: Clutter.ActorAlign.CENTER,
+                        y_align: Clutter.ActorAlign.CENTER,
+                        y_expand: false,
+                        reactive: false,
+                    });
+
+                    const widgets = this._findAllDisplayWidgets(child);
+                    for (const widget of widgets) {
+                        if (widget instanceof St.Icon) {
+                            const iconCopy = new St.Icon({
+                                gicon: widget.gicon,
+                                icon_name: widget.icon_name,
+                                icon_size: widget.icon_size || 16,
+                                style_class: widget.get_style_class_name() || 'system-status-icon',
+                                y_align: Clutter.ActorAlign.CENTER,
+                            });
+                            groupCopy.add_child(iconCopy);
+                        } else if (widget instanceof St.Label) {
+                            // Keep existing exclusion behavior for Arc/clipboard labels.
+                            if (this._role && (
+                                this._role.toLowerCase().includes('arc') ||
+                                this._role.toLowerCase().includes('clipboard') ||
+                                this._role.toLowerCase().includes('clipman')
+                            )) {
+                                continue;
+                            }
+
+                            const labelCopy = new St.Label({
+                                text: widget.text,
+                                style_class: widget.get_style_class_name() || '',
+                                y_align: Clutter.ActorAlign.CENTER,
+                            });
+                            labelCopy._sourceLabel = widget;
+                            groupCopy.add_child(labelCopy);
+                        }
+                    }
+
+                    if (groupCopy.get_n_children() > 0) {
+                        container.add_child(groupCopy);
+                        preservedAnyGroups = true;
+                    } else {
+                        groupCopy.destroy();
+                    }
+                }
+
+                if (preservedAnyGroups)
+                    return;
+            }
 
             // Find all display widgets (icons and labels) in the source and create copies
             const widgets = this._findAllDisplayWidgets(source);
