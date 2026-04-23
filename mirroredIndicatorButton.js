@@ -29,7 +29,12 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 export const MirroredIndicatorButton = GObject.registerClass(
     class MirroredIndicatorButton extends PanelMenu.Button {
         _init(panel, role) {
-            super._init(0.0, null, false);
+            // dontCreateMenu=true: disables Clutter.ClickGesture added in GNOME 50.
+            // In GNOME 50, PanelMenu.Button uses a ClickGesture instead of vfunc_event
+            // to toggle its menu. With dontCreateMenu=false the gesture is enabled and
+            // toggles the (empty) local menu on every click, interfering with our own
+            // _onButtonPress handler that opens the source indicator's menu.
+            super._init(0.0, null, true);
 
             this._role = role;
             this._panel = panel;
