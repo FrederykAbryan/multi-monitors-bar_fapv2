@@ -385,17 +385,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     if (child && visId) {
                         try { child.disconnect(visId); } catch(e) {}
                     }
-                    // Restore source state modified by _setupAstraProxyEvents
+                    // Restore source state modified by _setupAstraProxyEvents.
+                    // Astra children are shared by every mirrored panel, so only
+                    // unhook the tooltip after the last proxy is gone.
                     try {
-                        if (child._mmp_tooltipHooked && child.tooltipMenu) {
-                            if (child.tooltipMenu._mmp_origOpen) {
-                                child.tooltipMenu.open = child.tooltipMenu._mmp_origOpen;
-                            }
-                            if (child.tooltipMenu._mmp_origClose) {
-                                child.tooltipMenu.close = child.tooltipMenu._mmp_origClose;
-                            }
-                            child._mmp_tooltipHooked = false;
-                        }
+                        this._unregisterAstraTooltipProxy(proxy, child);
                         child._mmp_proxyHovering = false;
                     } catch(e) {}
                 });
@@ -421,6 +415,85 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._astraProxyContainer = root;
         }
 
+        _registerAstraTooltipProxy(proxy, targetChild) {
+            const tooltipMenu = targetChild.tooltipMenu;
+            if (!tooltipMenu)
+                return null;
+
+            let state = targetChild._mmp_tooltipHookState;
+            if (state && state.tooltipMenu !== tooltipMenu) {
+                this._restoreAstraTooltipHook(targetChild, state);
+                state = null;
+            }
+
+            if (!state) {
+                const originalSourceActor = tooltipMenu.sourceActor;
+                const originalOpen = tooltipMenu.open.bind(tooltipMenu);
+                const originalClose = tooltipMenu.close.bind(tooltipMenu);
+
+                state = {
+                    tooltipMenu,
+                    originalSourceActor,
+                    originalOpen,
+                    originalClose,
+                    proxies: [],
+                };
+
+                targetChild._mmp_tooltipHookState = state;
+                targetChild._mmp_tooltipHooked = true;
+                tooltipMenu._mmp_origOpen = originalOpen;
+                tooltipMenu._mmp_origClose = originalClose;
+
+                tooltipMenu.open = (...args) => {
+                    const activeProxy = targetChild._mmp_activeTooltipProxy;
+                    if (activeProxy)
+                        tooltipMenu.sourceActor = activeProxy;
+
+                    originalOpen(...args);
+                };
+
+                tooltipMenu.close = (...args) => {
+                    originalClose(...args);
+
+                    if (!targetChild._mmp_activeTooltipProxy)
+                        tooltipMenu.sourceActor = originalSourceActor;
+                };
+            }
+
+            if (!state.proxies.includes(proxy))
+                state.proxies.push(proxy);
+
+            return state;
+        }
+
+        _unregisterAstraTooltipProxy(proxy, targetChild) {
+            const state = targetChild._mmp_tooltipHookState;
+            if (!state)
+                return;
+
+            state.proxies = state.proxies.filter(p => p !== proxy);
+
+            if (targetChild._mmp_activeTooltipProxy === proxy)
+                targetChild._mmp_activeTooltipProxy = null;
+
+            if (state.proxies.length === 0)
+                this._restoreAstraTooltipHook(targetChild, state);
+        }
+
+        _restoreAstraTooltipHook(targetChild, state) {
+            const tooltipMenu = state.tooltipMenu;
+            if (tooltipMenu) {
+                tooltipMenu.open = state.originalOpen;
+                tooltipMenu.close = state.originalClose;
+                tooltipMenu.sourceActor = state.originalSourceActor;
+            }
+
+            targetChild._mmp_activeTooltipProxy = null;
+            targetChild._mmp_proxyHovering = false;
+            targetChild._mmp_tooltipHooked = false;
+            targetChild._mmp_tooltipHookState = null;
+        }
+
         _setupAstraProxyEvents(proxy, targetChild) {
             if (!proxy.reactive) return;
 
@@ -428,31 +501,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // of child (outer panel-button). This decouples hover: the proxy provides
             // its own panel-button:hover, and the clone only shows data content.
 
-            // ── Fix 2: Hook tooltipMenu to redirect positioning to extended monitor ──
-            if (targetChild.tooltipMenu && !targetChild._mmp_tooltipHooked) {
-                targetChild._mmp_tooltipHooked = true;
-                const tooltipMenu = targetChild.tooltipMenu;
-                const origTooltipSource = tooltipMenu.sourceActor;
-
-                const origOpen = tooltipMenu.open.bind(tooltipMenu);
-                tooltipMenu._mmp_origOpen = origOpen;
-                tooltipMenu.open = (animate) => {
-                    if (targetChild._mmp_proxyHovering) {
-                        // Redirect tooltip to extended monitor by swapping sourceActor
-                        // to the proxy. BoxPointer uses sourceActor to calculate position.
-                        tooltipMenu.sourceActor = proxy;
-                    }
-                    origOpen(animate);
-                };
-
-                const origClose = tooltipMenu.close.bind(tooltipMenu);
-                tooltipMenu._mmp_origClose = origClose;
-                tooltipMenu.close = (animate) => {
-                    origClose(animate);
-                    // Always restore original source so main monitor tooltips still work
-                    tooltipMenu.sourceActor = origTooltipSource;
-                };
-            }
+            // Astra reuses one tooltip menu for the real source child. Every
+            // mirrored panel needs that shared menu to anchor to the proxy that
+            // is currently hovered, not the first proxy that installed the hook.
+            this._registerAstraTooltipProxy(proxy, targetChild);
 
             // ── Fix 3: Proxy enter/leave → show/hide tooltip on extended monitor ──
             // Astra Monitor shows tooltips via enter-event/leave-event handlers
@@ -461,6 +513,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // hovered, with a flag so our tooltipMenu.open hook knows to redirect.
             proxy.connect('enter-event', () => {
                 targetChild._mmp_proxyHovering = true;
+                targetChild._mmp_activeTooltipProxy = proxy;
                 if (typeof targetChild.showTooltip === 'function') {
                     targetChild.showTooltip();
                 }
@@ -469,6 +522,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             proxy.connect('leave-event', () => {
                 targetChild._mmp_proxyHovering = false;
+                if (targetChild._mmp_activeTooltipProxy === proxy)
+                    targetChild._mmp_activeTooltipProxy = null;
                 if (typeof targetChild.hideTooltip === 'function') {
                     targetChild.hideTooltip();
                 }
