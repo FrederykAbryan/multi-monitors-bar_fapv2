@@ -236,30 +236,16 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         this._windowDragCancelledId = Main.overview.connect('window-drag-cancelled',
             this._onDragCancelled.bind(this));
 
-        // WorkspaceThumbnail.MUTTER_SCHEMA may not be exported or present
-        // in all GNOME versions. Guard against it and fall back to a
-        // reasonable default schema id string so we don't call
-        // Gio.Settings with `undefined`.
-        // Determine a safe schema id string. Coerce to string to avoid passing
-        // undefined to Gio.Settings accidentally.
-        let mutterSchemaId = (WorkspaceThumbnail && WorkspaceThumbnail.MUTTER_SCHEMA) || 'org.gnome.mutter';
-        if (mutterSchemaId === undefined || mutterSchemaId === null) {
-            mutterSchemaId = 'org.gnome.mutter';
-        }
-        // Ensure it's a string
-        mutterSchemaId = String(mutterSchemaId);
+        // On GNOME 50, WorkspaceThumbnail.MUTTER_SCHEMA can return the
+        // extension's own schema id instead of 'org.gnome.mutter', which
+        // then fails the key lookup below. The mutter schema id is stable,
+        // so we just hardcode it.
+        this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
 
-        console.debug('[Multi Monitors Add-On] mmoverview: using mutterSchemaId=' + mutterSchemaId);
-        try {
-            this._mutterSettings = new Gio.Settings({ schema_id: mutterSchemaId });
-        } catch (e) {
-            // If creating Gio.Settings with the mutter schema fails,
-            // fall back to org.gnome.mutter as a last resort
-            this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
+        if (this._mutterSettings.settings_schema.has_key('dynamic-workspaces')) {
+            this._changedDynamicWorkspacesId = this._mutterSettings.connect('changed::dynamic-workspaces',
+                this._updateSwitcherVisibility.bind(this));
         }
-
-        this._changedDynamicWorkspacesId = this._mutterSettings.connect('changed::dynamic-workspaces',
-            this._updateSwitcherVisibility.bind(this));
 
         this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => {
             this._destroyThumbnails();
@@ -303,7 +289,8 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         Main.overview.disconnect(this._windowDragEndId);
         Main.overview.disconnect(this._windowDragCancelledId);
 
-        this._mutterSettings.disconnect(this._changedDynamicWorkspacesId);
+        if (this._changedDynamicWorkspacesId)
+            this._mutterSettings.disconnect(this._changedDynamicWorkspacesId);
         Main.layoutManager.disconnect(this._monitorsChangedId);
         global.display.disconnect(this._workareasChangedPortholeId);
         super.destroy();
