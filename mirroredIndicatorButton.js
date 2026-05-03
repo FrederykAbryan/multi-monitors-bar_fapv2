@@ -331,11 +331,30 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return;
             }
 
-            // For regular indicators, use Clutter.Clone (works fine)
+            // Clutter.Clone paints its source scaled to fit the clone's own allocation.
+            // Without sync, clone takes source's preferred size while source gets allocated
+            // a taller box by the panel — causing non-uniform scaling (vertical squish)
+            // that visually reads as horizontal stretch. Sync clone size to source's
+            // actual allocation so scale is always 1:1.
             const clone = new Clutter.Clone({
                 source: source,
+                x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
                 y_expand: false,
+            });
+
+            const syncSize = () => {
+                const alloc = source.get_allocation_box();
+                const w = alloc.get_width();
+                const h = alloc.get_height();
+                if (w > 0 && h > 0 && (clone.width !== w || clone.height !== h))
+                    clone.set_size(w, h);
+            };
+            syncSize();
+            const allocId = source.connect('notify::allocation', syncSize);
+            clone.connect('destroy', () => {
+                try { source.disconnect(allocId); } catch (_e) {}
             });
 
             parent.add_child(clone);
