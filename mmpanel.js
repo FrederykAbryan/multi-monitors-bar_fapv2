@@ -552,26 +552,27 @@ const MultiMonitorsPanel = GObject.registerClass(
             const allocWidth = contentBox.get_width();
 
             // Get natural widths of each box to prevent overflow
-            const [leftMinWidth, leftNatWidth] = this._leftBox.get_preferred_width(-1);
+            const [, leftNatWidth] = this._leftBox.get_preferred_width(-1);
             const [centerMinWidth, centerNatWidth] = this._centerBox.get_preferred_width(-1);
-            const [rightMinWidth, rightNatWidth] = this._rightBox.get_preferred_width(-1);
-
-            // Calculate widths for left and right based on which is larger
-            const sideWidth = Math.max(leftNatWidth, rightNatWidth);
+            const [, rightNatWidth] = this._rightBox.get_preferred_width(-1);
 
             let leftWidth, centerWidth, rightWidth;
 
-            // Check if we have enough space for balanced layout
-            if (sideWidth * 2 + centerNatWidth > allocWidth) {
-                // Overflow case: use natural widths and clip
-                leftWidth = Math.min(leftNatWidth, Math.floor(allocWidth * 0.33));
-                rightWidth = Math.min(rightNatWidth, Math.floor(allocWidth * 0.33));
-                centerWidth = Math.max(centerMinWidth, allocWidth - leftWidth - rightWidth);
-            } else {
-                // Normal case: balance sides to keep center truly centered
+            // Keep the normal GNOME-like balanced layout while there is room.
+            // On narrow/portrait monitors the status area can exceed one third
+            // of the panel width; reserve it first so Quick Settings stays
+            // anchored to the monitor edge instead of being clipped away.
+            const sideWidth = Math.max(leftNatWidth, rightNatWidth);
+            if (sideWidth * 2 + centerNatWidth <= allocWidth) {
                 leftWidth = sideWidth;
                 rightWidth = sideWidth;
                 centerWidth = allocWidth - leftWidth - rightWidth;
+            } else {
+                rightWidth = Math.min(rightNatWidth, allocWidth);
+                const remainingAfterRight = allocWidth - rightWidth;
+                const centerFloor = Math.min(centerMinWidth, remainingAfterRight);
+                leftWidth = Math.min(leftNatWidth, Math.max(0, remainingAfterRight - centerFloor));
+                centerWidth = Math.max(0, allocWidth - leftWidth - rightWidth);
             }
 
             // Left box - aligned to start
@@ -1046,7 +1047,7 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
     const container = indicator.container ? indicator.container : indicator;
     const parent = container.get_parent();
     if (parent) parent.remove_child(container);
-    this._rightBox.add_child(container);
+    this._addToPanelBox(role, indicator, this._rightBox.get_n_children(), this._rightBox);
 };
 
 export { StatusIndicatorsController, MultiMonitorsAppMenuButton, MultiMonitorsActivitiesButton, MultiMonitorsPanel };
