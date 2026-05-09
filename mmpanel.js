@@ -72,6 +72,16 @@ const MultiMonitorsAppMenuButton = GObject.registerClass(
                 this._actionGroupNotifyId = 0;
             }
 
+            this._syncAppMenuIconGeometry();
+            this._iconGeometryTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                try {
+                    this._syncAppMenuIconGeometry();
+                } catch (e) {
+                }
+                this._iconGeometryTimeoutId = 0;
+                return GLib.SOURCE_REMOVE;
+            });
+
             this._windowEnteredMonitorId = global.display.connect('window-entered-monitor',
                 this._windowEnteredMonitor.bind(this));
             this._windowLeftMonitorId = global.display.connect('window-left-monitor',
@@ -176,9 +186,55 @@ const MultiMonitorsAppMenuButton = GObject.registerClass(
             if (typeof Panel !== 'undefined' && Panel.AppMenuButton && Panel.AppMenuButton.prototype._sync) {
                 Panel.AppMenuButton.prototype._sync.call(this);
             }
+
+            this._syncAppMenuIconGeometry();
+        }
+
+        _syncAppMenuIconGeometry() {
+            const iconSize = Panel.PANEL_ICON_SIZE || 16;
+            const iconBox = this._iconBox || this._findChildByStyleClass(this, 'app-menu-icon');
+            if (!iconBox)
+                return;
+
+            this.y_expand = true;
+            this.y_align = Clutter.ActorAlign.FILL;
+
+            iconBox.set_size(iconSize, iconSize);
+            iconBox.x_expand = false;
+            iconBox.y_expand = false;
+            iconBox.x_align = Clutter.ActorAlign.CENTER;
+            iconBox.y_align = Clutter.ActorAlign.CENTER;
+
+            const icon = iconBox.child || iconBox.get_first_child?.();
+            if (icon) {
+                icon.set_size(iconSize, iconSize);
+                icon.x_expand = false;
+                icon.y_expand = false;
+                icon.x_align = Clutter.ActorAlign.CENTER;
+                icon.y_align = Clutter.ActorAlign.CENTER;
+            }
+        }
+
+        _findChildByStyleClass(actor, styleClass) {
+            if (actor.has_style_class_name?.(styleClass))
+                return actor;
+
+            const children = actor.get_children ? actor.get_children() : [];
+            for (const child of children) {
+                const found = this._findChildByStyleClass(child, styleClass);
+                if (found)
+                    return found;
+            }
+
+            return null;
         }
 
         destroy() {
+            if (this._iconGeometryTimeoutId) {
+                GLib.source_remove(this._iconGeometryTimeoutId);
+                this._iconGeometryTimeoutId = 0;
+            }
+
             if (this._actionGroupNotifyId) {
                 this._targetApp.disconnect(this._actionGroupNotifyId);
                 this._actionGroupNotifyId = 0;
@@ -518,7 +574,8 @@ const MultiMonitorsPanel = GObject.registerClass(
         _showActivities() {
             let name = 'activities';
             // Don't show activities button on primary monitor - it already has one
-            if (this.monitorIndex === Main.layoutManager.primaryIndex) {
+            if (this.monitorIndex === Main.layoutManager.primaryIndex ||
+                this._shouldSuppressActivitiesForArcMenu()) {
                 // Remove any existing activities button on primary monitor
                 this._destroyIndicator(name);
                 return;
@@ -1012,6 +1069,14 @@ const MultiMonitorsPanel = GObject.registerClass(
                 }
             }
 
+            // ArcMenu replaces GNOME's Activities entry on the primary panel.
+            // Mirror that behavior on extended panels by dropping our synthetic
+            // activities/workspace-dot role whenever ArcMenu is present.
+            if (this._hasArcMenuRole([...leftIndicators, ...centerIndicators, ...rightIndicators])) {
+                this._removeRole(leftIndicators, 'activities');
+                this._removeRole(centerIndicators, 'activities');
+                this._removeRole(rightIndicators, 'activities');
+            }
 
             // Now mirror them in order
             const desiredRoles = new Set([...leftIndicators, ...centerIndicators, ...rightIndicators]);
@@ -1020,6 +1085,31 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._updateBox(leftIndicators, this._leftBox);
             this._updateBox(centerIndicators, this._centerBox);
             this._updateBox(rightIndicators, this._rightBox);
+        }
+
+        _isArcMenuRole(role) {
+            if (role !== 'ArcMenu')
+                return false;
+
+            const indicator = Main.panel?.statusArea?.[role];
+            return !!indicator?.arcMenu || !!indicator?.menuButtonWidget ||
+                typeof indicator?.toggleMenu === 'function';
+        }
+
+        _hasArcMenuRole(roles) {
+            return roles.some(role => this._isArcMenuRole(role));
+        }
+
+        _shouldSuppressActivitiesForArcMenu() {
+            return this._isArcMenuRole('ArcMenu');
+        }
+
+        _removeRole(roles, roleToRemove) {
+            let index = roles.indexOf(roleToRemove);
+            while (index !== -1) {
+                roles.splice(index, 1);
+                index = roles.indexOf(roleToRemove);
+            }
         }
 
         _removeStaleIndicators(desiredRoles) {

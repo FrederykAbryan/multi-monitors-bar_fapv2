@@ -331,14 +331,85 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return;
             }
 
-            // For regular indicators, use Clutter.Clone (works fine)
-            const clone = new Clutter.Clone({
-                source: source,
+            this._createAllocationMatchedClone(parent, source);
+        }
+
+        _getActorAllocationSize(actor) {
+            if (!actor)
+                return [0, 0];
+
+            try {
+                const alloc = actor.get_allocation_box();
+                const width = Math.round(alloc.get_width());
+                const height = Math.round(alloc.get_height());
+                if (width > 0 && height > 0)
+                    return [width, height];
+            } catch (e) {
+                // Fall back to preferred size below.
+            }
+
+            try {
+                const [, natWidth] = actor.get_preferred_width(-1);
+                const [, natHeight] = actor.get_preferred_height(-1);
+                return [Math.round(natWidth), Math.round(natHeight)];
+            } catch (e) {
+                return [0, 0];
+            }
+        }
+
+        _createAllocationMatchedClone(parent, source) {
+            const wrapper = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
                 y_expand: false,
+                reactive: false,
             });
 
-            parent.add_child(clone);
+            const clone = new Clutter.Clone({
+                source,
+                x_align: Clutter.ActorAlign.FILL,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: true,
+                y_expand: true,
+            });
+
+            wrapper.add_child(clone);
+            parent.add_child(wrapper);
+
+            const syncSize = () => {
+                const [width, height] = this._getActorAllocationSize(source);
+                if (width <= 0 || height <= 0)
+                    return;
+
+                wrapper.set_size(width, height);
+                clone.set_size(width, height);
+            };
+
+            syncSize();
+
+            const allocationId = source.connect('notify::allocation', syncSize);
+            if (!this._allocationCloneSignals)
+                this._allocationCloneSignals = [];
+            this._allocationCloneSignals.push({ source, id: allocationId });
+
+            const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                try {
+                    syncSize();
+                } catch (e) {
+                    // Source actor may have disappeared during panel rebuild.
+                }
+                if (this._allocationCloneTimeouts)
+                    this._allocationCloneTimeouts = this._allocationCloneTimeouts.filter(id => id !== timeoutId);
+                return GLib.SOURCE_REMOVE;
+            });
+
+            if (!this._allocationCloneTimeouts)
+                this._allocationCloneTimeouts = [];
+            this._allocationCloneTimeouts.push(timeoutId);
+
+            return clone;
         }
 
         _createAstraMultiComponentClone(source) {
@@ -617,10 +688,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             menu.sourceActor = proxy;
 
-            if (menu.box) {
-                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
-                menu.box._sourceActor = proxy;
-            }
+            menuBoxState = this._updateMenuPositioning(menu, monitorIndex, proxy);
 
             openStateId = menu.connect('open-state-changed', (m, isOpen) => {
                 if (isOpen) {
@@ -632,10 +700,20 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     if (originalSetActive) targetChild.setActive = originalSetActive;
                     if (originalAddPseudoClass) targetChild.add_style_pseudo_class = originalAddPseudoClass;
 
-                    if (menu.box && menuBoxState) {
-                        if (menuBoxState.originalSetPosition) menu.box.setPosition = menuBoxState.originalSetPosition;
+                    if (menuBoxState?.menuBox) {
+                        if (menuBoxState.originalSetPosition)
+                            menuBoxState.menuBox.setPosition = menuBoxState.originalSetPosition;
+                        else
+                            delete menuBoxState.menuBox.setPosition;
+
                         if (menuBoxState.removedConstraints?.length > 0) {
-                            menuBoxState.removedConstraints.forEach(c => menu.box.add_constraint(c));
+                            menuBoxState.removedConstraints.forEach(c => menuBoxState.menuBox.add_constraint(c));
+                        }
+                        if (menuBoxState.sourceActorState) {
+                            for (const state of menuBoxState.sourceActorState) {
+                                state.actor._sourceActor = state.sourceActor;
+                                state.actor._sourceAllocation = state.sourceAllocation;
+                            }
                         }
                     }
 
@@ -667,6 +745,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // the source's actual allocation dimensions, then track changes.
             const clone = new Clutter.Clone({
                 source: source,
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                y_expand: false,
             });
 
             parent.add_child(clone);
@@ -691,7 +773,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                             Math.abs(h - this._lastSourceH) > 0.5)) {
                         this._lastSourceW = w;
                         this._lastSourceH = h;
-                        this._quickSettingsClone.set_size(w, h);
+                        this._quickSettingsClone.set_size(Math.round(w), Math.round(h));
                     }
                 } catch (e) {
                     // Source may not have allocation yet
@@ -816,7 +898,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const container = new St.BoxLayout({
                 // Preserve source classes (e.g., vitals-panel-menu) so mirrored
                 // indicators keep extension-specific spacing on secondary monitors.
-                style_class: source.get_style_class_name() || 'panel-status-menu-box',
+                style_class: `${source.get_style_class_name() || 'panel-status-menu-box'} mm-static-indicator-copy`,
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: false,
@@ -825,6 +907,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Copy all icons from the source
             this._copyIconsFromSource(container, source);
+            this._syncStaticCopyContainerSize(container, source);
             parent.add_child(container);
             this._iconContainer = container;
             this._iconSource = source;
@@ -861,9 +944,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                             const iconCopy = new St.Icon({
                                 gicon: widget.gicon,
                                 icon_name: widget.icon_name,
-                                icon_size: widget.icon_size || 16,
+                                icon_size: this._getSourceIconSize(widget),
                                 style_class: widget.get_style_class_name() || 'system-status-icon',
+                                x_align: Clutter.ActorAlign.CENTER,
                                 y_align: Clutter.ActorAlign.CENTER,
+                                x_expand: false,
+                                y_expand: false,
                             });
                             groupCopy.add_child(iconCopy);
                         } else if (widget instanceof St.Label) {
@@ -907,9 +993,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         const iconCopy = new St.Icon({
                             gicon: widget.gicon,
                             icon_name: widget.icon_name,
-                            icon_size: widget.icon_size || 16,
+                            icon_size: this._getSourceIconSize(widget),
                             style_class: widget.get_style_class_name() || 'system-status-icon',
+                            x_align: Clutter.ActorAlign.CENTER,
                             y_align: Clutter.ActorAlign.CENTER,
+                            x_expand: false,
+                            y_expand: false,
                         });
                         container.add_child(iconCopy);
                     } else if (widget instanceof St.Label) {
@@ -938,10 +1027,37 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // Fallback: use a clone but wrap it to prevent resize
                 const clone = new Clutter.Clone({
                     source: source,
+                    x_align: Clutter.ActorAlign.CENTER,
                     y_align: Clutter.ActorAlign.CENTER,
+                    x_expand: false,
+                    y_expand: false,
                 });
                 container.add_child(clone);
             }
+        }
+
+        _getSourceIconSize(icon) {
+            if (icon.icon_size && icon.icon_size > 0)
+                return icon.icon_size;
+
+            const [width, height] = this._getActorAllocationSize(icon);
+            const size = Math.min(width, height);
+            return size > 0 ? size : 16;
+        }
+
+        _syncStaticCopyContainerSize(container, source) {
+            const syncSize = () => {
+                const [width, height] = this._getActorAllocationSize(source);
+                if (width > 0 && height > 0)
+                    container.set_size(width, height);
+            };
+
+            syncSize();
+
+            const allocationId = source.connect('notify::allocation', syncSize);
+            if (!this._allocationCloneSignals)
+                this._allocationCloneSignals = [];
+            this._allocationCloneSignals.push({ source, id: allocationId });
         }
 
         _findAllDisplayWidgets(actor) {
@@ -996,12 +1112,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _syncLabelTexts(container) {
-            // Update label text from source labels
-            const children = container.get_children();
+            if (container instanceof St.Label && container._sourceLabel) {
+                container.text = container._sourceLabel.text;
+                return;
+            }
+
+            const children = container.get_children ? container.get_children() : [];
             for (const child of children) {
-                if (child instanceof St.Label && child._sourceLabel) {
-                    child.text = child._sourceLabel.text;
-                }
+                this._syncLabelTexts(child);
             }
         }
 
@@ -1174,11 +1292,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 arcMenu = this._sourceIndicator.arcMenu || this._sourceIndicator.menu;
                 toggleFunc = () => this._sourceIndicator.toggleMenu();
             }
+            if (arcMenu && !toggleFunc && typeof arcMenu.toggle === 'function')
+                toggleFunc = () => arcMenu.toggle();
 
-            // If we found a menu, try to reposition it
+            // If we found a menu, anchor it to the mirrored button on this
+            // monitor, using the same BoxPointer override as normal menus.
             if (arcMenu && arcMenu.sourceActor) {
+                const monitorIndex = Main.layoutManager.findIndexForActor(this);
                 const originalSourceActor = arcMenu.sourceActor;
+                const originalBoxPointer = arcMenu.box?._sourceActor;
+                const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
                 const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+                let menuBoxState = null;
+
+                if (arcMenu.isOpen) {
+                    arcMenu.close();
+                    return Clutter.EVENT_STOP;
+                }
 
                 // Prevent active state on main panel indicator
                 this._preventMainPanelActiveState(originalAddPseudoClass);
@@ -1189,17 +1319,20 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // Temporarily change sourceActor to this button for positioning
                 arcMenu.sourceActor = this;
 
+                if (arcMenu.box) {
+                    menuBoxState = this._updateMenuPositioning(arcMenu, monitorIndex);
+                }
+
                 // Connect to menu close to restore state
                 const openStateId = arcMenu.connect('open-state-changed', (_m, isOpen) => {
+                    if (isOpen) {
+                        this.add_style_pseudo_class('active');
+                        return;
+                    }
+
                     if (!isOpen) {
-                        this.remove_style_pseudo_class('active');
-                        arcMenu.sourceActor = originalSourceActor;
-
-                        // Restore main panel indicator methods
-                        if (originalAddPseudoClass) {
-                            this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
-                        }
-
+                        this._restoreMenuState(arcMenu, originalSourceActor, originalBoxPointer,
+                            originalSetActive, originalAddPseudoClass, menuBoxState);
                         arcMenu.disconnect(openStateId);
                     }
                 });
@@ -1207,6 +1340,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // Toggle the menu
                 if (toggleFunc) {
                     toggleFunc();
+                } else {
+                    this._restoreMenuState(arcMenu, originalSourceActor, originalBoxPointer,
+                        originalSetActive, originalAddPseudoClass, menuBoxState);
                 }
             } else {
                 // Fallback: just toggle without repositioning
@@ -1346,16 +1482,29 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
-        _updateMenuPositioning(menu, monitorIndex) {
-            const menuBox = menu.box;
+        _updateMenuPositioning(menu, monitorIndex, sourceActor = this) {
+            const menuBox = menu._boxPointer || menu.box;
+            if (!menuBox)
+                return null;
 
             // 1. Save original source actor
-            menuBox._sourceActor = this;
-            menuBox._sourceAllocation = null;
+            const sourceActorState = [];
+            for (const actor of [menu.box, menu._boxPointer]) {
+                if (!actor)
+                    continue;
+
+                sourceActorState.push({
+                    actor,
+                    sourceActor: actor._sourceActor,
+                    sourceAllocation: actor._sourceAllocation,
+                });
+                actor._sourceActor = sourceActor;
+                actor._sourceAllocation = null;
+            }
 
             // 2. Handle constraints
             const removedConstraints = [];
-            const constraints = menuBox.get_constraints();
+            const constraints = menuBox.get_constraints ? menuBox.get_constraints() : [];
             for (let constraint of constraints) {
                 if (constraint.constructor.name === 'BindConstraint' ||
                     constraint.constructor.name === 'AlignConstraint') {
@@ -1406,8 +1555,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
             };
 
             return {
-                originalSetPosition: originalSetPosition,
-                removedConstraints: removedConstraints
+                menuBox,
+                originalSetPosition,
+                removedConstraints,
+                sourceActorState,
             };
         }
 
@@ -1420,6 +1571,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (menu.box && originalBoxPointer) {
                 menu.box._sourceActor = originalBoxPointer;
             }
+            if (menuBoxState?.sourceActorState) {
+                for (const state of menuBoxState.sourceActorState) {
+                    state.actor._sourceActor = state.sourceActor;
+                    state.actor._sourceAllocation = state.sourceAllocation;
+                }
+            }
 
             // 2. Restore hijacked indicator methods
             if (originalSetActive && this._sourceIndicator) {
@@ -1431,14 +1588,15 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             // 3. Restore menu box modifications (setPosition and constraints)
-            if (menu.box && menuBoxState) {
-                if (menuBoxState.originalSetPosition) {
-                    menu.box.setPosition = menuBoxState.originalSetPosition;
-                }
+            if (menuBoxState?.menuBox) {
+                if (menuBoxState.originalSetPosition)
+                    menuBoxState.menuBox.setPosition = menuBoxState.originalSetPosition;
+                else
+                    delete menuBoxState.menuBox.setPosition;
 
                 if (menuBoxState.removedConstraints && menuBoxState.removedConstraints.length > 0) {
                     menuBoxState.removedConstraints.forEach(constraint => {
-                        menu.box.add_constraint(constraint);
+                        menuBoxState.menuBox.add_constraint(constraint);
                     });
                 }
             }
@@ -1518,6 +1676,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._sizeDebounceId) {
                 GLib.source_remove(this._sizeDebounceId);
                 this._sizeDebounceId = null;
+            }
+
+            if (this._allocationCloneTimeouts) {
+                for (const timeoutId of this._allocationCloneTimeouts) {
+                    GLib.source_remove(timeoutId);
+                }
+                this._allocationCloneTimeouts = null;
+            }
+
+            if (this._allocationCloneSignals) {
+                for (const signal of this._allocationCloneSignals) {
+                    try {
+                        signal.source.disconnect(signal.id);
+                    } catch (e) {
+                    }
+                }
+                this._allocationCloneSignals = null;
             }
 
 
