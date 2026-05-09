@@ -170,7 +170,10 @@ export class StatusIndicatorsController {
 				available_indicators.push(indicator);
 			}
 		}
-		if (available_indicators.length != this._available_indicators.length) {
+		const changed = available_indicators.length !== this._available_indicators.length ||
+			available_indicators.some((indicator, index) => indicator !== this._available_indicators[index]);
+
+		if (changed) {
 			this._available_indicators = available_indicators;
 			this._settings.set_strv(Constants.AVAILABLE_INDICATORS_ID, this._available_indicators);
 		}

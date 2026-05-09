@@ -287,6 +287,8 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.statusArea = {};
 
             this.menuManager = new PopupMenu.PopupMenuManager(this);
+            this._primaryPanelSignalIds = [];
+            this._panelRefreshTimeouts = [];
 
             // GNOME 46 FIX: Create boxes with proper expansion and alignment
             // Left box should expand and fill available space
@@ -374,6 +376,8 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._extensionStateChangedId = Main.extensionManager.connect('extension-state-changed',
                 this._onExtensionStateChanged.bind(this));
 
+            this._connectPrimaryPanelBoxWatchers();
+
             // Multiple delayed checks to catch extensions that load at various times
             // Apps and Places extension can take several seconds to fully initialize
             this._initialCheckTimeouts = [];
@@ -391,17 +395,48 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _onExtensionStateChanged(_extensionManager, _extension) {
-            // An extension state changed - check if new indicators appeared
-            // Use a small delay to let the extension fully initialize its indicators
-            if (this._extensionUpdateTimeoutId) {
-                GLib.source_remove(this._extensionUpdateTimeoutId);
-                this._extensionUpdateTimeoutId = null;
+            this._schedulePanelRefresh([100, 500, 1500]);
+        }
+
+        _connectPrimaryPanelBoxWatchers() {
+            const mainPanel = Main.panel;
+            if (!mainPanel)
+                return;
+
+            const scheduleUpdate = () => {
+                this._schedulePanelRefresh([50, 250, 1000]);
+            };
+
+            const signals = ['child-added', 'child-removed', 'actor-added', 'actor-removed'];
+            for (const boxName of ['_leftBox', '_centerBox', '_rightBox']) {
+                const box = mainPanel[boxName];
+                if (!box)
+                    continue;
+
+                for (const signal of signals) {
+                    try {
+                        const id = box.connect(signal, scheduleUpdate);
+                        this._primaryPanelSignalIds.push({ actor: box, id });
+                    } catch (_e) {
+                        // Signal names differ between Shell/Clutter versions.
+                    }
+                }
             }
-            this._extensionUpdateTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-                this._updatePanel();
-                this._extensionUpdateTimeoutId = null;
-                return GLib.SOURCE_REMOVE;
-            });
+        }
+
+        _schedulePanelRefresh(delays) {
+            for (const timeoutId of this._panelRefreshTimeouts)
+                GLib.source_remove(timeoutId);
+            this._panelRefreshTimeouts = [];
+
+            for (const delay of delays) {
+                const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                    this._panelRefreshTimeouts = this._panelRefreshTimeouts.filter(id => id !== timeoutId);
+                    this._updatePanel();
+                    return GLib.SOURCE_REMOVE;
+                });
+                this._panelRefreshTimeouts.push(timeoutId);
+            }
         }
 
         vfunc_map() {
@@ -416,15 +451,25 @@ const MultiMonitorsPanel = GObject.registerClass(
                 Main.extensionManager.disconnect(this._extensionStateChangedId);
                 this._extensionStateChangedId = null;
             }
+            if (this._primaryPanelSignalIds) {
+                for (const { actor, id } of this._primaryPanelSignalIds) {
+                    try {
+                        actor.disconnect(id);
+                    } catch (_e) {
+                    }
+                }
+                this._primaryPanelSignalIds = [];
+            }
             if (this._initialCheckTimeouts) {
                 for (const timeoutId of this._initialCheckTimeouts) {
                     GLib.source_remove(timeoutId);
                 }
                 this._initialCheckTimeouts = null;
             }
-            if (this._extensionUpdateTimeoutId) {
-                GLib.source_remove(this._extensionUpdateTimeoutId);
-                this._extensionUpdateTimeoutId = null;
+            if (this._panelRefreshTimeouts) {
+                for (const timeoutId of this._panelRefreshTimeouts)
+                    GLib.source_remove(timeoutId);
+                this._panelRefreshTimeouts = [];
             }
 
             if (this._workareasChangedId) {
@@ -969,9 +1014,30 @@ const MultiMonitorsPanel = GObject.registerClass(
 
 
             // Now mirror them in order
+            const desiredRoles = new Set([...leftIndicators, ...centerIndicators, ...rightIndicators]);
+            this._removeStaleIndicators(desiredRoles);
+
             this._updateBox(leftIndicators, this._leftBox);
             this._updateBox(centerIndicators, this._centerBox);
             this._updateBox(rightIndicators, this._rightBox);
+        }
+
+        _removeStaleIndicators(desiredRoles) {
+            for (const role in this.statusArea) {
+                const indicator = this.statusArea[role];
+                const mainIndicator = Main.panel.statusArea[role] || null;
+
+                if (!desiredRoles.has(role)) {
+                    this._destroyIndicator(role);
+                    continue;
+                }
+
+                if (indicator instanceof MirroredIndicatorButton &&
+                    role !== 'activities' &&
+                    indicator._sourceIndicator !== mainIndicator) {
+                    this._destroyIndicator(role);
+                }
+            }
         }
 
         _updateBox(elements, box) {
