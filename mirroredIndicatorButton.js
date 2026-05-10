@@ -23,6 +23,7 @@ import GLib from 'gi://GLib';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 
 const MMWorkspacePreviewLayout = GObject.registerClass(
     class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
@@ -1643,6 +1644,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return this._openClipboardIndicatorMenu();
             }
 
+            if (this._role === 'quickSettings' && this._sourceIndicator?.menu) {
+                return this._openQuickSettingsMenu();
+            }
+
             // Check for standard menu first
             if (this._sourceIndicator && this._sourceIndicator.menu) {
                 return this._openMirroredMenu();
@@ -1698,6 +1703,264 @@ export const MirroredIndicatorButton = GObject.registerClass(
             return !!(this._sourceIndicator?.registry &&
                 this._sourceIndicator?.clipItemsRadioGroup &&
                 typeof this._sourceIndicator?._toggleMenu === 'function');
+        }
+
+        _openQuickSettingsMenu() {
+            const menu = this._sourceIndicator?.menu;
+            if (!menu || menu.isOpen === undefined)
+                return Clutter.EVENT_PROPAGATE;
+
+            if (this._quickSettingsMenuRestoreId) {
+                GLib.source_remove(this._quickSettingsMenuRestoreId);
+                this._quickSettingsMenuRestoreId = 0;
+            }
+            if (this._quickSettingsMenuPendingRestore) {
+                try {
+                    this._quickSettingsMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._quickSettingsMenuPendingRestore = null;
+            }
+
+            if (menu.isOpen)
+                return this._openQuickSettingsMirroredMenu();
+
+            if (!this._quickSettingsMenuPrimed)
+                return this._primeQuickSettingsMenuThenOpen();
+
+            return this._openQuickSettingsMirroredMenu();
+        }
+
+        _openQuickSettingsMirroredMenu() {
+            const monitorIndex = Main.layoutManager.findIndexForActor(this);
+            const menu = this._sourceIndicator?.menu;
+            if (!menu)
+                return Clutter.EVENT_PROPAGATE;
+
+            const originalSourceActor = menu.sourceActor;
+            const originalBoxPointer = menu.box?._sourceActor;
+            const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+            const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+            let menuBoxState = null;
+            let openStateId = 0;
+            let restored = false;
+
+            const keepAnchoredToMirror = () => {
+                menu.sourceActor = this;
+                for (const actor of [menu.box, menu._boxPointer]) {
+                    if (!actor)
+                        continue;
+
+                    actor._sourceActor = this;
+                    actor._sourceAllocation = null;
+                }
+            };
+
+            const restoreMenuBox = () => {
+                if (!menuBoxState?.menuBox)
+                    return;
+
+                if (menuBoxState.originalSetPosition)
+                    menuBoxState.menuBox.setPosition = menuBoxState.originalSetPosition;
+                else
+                    delete menuBoxState.menuBox.setPosition;
+
+                if (menuBoxState.removedConstraints?.length > 0) {
+                    menuBoxState.removedConstraints.forEach(constraint => {
+                        menuBoxState.menuBox.add_constraint(constraint);
+                    });
+                }
+            };
+
+            const restoreSourceActor = () => {
+                menu.sourceActor = originalSourceActor;
+                if (menu.box)
+                    menu.box._sourceActor = originalBoxPointer;
+
+                if (menuBoxState?.sourceActorState) {
+                    for (const state of menuBoxState.sourceActorState) {
+                        state.actor._sourceActor = state.sourceActor;
+                        state.actor._sourceAllocation = state.sourceAllocation;
+                    }
+                }
+
+                this._clearSourceIndicatorActiveState();
+                this._quickSettingsMenuRestoreId = 0;
+                this._quickSettingsMenuPendingRestore = null;
+                return GLib.SOURCE_REMOVE;
+            };
+
+            const restoreAfterClose = () => {
+                if (restored)
+                    return;
+                restored = true;
+
+                if (openStateId) {
+                    try {
+                        menu.disconnect(openStateId);
+                    } catch (_e) {
+                    }
+                    openStateId = 0;
+                }
+
+                if (originalSetActive)
+                    this._sourceIndicator.setActive = originalSetActive;
+                if (originalAddPseudoClass)
+                    this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+
+                restoreMenuBox();
+                this.remove_style_pseudo_class('active');
+                this.remove_style_pseudo_class('checked');
+                this._clearSourceIndicatorActiveState();
+
+                if (this._quickSettingsMenuRestoreId)
+                    GLib.source_remove(this._quickSettingsMenuRestoreId);
+
+                keepAnchoredToMirror();
+                this._quickSettingsMenuPendingRestore = restoreSourceActor;
+                this._quickSettingsMenuRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, restoreSourceActor);
+            };
+
+            if (menu.isOpen) {
+                keepAnchoredToMirror();
+                openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                    if (!isOpen)
+                        restoreAfterClose();
+                });
+                menu.close();
+                return Clutter.EVENT_STOP;
+            }
+
+            this._preventMainPanelActiveState(originalAddPseudoClass);
+            this.add_style_pseudo_class('active');
+            keepAnchoredToMirror();
+
+            if (menu.box)
+                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+
+            openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                if (isOpen) {
+                    this.add_style_pseudo_class('active');
+                    this._clearSourceIndicatorActiveState();
+                    return;
+                }
+
+                restoreAfterClose();
+            });
+
+            try {
+                menu.open();
+            } catch (e) {
+                restoreAfterClose();
+                console.debug('[Multi Monitors Add-On] Failed to open Quick Settings menu:', String(e));
+            }
+
+            if (!menu.isOpen)
+                restoreAfterClose();
+
+            return Clutter.EVENT_STOP;
+        }
+
+        _primeQuickSettingsMenuThenOpen() {
+            const menu = this._sourceIndicator?.menu;
+            if (!menu || this._quickSettingsPrimeId)
+                return Clutter.EVENT_STOP;
+
+            const actors = this._getQuickSettingsMenuActors(menu);
+            const actorState = actors.map(actor => ({
+                actor,
+                opacity: actor.opacity,
+            }));
+
+            const sourceActorState = [];
+            const originalSourceActor = menu.sourceActor;
+            const originalBoxPointer = menu.box?._sourceActor;
+            const primeSourceActor = originalSourceActor || this._sourceIndicator;
+            const noAnimation = BoxPointer.PopupAnimation?.NONE ?? 0;
+
+            for (const actor of [menu.box, menu._boxPointer]) {
+                if (!actor)
+                    continue;
+
+                sourceActorState.push({
+                    actor,
+                    sourceActor: actor._sourceActor,
+                    sourceAllocation: actor._sourceAllocation,
+                });
+            }
+
+            const restore = () => {
+                for (const state of actorState)
+                    state.actor.opacity = state.opacity;
+
+                menu.sourceActor = originalSourceActor;
+                if (menu.box)
+                    menu.box._sourceActor = originalBoxPointer;
+
+                for (const state of sourceActorState) {
+                    state.actor._sourceActor = state.sourceActor;
+                    state.actor._sourceAllocation = state.sourceAllocation;
+                }
+
+                this._clearSourceIndicatorActiveState();
+                this._quickSettingsPrimeRestore = null;
+            };
+
+            this._quickSettingsPrimeRestore = restore;
+
+            try {
+                for (const actor of actors)
+                    actor.opacity = 0;
+
+                menu.sourceActor = primeSourceActor;
+                for (const actor of [menu.box, menu._boxPointer]) {
+                    if (!actor)
+                        continue;
+                    actor._sourceActor = primeSourceActor;
+                    actor._sourceAllocation = null;
+                }
+
+                menu.open(noAnimation);
+            } catch (e) {
+                restore();
+                this._quickSettingsMenuPrimed = true;
+                console.debug('[Multi Monitors Add-On] Failed to prime Quick Settings menu:', String(e));
+                return this._openMirroredMenu();
+            }
+
+            this._quickSettingsPrimeId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 75, () => {
+                this._quickSettingsPrimeId = 0;
+
+                try {
+                    if (menu.isOpen)
+                        menu.close(noAnimation);
+                } catch (e) {
+                    console.debug('[Multi Monitors Add-On] Failed to close primed Quick Settings menu:', String(e));
+                }
+
+                restore();
+                this._quickSettingsMenuPrimed = true;
+
+                this._quickSettingsOpenAfterPrimeId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                    this._quickSettingsOpenAfterPrimeId = 0;
+                    if (!this._isCleanedUp)
+                        this._openQuickSettingsMirroredMenu();
+                    return GLib.SOURCE_REMOVE;
+                });
+
+                return GLib.SOURCE_REMOVE;
+            });
+
+            return Clutter.EVENT_STOP;
+        }
+
+        _getQuickSettingsMenuActors(menu) {
+            const actors = [];
+            for (const actor of [menu.actor, menu.box, menu._boxPointer]) {
+                if (actor && !actors.includes(actor))
+                    actors.push(actor);
+            }
+            return actors;
         }
 
         _isClipboardMenuReady() {
@@ -2487,6 +2750,36 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._qsInitialSyncId) {
                 GLib.source_remove(this._qsInitialSyncId);
                 this._qsInitialSyncId = null;
+            }
+
+            if (this._quickSettingsPrimeId) {
+                GLib.source_remove(this._quickSettingsPrimeId);
+                this._quickSettingsPrimeId = 0;
+            }
+
+            if (this._quickSettingsOpenAfterPrimeId) {
+                GLib.source_remove(this._quickSettingsOpenAfterPrimeId);
+                this._quickSettingsOpenAfterPrimeId = 0;
+            }
+
+            if (this._quickSettingsPrimeRestore) {
+                try {
+                    this._quickSettingsPrimeRestore();
+                } catch (_e) {
+                }
+                this._quickSettingsPrimeRestore = null;
+            }
+
+            if (this._quickSettingsMenuRestoreId) {
+                GLib.source_remove(this._quickSettingsMenuRestoreId);
+                this._quickSettingsMenuRestoreId = 0;
+            }
+            if (this._quickSettingsMenuPendingRestore) {
+                try {
+                    this._quickSettingsMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._quickSettingsMenuPendingRestore = null;
             }
 
             if (this._overviewShowingId) {
