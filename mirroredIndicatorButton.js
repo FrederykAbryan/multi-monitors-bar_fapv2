@@ -1836,15 +1836,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 actor._sourceAllocation = null;
             }
 
-            const restore = () => {
-                menu.sourceActor = originalSourceActor;
-                if (menu.box)
-                    menu.box._sourceActor = originalBoxPointer;
+            const restore = (deferSourceRestore = false) => {
+                const restoreSourceActor = () => {
+                    menu.sourceActor = originalSourceActor;
+                    if (menu.box)
+                        menu.box._sourceActor = originalBoxPointer;
 
-                for (const state of sourceActorState) {
-                    state.actor._sourceActor = state.sourceActor;
-                    state.actor._sourceAllocation = state.sourceAllocation;
-                }
+                    for (const state of sourceActorState) {
+                        state.actor._sourceActor = state.sourceActor;
+                        state.actor._sourceAllocation = state.sourceAllocation;
+                    }
+
+                    this._clipboardSourceRestoreId = 0;
+                    this._clipboardPendingSourceRestore = null;
+                    return GLib.SOURCE_REMOVE;
+                };
 
                 this.remove_style_pseudo_class('active');
                 this.remove_style_pseudo_class('checked');
@@ -1862,6 +1868,26 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     }
                     openStateId = 0;
                 }
+
+                if (this._clipboardSourceRestoreId) {
+                    GLib.source_remove(this._clipboardSourceRestoreId);
+                    this._clipboardSourceRestoreId = 0;
+                }
+
+                if (deferSourceRestore) {
+                    menu.sourceActor = this;
+                    if (menu.box)
+                        menu.box._sourceActor = this;
+                    for (const state of sourceActorState) {
+                        state.actor._sourceActor = this;
+                        state.actor._sourceAllocation = null;
+                    }
+
+                    this._clipboardPendingSourceRestore = restoreSourceActor;
+                    this._clipboardSourceRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, restoreSourceActor);
+                } else {
+                    restoreSourceActor();
+                }
             };
 
             openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
@@ -1878,7 +1904,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     return;
                 }
 
-                restore();
+                restore(true);
             });
 
             try {
@@ -2176,6 +2202,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._clipboardActiveCleanupId) {
                 GLib.source_remove(this._clipboardActiveCleanupId);
                 this._clipboardActiveCleanupId = null;
+            }
+
+            if (this._clipboardSourceRestoreId) {
+                GLib.source_remove(this._clipboardSourceRestoreId);
+                this._clipboardSourceRestoreId = null;
+            }
+            if (this._clipboardPendingSourceRestore) {
+                try {
+                    this._clipboardPendingSourceRestore();
+                } catch (_e) {
+                }
+                this._clipboardPendingSourceRestore = null;
             }
 
             if (this._lockSizeTimeoutId) {
