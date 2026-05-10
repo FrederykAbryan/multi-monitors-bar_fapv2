@@ -2574,9 +2574,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Update menu's sourceActor
             menu.sourceActor = this;
 
-            // Update BoxPointer positioning and save state for restoration
+            // Update BoxPointer positioning and save state for restoration.
+            // Native variant trusts BoxPointer._reposition() so freshly-built
+            // mirrors (e.g., Tiling Shell) open the menu on the first click
+            // without needing the source button to be primed first.
             if (menu.box) {
-                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+                menuBoxState = this._updateMenuPositioningNative(menu);
             }
 
             // Setup cleanup on menu close
