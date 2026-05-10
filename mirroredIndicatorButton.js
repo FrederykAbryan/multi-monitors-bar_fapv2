@@ -237,27 +237,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // uses real child actors for switching workspaces, so a plain
                 // Clutter.Clone looks correct but cannot receive those clicks.
                 if (this._role === 'workspace-indicator') {
-                    this.add_style_class_name('workspace-indicator');
-                    this.add_style_class_name('mm-workspace-indicator');
-                    this.y_expand = true;
-                    this.y_align = Clutter.ActorAlign.FILL;
-
-                    if (this._sourceIndicator?._thumbnails?.visible) {
-                        this.add_style_class_name('previews');
-                        this._createWorkspacePreviewMirror();
-                        return;
-                    }
-
-                    this.add_style_class_name('name-label');
-
-                    const container = new St.Widget({
-                        layout_manager: new Clutter.BinLayout(),
-                        y_align: Clutter.ActorAlign.CENTER,
-                        x_align: Clutter.ActorAlign.CENTER,
-                    });
-
-                    this._createAllocationMatchedClone(container, sourceChild);
-                    this.add_child(container);
+                    this._createWorkspaceIndicatorMirror(sourceChild);
                     return;
                 }
 
@@ -332,6 +312,150 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 console.debug('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                 this._createFallbackIcon();
             }
+        }
+
+        _createWorkspaceIndicatorMirror(sourceChild) {
+            this.add_style_class_name('workspace-indicator');
+            this.add_style_class_name('mm-workspace-indicator');
+            this.y_expand = true;
+            this.y_align = Clutter.ActorAlign.FILL;
+
+            this._connectWorkspaceIndicatorModeWatcher();
+            this._registerWorkspaceSourceMenu();
+
+            if (this._sourceIndicator?._thumbnails?.visible) {
+                this.remove_style_class_name('name-label');
+                this.add_style_class_name('previews');
+                this._workspaceIndicatorMode = 'previews';
+                this._createWorkspacePreviewMirror();
+                return;
+            }
+
+            this.remove_style_class_name('previews');
+            this.add_style_class_name('name-label');
+            this._workspaceIndicatorMode = 'name-label';
+
+            const container = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                y_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.CENTER,
+            });
+
+            this._createAllocationMatchedClone(container, sourceChild);
+            this.add_child(container);
+        }
+
+        _registerWorkspaceSourceMenu() {
+            const menu = this._sourceIndicator?.menu;
+            const menuManager = this._panel?.menuManager;
+            if (!menu || !menuManager || this._workspaceSourceMenuRegistered === menu)
+                return;
+
+            if (this._workspaceSourceMenuRegistered) {
+                try {
+                    menuManager.removeMenu(this._workspaceSourceMenuRegistered);
+                } catch (_e) {
+                }
+            }
+
+            try {
+                menuManager.addMenu(menu);
+                this._workspaceSourceMenuRegistered = menu;
+            } catch (_e) {
+                this._workspaceSourceMenuRegistered = null;
+            }
+        }
+
+        _connectWorkspaceIndicatorModeWatcher() {
+            const thumbnails = this._sourceIndicator?._thumbnails;
+            if (!thumbnails)
+                return;
+
+            if (this._workspaceIndicatorModeWatchSource === thumbnails &&
+                this._workspaceIndicatorModeWatchId)
+                return;
+
+            if (this._workspaceIndicatorModeWatchSource && this._workspaceIndicatorModeWatchId) {
+                try {
+                    this._workspaceIndicatorModeWatchSource.disconnect(this._workspaceIndicatorModeWatchId);
+                } catch (_e) {
+                }
+            }
+
+            this._workspaceIndicatorModeWatchSource = thumbnails;
+            this._workspaceIndicatorModeWatchId = thumbnails.connect('notify::visible',
+                () => this._scheduleWorkspaceIndicatorModeRebuild());
+        }
+
+        _scheduleWorkspaceIndicatorModeRebuild() {
+            if (this._workspaceIndicatorModeRebuildId)
+                return;
+
+            this._workspaceIndicatorModeRebuildId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                this._workspaceIndicatorModeRebuildId = 0;
+                this._rebuildWorkspaceIndicatorMode();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        _rebuildWorkspaceIndicatorMode() {
+            if (!this._sourceIndicator)
+                return;
+
+            const sourceChild = this._sourceIndicator.get_first_child?.();
+            if (!sourceChild)
+                return;
+
+            const nextMode = this._sourceIndicator?._thumbnails?.visible
+                ? 'previews'
+                : 'name-label';
+            if (nextMode === this._workspaceIndicatorMode)
+                return;
+
+            this._clearWorkspaceIndicatorContent();
+            this._createWorkspaceIndicatorMirror(sourceChild);
+            this.queue_relayout();
+        }
+
+        _clearWorkspaceIndicatorContent() {
+            if (this._workspacePreviewUpdateId) {
+                GLib.source_remove(this._workspacePreviewUpdateId);
+                this._workspacePreviewUpdateId = 0;
+            }
+
+            if (this._workspacePreviewSignalIds) {
+                for (const { object, id } of this._workspacePreviewSignalIds) {
+                    try {
+                        object.disconnect(id);
+                    } catch (_e) {
+                    }
+                }
+                this._workspacePreviewSignalIds = null;
+            }
+
+            this._disconnectWorkspaceWindowSignals();
+            this._workspacePreviewBox = null;
+            this._workspacePreviewButtons = null;
+
+            if (this._allocationCloneTimeouts) {
+                for (const timeoutId of this._allocationCloneTimeouts)
+                    GLib.source_remove(timeoutId);
+                this._allocationCloneTimeouts = null;
+            }
+
+            if (this._allocationCloneSignals) {
+                for (const signal of this._allocationCloneSignals) {
+                    try {
+                        signal.source.disconnect(signal.id);
+                    } catch (_e) {
+                    }
+                }
+                this._allocationCloneSignals = null;
+            }
+
+            const children = this.get_children ? this.get_children() : [];
+            for (const child of children)
+                this.remove_child(child);
         }
 
         _createWorkspacePreviewMirror() {
@@ -1502,7 +1626,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._role === 'workspace-indicator') {
                 if (event?.get_button?.() === Clutter.BUTTON_SECONDARY &&
                     this._sourceIndicator?.menu) {
-                    return this._openMirroredMenu();
+                    return this._openWorkspaceIndicatorMenu();
                 }
 
                 if (this._sourceIndicator?._thumbnails?.visible &&
@@ -1512,7 +1636,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
 
                 if (this._sourceIndicator?.menu)
-                    return this._openMirroredMenu();
+                    return this._openWorkspaceIndicatorMenu();
             }
 
             if (this._isClipboardIndicator() && this._sourceIndicator?.menu) {
@@ -1964,6 +2088,140 @@ export const MirroredIndicatorButton = GObject.registerClass(
             return Clutter.EVENT_STOP;
         }
 
+        _openWorkspaceIndicatorMenu() {
+            const monitorIndex = Main.layoutManager.findIndexForActor(this);
+            const menu = this._sourceIndicator?.menu;
+            if (!menu)
+                return Clutter.EVENT_PROPAGATE;
+
+            const originalSourceActor = menu.sourceActor;
+            const originalBoxPointer = menu.box?._sourceActor;
+            const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+            const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+            let menuBoxState = null;
+            let openStateId = 0;
+            let restored = false;
+
+            const keepAnchoredToMirror = () => {
+                menu.sourceActor = this;
+                for (const actor of [menu.box, menu._boxPointer]) {
+                    if (!actor)
+                        continue;
+                    actor._sourceActor = this;
+                    actor._sourceAllocation = null;
+                }
+            };
+
+            const restoreMenuBox = () => {
+                if (!menuBoxState?.menuBox)
+                    return;
+
+                if (menuBoxState.originalSetPosition)
+                    menuBoxState.menuBox.setPosition = menuBoxState.originalSetPosition;
+                else
+                    delete menuBoxState.menuBox.setPosition;
+
+                if (menuBoxState.removedConstraints?.length > 0) {
+                    menuBoxState.removedConstraints.forEach(constraint => {
+                        menuBoxState.menuBox.add_constraint(constraint);
+                    });
+                }
+            };
+
+            const restoreSourceActor = () => {
+                if (originalSourceActor)
+                    menu.sourceActor = originalSourceActor;
+                if (menu.box && originalBoxPointer)
+                    menu.box._sourceActor = originalBoxPointer;
+                if (menuBoxState?.sourceActorState) {
+                    for (const state of menuBoxState.sourceActorState) {
+                        state.actor._sourceActor = state.sourceActor;
+                        state.actor._sourceAllocation = state.sourceAllocation;
+                    }
+                }
+
+                this._clearSourceIndicatorActiveState();
+                this._workspaceMenuRestoreId = 0;
+                this._workspaceMenuPendingRestore = null;
+                return GLib.SOURCE_REMOVE;
+            };
+
+            const restoreAfterClose = () => {
+                if (restored)
+                    return;
+                restored = true;
+
+                if (openStateId) {
+                    try {
+                        menu.disconnect(openStateId);
+                    } catch (_e) {
+                    }
+                    openStateId = 0;
+                }
+
+                if (originalSetActive)
+                    this._sourceIndicator.setActive = originalSetActive;
+                if (originalAddPseudoClass)
+                    this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+
+                restoreMenuBox();
+                this.remove_style_pseudo_class('active');
+                this.remove_style_pseudo_class('checked');
+                this._clearSourceIndicatorActiveState();
+
+                if (this._workspaceMenuRestoreId)
+                    GLib.source_remove(this._workspaceMenuRestoreId);
+
+                // The menu close animation can still query sourceActor. Keep it
+                // anchored to this mirror briefly so the primary panel button
+                // does not flash active during/after close.
+                keepAnchoredToMirror();
+                this._workspaceMenuPendingRestore = restoreSourceActor;
+                this._workspaceMenuRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, restoreSourceActor);
+            };
+
+            if (menu.isOpen) {
+                keepAnchoredToMirror();
+                if (originalSourceActor !== this) {
+                    openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                        if (!isOpen)
+                            restoreAfterClose();
+                    });
+                }
+                menu.close();
+                return Clutter.EVENT_STOP;
+            }
+
+            this._preventMainPanelActiveState(originalAddPseudoClass);
+            this.add_style_pseudo_class('active');
+            keepAnchoredToMirror();
+
+            if (menu.box)
+                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+
+            openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                if (isOpen) {
+                    this.add_style_pseudo_class('active');
+                    this._clearSourceIndicatorActiveState();
+                    return;
+                }
+
+                restoreAfterClose();
+            });
+
+            try {
+                menu.open();
+            } catch (e) {
+                restoreAfterClose();
+                console.debug('[Multi Monitors Add-On] Failed to open workspace indicator menu:', String(e));
+            }
+
+            if (!menu.isOpen)
+                restoreAfterClose();
+
+            return Clutter.EVENT_STOP;
+        }
+
         _openMirroredMenu() {
             const monitorIndex = Main.layoutManager.findIndexForActor(this);
             const menu = this._sourceIndicator.menu;
@@ -2249,6 +2507,40 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._sizeDebounceId) {
                 GLib.source_remove(this._sizeDebounceId);
                 this._sizeDebounceId = null;
+            }
+
+            if (this._workspaceIndicatorModeRebuildId) {
+                GLib.source_remove(this._workspaceIndicatorModeRebuildId);
+                this._workspaceIndicatorModeRebuildId = 0;
+            }
+
+            if (this._workspaceIndicatorModeWatchSource && this._workspaceIndicatorModeWatchId) {
+                try {
+                    this._workspaceIndicatorModeWatchSource.disconnect(this._workspaceIndicatorModeWatchId);
+                } catch (_e) {
+                }
+                this._workspaceIndicatorModeWatchSource = null;
+                this._workspaceIndicatorModeWatchId = 0;
+            }
+
+            if (this._workspaceSourceMenuRegistered) {
+                try {
+                    this._panel?.menuManager?.removeMenu(this._workspaceSourceMenuRegistered);
+                } catch (_e) {
+                }
+                this._workspaceSourceMenuRegistered = null;
+            }
+
+            if (this._workspaceMenuRestoreId) {
+                GLib.source_remove(this._workspaceMenuRestoreId);
+                this._workspaceMenuRestoreId = 0;
+            }
+            if (this._workspaceMenuPendingRestore) {
+                try {
+                    this._workspaceMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._workspaceMenuPendingRestore = null;
             }
 
             if (this._workspacePreviewUpdateId) {
