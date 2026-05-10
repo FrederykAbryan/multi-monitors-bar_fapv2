@@ -17,6 +17,7 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ANIMATION_TIME } from 'resource:///org/gnome/shell/ui/overview.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -58,6 +59,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._thumbnailsSliderPositionId = null;
 		this._relayoutId = null;
 		this._prepareForSleepId = null;
+		this._resumeFromSleepId = null;
 	}
 
 	_showThumbnailsSlider() {
@@ -211,6 +213,8 @@ export default class MultiMonitorsExtension extends Extension {
 				(mgr, aboutToSuspend) => {
 					if (aboutToSuspend)
 						this._onPrepareForSleep();
+					else
+						this._onResumeFromSleep();
 				});
 		} catch (e) {
 			log('[MultiMonitors] Could not connect prepare-for-sleep: ' + e);
@@ -249,14 +253,63 @@ export default class MultiMonitorsExtension extends Extension {
 	 */
 	_onPrepareForSleep() {
 		log('[MultiMonitors] _onPrepareForSleep: cleaning up before suspend');
+		if (this._resumeFromSleepId) {
+			GLib.source_remove(this._resumeFromSleepId);
+			this._resumeFromSleepId = null;
+		}
+
 		if (mmLayoutManager) {
 			mmLayoutManager.hidePanel();
-			mmLayoutManager = null;
 		}
 		this._hideThumbnailsSlider();
 		this._mmMonitors = 0;
 		this._primaryIndex = -1;
 		mmPanel.length = 0;
+	}
+
+	/**
+	 * Called after wake.  Rebuild secondary-monitor chrome after GNOME Shell has
+	 * restored monitor/workarea state, otherwise mirrored indicators can keep
+	 * stale source/menu references from before suspend.
+	 */
+	_onResumeFromSleep() {
+		log('[MultiMonitors] _onResumeFromSleep: scheduling rebuild after wake');
+
+		if (this._resumeFromSleepId)
+			GLib.source_remove(this._resumeFromSleepId);
+
+		this._resumeFromSleepId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+			this._resumeFromSleepId = null;
+
+			if (!this._settings)
+				return GLib.SOURCE_REMOVE;
+
+			if (!mmLayoutManager) {
+				mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
+
+				if (this._showPanelId) {
+					this._settings.disconnect(this._showPanelId);
+					this._showPanelId = null;
+				}
+				this._showPanelId = this._settings.connect('changed::' + MMLayout.SHOW_PANEL_ID,
+					mmLayoutManager.showPanel.bind(mmLayoutManager));
+			} else {
+				mmLayoutManager.hidePanel();
+			}
+
+			mmPanel.length = 0;
+			MMLayout.setMMPanelArrayRef(mmPanel);
+			MMPanel.setMMPanelArrayRef(mmPanel);
+			MMOverview.setMMPanelArrayRef(mmPanel);
+
+			mmLayoutManager.showPanel();
+			this._hideThumbnailsSlider();
+			this._mmMonitors = 0;
+			this._primaryIndex = -1;
+			this._relayout();
+
+			return GLib.SOURCE_REMOVE;
+		});
 	}
 
 	disable() {
@@ -271,6 +324,11 @@ export default class MultiMonitorsExtension extends Extension {
 				// Ignore
 			}
 			this._prepareForSleepId = null;
+		}
+
+		if (this._resumeFromSleepId) {
+			GLib.source_remove(this._resumeFromSleepId);
+			this._resumeFromSleepId = null;
 		}
 
 		if (this._relayoutId) {
