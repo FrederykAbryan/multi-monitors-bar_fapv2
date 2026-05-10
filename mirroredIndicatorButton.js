@@ -24,6 +24,44 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
+const MMWorkspacePreviewLayout = GObject.registerClass(
+    class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
+        vfunc_get_preferred_width() {
+            return [0, 0];
+        }
+
+        vfunc_get_preferred_height() {
+            return [18, 18];
+        }
+
+        vfunc_allocate(container, box) {
+            const monitorIndex = Main.layoutManager.findIndexForActor(container);
+            const workArea = Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
+            if (!workArea)
+                return;
+
+            const hscale = box.get_width() / workArea.width;
+            const vscale = box.get_height() / workArea.height;
+            const children = container.get_children ? container.get_children() : [];
+
+            for (const child of children) {
+                if (!child.metaWindow)
+                    continue;
+
+                const childBox = new Clutter.ActorBox();
+                const frameRect = child.metaWindow.get_frame_rect();
+
+                childBox.set_size(
+                    Math.max(1, Math.round(Math.min(frameRect.width, workArea.width) * hscale)),
+                    Math.max(1, Math.round(Math.min(frameRect.height, workArea.height) * vscale)));
+                childBox.set_origin(
+                    Math.round((frameRect.x - workArea.x) * hscale),
+                    Math.round((frameRect.y - workArea.y) * vscale));
+                child.allocate(childBox);
+            }
+        }
+    });
+
 // Lightweight mirrored indicator that visually clones an existing indicator
 // (e.g., Vitals) from the main panel and opens its menu anchored to this button.
 export const MirroredIndicatorButton = GObject.registerClass(
@@ -199,9 +237,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // uses real child actors for switching workspaces, so a plain
                 // Clutter.Clone looks correct but cannot receive those clicks.
                 if (this._role === 'workspace-indicator') {
+                    this.add_style_class_name('workspace-indicator');
                     this.add_style_class_name('mm-workspace-indicator');
                     this.y_expand = true;
                     this.y_align = Clutter.ActorAlign.FILL;
+
+                    if (this._sourceIndicator?._thumbnails?.visible) {
+                        this.add_style_class_name('previews');
+                        this._createWorkspacePreviewMirror();
+                        return;
+                    }
+
+                    this.add_style_class_name('name-label');
 
                     const container = new St.Widget({
                         layout_manager: new Clutter.BinLayout(),
@@ -284,6 +331,182 @@ export const MirroredIndicatorButton = GObject.registerClass(
             } catch (e) {
                 console.debug('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
                 this._createFallbackIcon();
+            }
+        }
+
+        _createWorkspacePreviewMirror() {
+            this.set_height(30);
+
+            this._workspacePreviewBox = new St.BoxLayout({
+                style_class: 'workspaces-box',
+                y_expand: true,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: false,
+            });
+
+            this.add_child(this._workspacePreviewBox);
+            this._connectWorkspacePreviewSignals();
+            this._updateWorkspacePreviewMirror();
+        }
+
+        _connectWorkspacePreviewSignals() {
+            if (this._workspacePreviewSignalIds)
+                return;
+
+            this._workspacePreviewSignalIds = [];
+
+            const schedule = this._scheduleWorkspacePreviewUpdate.bind(this);
+            const connectSignal = (object, signal) => {
+                if (!object)
+                    return;
+
+                try {
+                    const id = object.connect(signal, schedule);
+                    this._workspacePreviewSignalIds.push({ object, id });
+                } catch (_e) {
+                    // Shell signal availability differs between GNOME versions.
+                }
+            };
+
+            connectSignal(global.workspace_manager, 'active-workspace-changed');
+            connectSignal(global.workspace_manager, 'workspace-switched');
+            connectSignal(global.workspace_manager, 'notify::n-workspaces');
+            connectSignal(global.display, 'notify::focus-window');
+            connectSignal(global.display, 'restacked');
+            connectSignal(global.display, 'window-created');
+            connectSignal(global.display, 'window-entered-monitor');
+            connectSignal(global.display, 'window-left-monitor');
+        }
+
+        _scheduleWorkspacePreviewUpdate() {
+            if (this._workspacePreviewUpdateId)
+                return;
+
+            this._workspacePreviewUpdateId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                this._workspacePreviewUpdateId = 0;
+                this._updateWorkspacePreviewMirror();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        _disconnectWorkspaceWindowSignals() {
+            if (!this._workspacePreviewWindowSignalIds)
+                return;
+
+            for (const { object, id } of this._workspacePreviewWindowSignalIds) {
+                try {
+                    object.disconnect(id);
+                } catch (_e) {
+                }
+            }
+
+            this._workspacePreviewWindowSignalIds = [];
+        }
+
+        _connectWorkspaceWindowSignal(window, signal) {
+            if (!this._workspacePreviewWindowSignalIds)
+                this._workspacePreviewWindowSignalIds = [];
+
+            try {
+                const id = window.connect(signal, this._scheduleWorkspacePreviewUpdate.bind(this));
+                this._workspacePreviewWindowSignalIds.push({ object: window, id });
+            } catch (_e) {
+            }
+        }
+
+        _updateWorkspacePreviewMirror() {
+            if (!this._workspacePreviewBox)
+                return;
+
+            this._disconnectWorkspaceWindowSignals();
+            this._workspacePreviewBox.remove_all_children();
+            this._workspacePreviewButtons = [];
+
+            const workspaceManager = global.workspace_manager;
+            const nWorkspaces = workspaceManager.n_workspaces;
+            const activeIndex = workspaceManager.get_active_workspace_index();
+
+            for (let i = 0; i < nWorkspaces; i++) {
+                const thumbnail = this._createWorkspacePreviewThumbnail(i, i === activeIndex);
+                this._workspacePreviewButtons.push(thumbnail);
+                this._workspacePreviewBox.add_child(thumbnail);
+            }
+        }
+
+        _createWorkspacePreviewThumbnail(index, active) {
+            const thumbnail = new St.Button({
+                reactive: false,
+                y_expand: true,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: false,
+            });
+            thumbnail.set_size(62, 30);
+            thumbnail._mmWorkspaceIndex = index;
+
+            const box = new St.BoxLayout({
+                style_class: 'workspace-box',
+                y_expand: true,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: false,
+                orientation: Clutter.Orientation.VERTICAL,
+            });
+            thumbnail.set_child(box);
+
+            const previewLayer = new Clutter.Actor({
+                layout_manager: new MMWorkspacePreviewLayout(),
+                clip_to_allocation: true,
+                x_expand: true,
+                y_expand: true,
+                x_align: Clutter.ActorAlign.FILL,
+                y_align: Clutter.ActorAlign.FILL,
+            });
+
+            const preview = new St.Bin({
+                style_class: active ? 'workspace active' : 'workspace',
+                child: previewLayer,
+                y_expand: true,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: false,
+            });
+            preview.set_size(52, 18);
+
+            box.add_child(preview);
+            this._populateWorkspacePreviewLayer(previewLayer, index, active);
+
+            return thumbnail;
+        }
+
+        _populateWorkspacePreviewLayer(previewLayer, workspaceIndex, activeWorkspace) {
+            const monitorIndex = this._panel?.monitorIndex ?? Main.layoutManager.primaryIndex;
+            const workspace = global.workspace_manager.get_workspace_by_index(workspaceIndex);
+            const workArea = Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
+            if (!workspace || !workArea)
+                return;
+
+            const windows = workspace.list_windows();
+
+            for (const window of windows) {
+                if (window.skip_taskbar || window.minimized)
+                    continue;
+                if (window.get_monitor() !== monitorIndex)
+                    continue;
+
+                const frameRect = window.get_frame_rect();
+                if (frameRect.overlap && !frameRect.overlap(workArea))
+                    continue;
+
+                const preview = new St.Widget({
+                    style_class: activeWorkspace
+                        ? 'workspace-indicator-window-preview active'
+                        : 'workspace-indicator-window-preview',
+                });
+                preview.metaWindow = window;
+                previewLayer.add_child(preview);
+
+                this._connectWorkspaceWindowSignal(window, 'size-changed');
+                this._connectWorkspaceWindowSignal(window, 'position-changed');
+                this._connectWorkspaceWindowSignal(window, 'notify::minimized');
+                this._connectWorkspaceWindowSignal(window, 'notify::skip-taskbar');
             }
         }
 
@@ -1354,6 +1577,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _activateWorkspacePreviewAt(event) {
+            if (this._workspacePreviewButtons?.length > 0) {
+                const [stageX, stageY] = event.get_coords();
+
+                for (const previewButton of this._workspacePreviewButtons) {
+                    const [buttonX, buttonY] = previewButton.get_transformed_position();
+                    const [buttonWidth, buttonHeight] = previewButton.get_transformed_size();
+
+                    if (stageX >= buttonX && stageX <= buttonX + buttonWidth &&
+                        stageY >= buttonY && stageY <= buttonY + buttonHeight) {
+                        const workspace = global.workspace_manager.get_workspace_by_index(
+                            previewButton._mmWorkspaceIndex);
+                        workspace?.activate(event.get_time());
+                        return true;
+                    }
+                }
+            }
+
             const thumbnailsBox = this._sourceIndicator?._thumbnails?._thumbnailsBox;
             const sourceChild = this._sourceIndicator?.get_first_child?.();
             if (!thumbnailsBox || !sourceChild || !event?.get_coords)
@@ -1890,6 +2130,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 GLib.source_remove(this._sizeDebounceId);
                 this._sizeDebounceId = null;
             }
+
+            if (this._workspacePreviewUpdateId) {
+                GLib.source_remove(this._workspacePreviewUpdateId);
+                this._workspacePreviewUpdateId = 0;
+            }
+
+            if (this._workspacePreviewSignalIds) {
+                for (const { object, id } of this._workspacePreviewSignalIds) {
+                    try {
+                        object.disconnect(id);
+                    } catch (_e) {
+                    }
+                }
+                this._workspacePreviewSignalIds = null;
+            }
+
+            this._disconnectWorkspaceWindowSignals();
 
             if (this._allocationCloneTimeouts) {
                 for (const timeoutId of this._allocationCloneTimeouts) {

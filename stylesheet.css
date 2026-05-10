@@ -114,3 +114,51 @@
     min-height: 0;
     padding: 0;
 }
+
+/* Fallback styling for locally-rendered Workspace Indicator previews on
+   secondary panels. These match GNOME's Workspace Indicator classes so the
+   official extension stylesheet still wins when it is loaded. */
+.mm-workspace-indicator.previews:active {
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
+.mm-workspace-indicator {
+    min-height: 30px;
+}
+
+.mm-workspace-indicator .workspaces-box {
+    spacing: 3px;
+    min-height: 30px;
+}
+
+.mm-workspace-indicator .workspace-box {
+    padding-top: 5px;
+    padding-bottom: 5px;
+    min-height: 30px;
+}
+
+.mm-workspace-indicator .workspace {
+    width: 52px;
+    min-height: 18px;
+    height: 18px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background-color: #3f3f3f;
+}
+
+.mm-workspace-indicator .workspace.active {
+    border-color: #fff;
+}
+
+.workspace-indicator-window-preview {
+    background-color: #bebebe;
+    border: 1px solid #828282;
+    border-radius: 1px;
+    min-height: 1px;
+    min-width: 1px;
+}
+
+.workspace-indicator-window-preview.active {
+    background-color: #d4d4d4;
+}
