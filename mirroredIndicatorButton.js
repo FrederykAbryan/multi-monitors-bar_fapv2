@@ -360,14 +360,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 typeof sourceMenu.activeName !== 'string')
                 return false;
 
-            const statusBox = new St.BoxLayout({
-                y_align: Clutter.ActorAlign.CENTER,
+            // Match the source extension's actor tree exactly: an outer
+            // BinLayout wrapper around a BoxLayout that holds the label and
+            // dropdown icon. Without the wrapper the BoxLayout is added as a
+            // direct child of the panel button, which lets x_expand on the
+            // label pull the icon to the right and create a visible gap.
+            const wrapper = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                x_expand: true,
                 y_expand: true,
             });
 
+            const statusBox = new St.BoxLayout();
+
             const label = new St.Label({
                 style_class: 'status-label',
-                x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
                 text: sourceMenu.activeName,
             });
@@ -378,7 +385,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 style_class: 'system-status-icon',
             }));
 
-            this.add_child(statusBox);
+            wrapper.add_child(statusBox);
+            this.add_child(wrapper);
+
             this._workspaceNameLabel = label;
             this._workspaceNameStatusBox = statusBox;
 
@@ -1323,12 +1332,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Create static icon copies for problematic extensions (Tiling Shell, etc.)
             // These are immune to source changes during fullscreen
             const isClipboard = this._isClipboardIndicator();
+
+            // Only inherit the source's style class when it's a container
+            // (e.g., Vitals' BoxLayout with 'vitals-panel-menu' spacing).
+            // For sources that are themselves an St.Icon (Tiling Shell adds an
+            // icon directly under PanelMenu.Button), the class is icon-only
+            // (e.g. 'system-status-icon indicator-icon') and applying it to
+            // the wrapping BoxLayout double-pads the mirror — both the
+            // container and the inner icon copy get the system-status-icon
+            // padding, so the mirror sits noticeably wider than the source.
+            const sourceContainerClass = source instanceof St.BoxLayout
+                ? source.get_style_class_name()
+                : null;
+
             const container = new St.BoxLayout({
-                // Preserve source classes (e.g., vitals-panel-menu) so mirrored
-                // indicators keep extension-specific spacing on secondary monitors.
                 style_class: isClipboard
                     ? 'panel-status-menu-box mm-static-indicator-copy mm-clipboard-indicator-copy'
-                    : `${source.get_style_class_name() || 'panel-status-menu-box'} mm-static-indicator-copy`,
+                    : `${sourceContainerClass || 'panel-status-menu-box'} mm-static-indicator-copy`,
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: false,
@@ -1498,12 +1518,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _getSourceIconSize(icon) {
+            // Honor an explicit icon_size set by the source. If the source
+            // leaves it as the default (-1 / 0), return -1 so the iconCopy
+            // also uses the theme default — falling back to the source's
+            // allocation here would size the icon to the actor box (icon
+            // graphic + padding), which renders the mirror's icon larger
+            // than the source.
             if (icon.icon_size && icon.icon_size > 0)
                 return icon.icon_size;
 
-            const [width, height] = this._getActorAllocationSize(icon);
-            const size = Math.min(width, height);
-            return size > 0 ? size : 16;
+            return -1;
         }
 
         _syncStaticCopyContainerSize(container, source) {
