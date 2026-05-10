@@ -195,7 +195,26 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     return;
                 }
 
-                // 2. Date Menu (Try optimizing with Label copy, fallback to simple clone)
+                // 2. Official Workspace Indicator. Its embedded preview mode
+                // uses real child actors for switching workspaces, so a plain
+                // Clutter.Clone looks correct but cannot receive those clicks.
+                if (this._role === 'workspace-indicator') {
+                    this.add_style_class_name('mm-workspace-indicator');
+                    this.y_expand = true;
+                    this.y_align = Clutter.ActorAlign.FILL;
+
+                    const container = new St.Widget({
+                        layout_manager: new Clutter.BinLayout(),
+                        y_align: Clutter.ActorAlign.CENTER,
+                        x_align: Clutter.ActorAlign.CENTER,
+                    });
+
+                    this._createAllocationMatchedClone(container, sourceChild);
+                    this.add_child(container);
+                    return;
+                }
+
+                // 3. Date Menu (Try optimizing with Label copy, fallback to simple clone)
                 if (this._role === 'dateMenu' && this._sourceIndicator._clockDisplay) {
                     // Create clock label directly - no extra container
                     const clockDisplay = new St.Label({
@@ -233,7 +252,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     return;
                 }
 
-                // 3. Favorites Menu (Special handling)
+                // 4. Favorites Menu (Special handling)
                 if (this._role === 'favorites-menu' || (this._role && (this._role.toLowerCase().includes('favorites') || this._role.toLowerCase().includes('favorite')))) {
                     this.add_style_class_name('mm-favorites-menu');
                     this.y_expand = true;
@@ -248,7 +267,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     return;
                 }
 
-                // 4. Generic Handling
+                // 5. Generic Handling
                 if (sourceChild instanceof St.BoxLayout) {
                     // Container is FILL to get full-height hover, but clone inside is centered
                     const container = new St.BoxLayout({
@@ -895,10 +914,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _createStaticIconCopy(parent, source) {
             // Create static icon copies for problematic extensions (Tiling Shell, etc.)
             // These are immune to source changes during fullscreen
+            const isClipboard = this._isClipboardIndicator();
             const container = new St.BoxLayout({
                 // Preserve source classes (e.g., vitals-panel-menu) so mirrored
                 // indicators keep extension-specific spacing on secondary monitors.
-                style_class: `${source.get_style_class_name() || 'panel-status-menu-box'} mm-static-indicator-copy`,
+                style_class: isClipboard
+                    ? 'panel-status-menu-box mm-static-indicator-copy mm-clipboard-indicator-copy'
+                    : `${source.get_style_class_name() || 'panel-status-menu-box'} mm-static-indicator-copy`,
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: false,
@@ -919,6 +941,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _copyIconsFromSource(container, source) {
             // Remove existing children
             container.remove_all_children();
+
+            if (this._isClipboardIndicator()) {
+                this._copyClipboardIconFromSource(container, source);
+                return;
+            }
 
             // Preserve one level of grouping for indicators like Vitals where
             // spacing is defined on each child metric box.
@@ -1036,6 +1063,32 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
         }
 
+        _copyClipboardIconFromSource(container, source) {
+            const icon = this._sourceIndicator?.icon || this._findIconInActor(source);
+            if (!icon) {
+                const fallbackIcon = new St.Icon({
+                    icon_name: 'edit-paste-symbolic',
+                    style_class: 'system-status-icon',
+                    icon_size: 16,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                container.add_child(fallbackIcon);
+                return;
+            }
+
+            const iconCopy = new St.Icon({
+                gicon: icon.gicon,
+                icon_name: icon.icon_name || 'edit-paste-symbolic',
+                icon_size: Math.min(this._getSourceIconSize(icon), 16),
+                style_class: icon.get_style_class_name?.() || 'system-status-icon',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                y_expand: false,
+            });
+            container.add_child(iconCopy);
+        }
+
         _getSourceIconSize(icon) {
             if (icon.icon_size && icon.icon_size > 0)
                 return icon.icon_size;
@@ -1047,6 +1100,17 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _syncStaticCopyContainerSize(container, source) {
             const syncSize = () => {
+                if (this._isClipboardIndicator()) {
+                    const [minWidth, natWidth] = container.get_preferred_width(-1);
+                    const [, natHeight] = container.get_preferred_height(-1);
+                    const width = Math.round(natWidth || minWidth);
+                    const height = Math.round(natHeight);
+
+                    if (width > 0 && height > 0)
+                        container.set_size(width, height);
+                    return;
+                }
+
                 const [width, height] = this._getActorAllocationSize(source);
                 if (width > 0 && height > 0)
                     container.set_size(width, height);
@@ -1181,21 +1245,55 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         vfunc_button_press_event(buttonEvent) {
-            this._onButtonPress();
-            return Clutter.EVENT_STOP;
+            return this._onButtonPress(buttonEvent);
+        }
+
+        vfunc_scroll_event(scrollEvent) {
+            if (this._role === 'workspace-indicator') {
+                Main.wm.handleWorkspaceScroll(scrollEvent);
+                return Clutter.EVENT_STOP;
+            }
+
+            if (super.vfunc_scroll_event)
+                return super.vfunc_scroll_event(scrollEvent);
+
+            return Clutter.EVENT_PROPAGATE;
         }
 
         vfunc_event(event) {
             if (event.type() === Clutter.EventType.BUTTON_PRESS) {
                 return this.vfunc_button_press_event(event);
             }
+            if (event.type() === Clutter.EventType.SCROLL) {
+                return this.vfunc_scroll_event(event);
+            }
             return super.vfunc_event(event);
         }
 
-        _onButtonPress() {
+        _onButtonPress(event = null) {
             if (this._role === 'activities') {
                 Main.overview.toggle();
                 return Clutter.EVENT_STOP;
+            }
+
+            if (this._role === 'workspace-indicator') {
+                if (event?.get_button?.() === Clutter.BUTTON_SECONDARY &&
+                    this._sourceIndicator?.menu) {
+                    return this._openMirroredMenu();
+                }
+
+                if (this._sourceIndicator?._thumbnails?.visible &&
+                    event?.get_button?.() === Clutter.BUTTON_PRIMARY &&
+                    this._activateWorkspacePreviewAt(event)) {
+                    return Clutter.EVENT_STOP;
+                }
+
+                if (this._sourceIndicator?.menu)
+                    return this._openMirroredMenu();
+            }
+
+            if (this._isClipboardIndicator() && this._sourceIndicator?.menu) {
+                return this._openClipboardIndicatorMenu();
             }
 
             // Check for standard menu first
@@ -1243,6 +1341,57 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             return Clutter.EVENT_PROPAGATE;
+        }
+
+        _isClipboardIndicator() {
+            const role = this._role ? this._role.toLowerCase() : '';
+            if (role.includes('clipboard') || role.includes('clipman'))
+                return true;
+
+            return !!(this._sourceIndicator?.registry &&
+                this._sourceIndicator?.clipItemsRadioGroup &&
+                typeof this._sourceIndicator?._toggleMenu === 'function');
+        }
+
+        _activateWorkspacePreviewAt(event) {
+            const thumbnailsBox = this._sourceIndicator?._thumbnails?._thumbnailsBox;
+            const sourceChild = this._sourceIndicator?.get_first_child?.();
+            if (!thumbnailsBox || !sourceChild || !event?.get_coords)
+                return false;
+
+            const previews = thumbnailsBox.get_children ? thumbnailsBox.get_children() : [];
+            if (previews.length === 0)
+                return false;
+
+            const [stageX] = event.get_coords();
+            const [mirrorX] = this.get_transformed_position();
+            const [mirrorWidth] = this.get_transformed_size();
+            const [sourceX] = sourceChild.get_transformed_position();
+            const [sourceWidth] = sourceChild.get_transformed_size();
+
+            if (mirrorWidth <= 0 || sourceWidth <= 0)
+                return false;
+
+            const sourceLocalX = ((stageX - mirrorX) / mirrorWidth) * sourceWidth;
+
+            for (let i = 0; i < previews.length; i++) {
+                const preview = previews[i];
+                if (!preview.visible)
+                    continue;
+
+                const [previewX] = preview.get_transformed_position();
+                const [previewWidth] = preview.get_transformed_size();
+                const previewLocalX = previewX - sourceX;
+
+                if (sourceLocalX >= previewLocalX &&
+                    sourceLocalX <= previewLocalX + previewWidth) {
+                    const workspace = global.workspace_manager.get_workspace_by_index(i);
+                    workspace?.activate(event.get_time());
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         _forwardClickToSource() {
@@ -1369,6 +1518,70 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     return GLib.SOURCE_REMOVE;
                 });
             }
+
+            return Clutter.EVENT_STOP;
+        }
+
+        _openClipboardIndicatorMenu() {
+            const menu = this._sourceIndicator.menu;
+            if (!menu || menu.isOpen === undefined)
+                return Clutter.EVENT_PROPAGATE;
+
+            if (menu.isOpen) {
+                menu.close();
+                return Clutter.EVENT_STOP;
+            }
+
+            const monitorIndex = Main.layoutManager.findIndexForActor(this);
+            const originalSourceActor = menu.sourceActor;
+            const originalBoxPointer = menu.box?._sourceActor;
+            const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
+            const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
+            let menuBoxState = null;
+            let openStateId = 0;
+
+            this._preventMainPanelActiveState(originalAddPseudoClass);
+            this.add_style_pseudo_class('active');
+            menu.sourceActor = this;
+
+            if (menu.box)
+                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+
+            const restore = () => {
+                this._restoreMenuState(menu, originalSourceActor, originalBoxPointer,
+                    originalSetActive, originalAddPseudoClass, menuBoxState);
+
+                if (openStateId) {
+                    try {
+                        menu.disconnect(openStateId);
+                    } catch (_e) {
+                    }
+                    openStateId = 0;
+                }
+            };
+
+            openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                if (isOpen) {
+                    this.add_style_pseudo_class('active');
+                    return;
+                }
+
+                restore();
+            });
+
+            try {
+                if (typeof this._sourceIndicator._toggleMenu === 'function')
+                    this._sourceIndicator._toggleMenu();
+                else
+                    menu.toggle();
+            } catch (e) {
+                restore();
+                console.debug('[Multi Monitors Add-On] Failed to open clipboard indicator menu:', String(e));
+                return Clutter.EVENT_STOP;
+            }
+
+            if (!menu.isOpen)
+                restore();
 
             return Clutter.EVENT_STOP;
         }

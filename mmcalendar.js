@@ -606,8 +606,17 @@ var MultiMonitorsMessagesIndicator = (() => {
 })();
 
 var MultiMonitorsDateMenuButton = (() => {
-    let MultiMonitorsDateMenuButton = class MultiMonitorsDateMenuButton extends PanelMenu.Button {
-        _init() {
+    const BaseDateMenuButton = DateMenu.DateMenuButton ?? PanelMenu.Button;
+
+    let MultiMonitorsDateMenuButton = class MultiMonitorsDateMenuButton extends BaseDateMenuButton {
+        _init(panel = null) {
+            if (DateMenu.DateMenuButton) {
+                super._init();
+                this._panel = panel;
+                this._syncMultiMonitorPanelStyle();
+                return;
+            }
+
             let hbox;
             let vbox;
 
@@ -770,11 +779,39 @@ var MultiMonitorsDateMenuButton = (() => {
 
             this._sessionModeUpdatedId = MainRef.sessionMode.connect('updated', this._sessionUpdated.bind(this));
             this._sessionUpdated();
+            this._panel = panel;
+            this._syncMultiMonitorPanelStyle();
+        }
+
+        _syncMultiMonitorPanelStyle() {
+            this.y_expand = true;
+            this.y_align = Clutter.ActorAlign.FILL;
+
+            if (this.container) {
+                this.container.y_expand = true;
+                this.container.y_align = Clutter.ActorAlign.FILL;
+            }
+
+            for (const item of [this._eventsItem, this._clocksItem, this._weatherItem]) {
+                if (!item || item._mmCloseDateMenuId)
+                    continue;
+
+                item._mmCloseDateMenuId = item.connect('clicked', () => {
+                    this.menu?.close();
+                });
+            }
         }
 
         destroy() {
-            MainRef.sessionMode.disconnect(this._sessionModeUpdatedId);
-            this._clock.disconnect(this._clockNotifyTimezoneId);
+            if (DateMenu.DateMenuButton) {
+                super.destroy();
+                return;
+            }
+
+            if (this._sessionModeUpdatedId)
+                MainRef.sessionMode.disconnect(this._sessionModeUpdatedId);
+            if (this._clockNotifyTimezoneId)
+                this._clock.disconnect(this._clockNotifyTimezoneId);
 
             // Clean up world clocks and weather if they were created
             if (this._clocksItem) {
@@ -787,14 +824,49 @@ var MultiMonitorsDateMenuButton = (() => {
             super.destroy();
         }
 
+        _onOpenStateChanged(menu, open) {
+            if (open)
+                this.add_style_pseudo_class('active');
+            else
+                this.remove_style_pseudo_class('active');
+
+            const layoutManager = MainRef?.layoutManager;
+            if (!layoutManager || !this.menu?.actor)
+                return;
+
+            let monitorIndex = this._panel?.monitorIndex;
+            try {
+                const actorMonitor = layoutManager.findIndexForActor?.(this);
+                if (actorMonitor !== undefined && actorMonitor !== null && actorMonitor >= 0)
+                    monitorIndex = actorMonitor;
+            } catch (_e) {
+            }
+
+            if (monitorIndex === undefined || monitorIndex === null || monitorIndex < 0)
+                monitorIndex = layoutManager.primaryIndex;
+
+            const workArea = layoutManager.getWorkAreaForMonitor(monitorIndex);
+            const scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+            const verticalMargins = this.menu.actor.margin_top + this.menu.actor.margin_bottom;
+            const maxHeight = Math.round((workArea.height - verticalMargins) / scaleFactor);
+
+            this.menu.actor.style = `max-height: ${maxHeight}px;`;
+        }
+
         // Fallback methods if not copied from upstream
         _updateTimeZone() {
+            if (DateMenu.DateMenuButton && super._updateTimeZone)
+                return super._updateTimeZone();
+
             // Fallback: no-op if upstream method not available
             if (!this._calendar) return;
             // The calendar will update its timezone automatically
         }
 
         _sessionUpdated() {
+            if (DateMenu.DateMenuButton && super._sessionUpdated)
+                return super._sessionUpdated();
+
             // Fallback: minimal visibility update
             if (!this._displaysSection) return;
             // Update visibility based on session mode if needed

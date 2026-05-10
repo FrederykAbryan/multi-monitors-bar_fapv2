@@ -313,7 +313,7 @@ const MultiMonitorsActivitiesButton = GObject.registerClass(
 const MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS = {
     // activities is now mirrored instead of having its own implementation
     'appMenu': MultiMonitorsAppMenuButton,
-    // dateMenu is now mirrored instead of having its own implementation
+    'dateMenu': MMCalendar.MultiMonitorsDateMenuButton,
 };
 
 const MultiMonitorsPanel = GObject.registerClass(
