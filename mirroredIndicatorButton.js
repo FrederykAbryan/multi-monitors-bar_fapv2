@@ -1576,6 +1576,15 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 typeof this._sourceIndicator?._toggleMenu === 'function');
         }
 
+        _isClipboardMenuReady() {
+            if (!this._isClipboardIndicator())
+                return true;
+
+            return !!(this._sourceIndicator?.searchEntry ||
+                this._sourceIndicator?.privateModeMenuItem ||
+                this._sourceIndicator?.emptyStateSection);
+        }
+
         _activateWorkspacePreviewAt(event) {
             if (this._workspacePreviewButtons?.length > 0) {
                 const [stageX, stageY] = event.get_coords();
@@ -1767,29 +1776,73 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (!menu || menu.isOpen === undefined)
                 return Clutter.EVENT_PROPAGATE;
 
+            if (!this._isClipboardMenuReady()) {
+                if (!this._clipboardOpenRetries)
+                    this._clipboardOpenRetries = 0;
+
+                if (this._clipboardOpenRetries < 20) {
+                    this._clipboardOpenRetries++;
+                    this.add_style_pseudo_class('active');
+                    if (this._clipboardOpenRetryId)
+                        GLib.source_remove(this._clipboardOpenRetryId);
+                    this._clipboardOpenRetryId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                        this._clipboardOpenRetryId = 0;
+                        this._openClipboardIndicatorMenu();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                    return Clutter.EVENT_STOP;
+                }
+            }
+
+            this._clipboardOpenRetries = 0;
+            if (this._clipboardOpenRetryId) {
+                GLib.source_remove(this._clipboardOpenRetryId);
+                this._clipboardOpenRetryId = 0;
+            }
+
             if (menu.isOpen) {
                 menu.close();
                 return Clutter.EVENT_STOP;
             }
 
-            const monitorIndex = Main.layoutManager.findIndexForActor(this);
             const originalSourceActor = menu.sourceActor;
             const originalBoxPointer = menu.box?._sourceActor;
-            const originalSetActive = this._sourceIndicator.setActive?.bind(this._sourceIndicator);
-            const originalAddPseudoClass = this._sourceIndicator.add_style_pseudo_class?.bind(this._sourceIndicator);
-            let menuBoxState = null;
             let openStateId = 0;
+            const sourceActorState = [];
 
-            this._preventMainPanelActiveState(originalAddPseudoClass);
             this.add_style_pseudo_class('active');
             menu.sourceActor = this;
 
-            if (menu.box)
-                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+            for (const actor of [menu.box, menu._boxPointer]) {
+                if (!actor)
+                    continue;
+
+                sourceActorState.push({
+                    actor,
+                    sourceActor: actor._sourceActor,
+                    sourceAllocation: actor._sourceAllocation,
+                });
+                actor._sourceActor = this;
+                actor._sourceAllocation = null;
+            }
 
             const restore = () => {
-                this._restoreMenuState(menu, originalSourceActor, originalBoxPointer,
-                    originalSetActive, originalAddPseudoClass, menuBoxState);
+                menu.sourceActor = originalSourceActor;
+                if (menu.box)
+                    menu.box._sourceActor = originalBoxPointer;
+
+                for (const state of sourceActorState) {
+                    state.actor._sourceActor = state.sourceActor;
+                    state.actor._sourceAllocation = state.sourceAllocation;
+                }
+
+                this.remove_style_pseudo_class('active');
+                this.remove_style_pseudo_class('checked');
+
+                if (this._sourceIndicator?.remove_style_pseudo_class) {
+                    this._sourceIndicator.remove_style_pseudo_class('active');
+                    this._sourceIndicator.remove_style_pseudo_class('checked');
+                }
 
                 if (openStateId) {
                     try {
@@ -2094,6 +2147,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._arcMenuTimeoutId) {
                 GLib.source_remove(this._arcMenuTimeoutId);
                 this._arcMenuTimeoutId = null;
+            }
+
+            if (this._clipboardOpenRetryId) {
+                GLib.source_remove(this._clipboardOpenRetryId);
+                this._clipboardOpenRetryId = null;
             }
 
             if (this._lockSizeTimeoutId) {
