@@ -1585,6 +1585,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._sourceIndicator?.emptyStateSection);
         }
 
+        _clearSourceIndicatorActiveState() {
+            for (const actor of [this._sourceIndicator, this._sourceIndicator?.container]) {
+                if (!actor)
+                    continue;
+
+                actor.remove_style_pseudo_class?.('active');
+                actor.remove_style_pseudo_class?.('checked');
+            }
+        }
+
         _activateWorkspacePreviewAt(event) {
             if (this._workspacePreviewButtons?.length > 0) {
                 const [stageX, stageY] = event.get_coords();
@@ -1839,9 +1849,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this.remove_style_pseudo_class('active');
                 this.remove_style_pseudo_class('checked');
 
-                if (this._sourceIndicator?.remove_style_pseudo_class) {
-                    this._sourceIndicator.remove_style_pseudo_class('active');
-                    this._sourceIndicator.remove_style_pseudo_class('checked');
+                this._clearSourceIndicatorActiveState();
+                if (this._clipboardActiveCleanupId) {
+                    GLib.source_remove(this._clipboardActiveCleanupId);
+                    this._clipboardActiveCleanupId = 0;
                 }
 
                 if (openStateId) {
@@ -1856,6 +1867,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
             openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
                 if (isOpen) {
                     this.add_style_pseudo_class('active');
+                    this._clearSourceIndicatorActiveState();
+                    if (this._clipboardActiveCleanupId)
+                        GLib.source_remove(this._clipboardActiveCleanupId);
+                    this._clipboardActiveCleanupId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                        this._clearSourceIndicatorActiveState();
+                        this._clipboardActiveCleanupId = 0;
+                        return GLib.SOURCE_REMOVE;
+                    });
                     return;
                 }
 
@@ -2152,6 +2171,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._clipboardOpenRetryId) {
                 GLib.source_remove(this._clipboardOpenRetryId);
                 this._clipboardOpenRetryId = null;
+            }
+
+            if (this._clipboardActiveCleanupId) {
+                GLib.source_remove(this._clipboardActiveCleanupId);
+                this._clipboardActiveCleanupId = null;
             }
 
             if (this._lockSizeTimeoutId) {
