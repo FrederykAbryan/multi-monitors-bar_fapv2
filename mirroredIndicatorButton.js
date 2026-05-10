@@ -336,6 +336,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.add_style_class_name('name-label');
             this._workspaceIndicatorMode = 'name-label';
 
+            // Fast path: the GNOME Workspace Indicator extension exposes the
+            // current workspace name via menu.activeName and emits
+            // 'active-name-changed'. Mirroring the label directly avoids the
+            // Clutter.Clone allocation-discovery lag that otherwise leaves
+            // the mirror empty until the source actor is allocated.
+            if (this._tryCreateWorkspaceNameLabelMirror())
+                return;
+
             const container = new St.Widget({
                 layout_manager: new Clutter.BinLayout(),
                 y_align: Clutter.ActorAlign.CENTER,
@@ -344,6 +352,48 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             this._createAllocationMatchedClone(container, sourceChild);
             this.add_child(container);
+        }
+
+        _tryCreateWorkspaceNameLabelMirror() {
+            const sourceMenu = this._sourceIndicator?.menu;
+            if (!sourceMenu || !this._sourceIndicator._statusLabel ||
+                typeof sourceMenu.activeName !== 'string')
+                return false;
+
+            const statusBox = new St.BoxLayout({
+                y_align: Clutter.ActorAlign.CENTER,
+                y_expand: true,
+            });
+
+            const label = new St.Label({
+                style_class: 'status-label',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                text: sourceMenu.activeName,
+            });
+            statusBox.add_child(label);
+
+            statusBox.add_child(new St.Icon({
+                icon_name: 'pan-down-symbolic',
+                style_class: 'system-status-icon',
+            }));
+
+            this.add_child(statusBox);
+            this._workspaceNameLabel = label;
+            this._workspaceNameStatusBox = statusBox;
+
+            try {
+                this._workspaceNameLabelChangedId = sourceMenu.connect(
+                    'active-name-changed',
+                    () => {
+                        if (this._workspaceNameLabel)
+                            this._workspaceNameLabel.set_text(sourceMenu.activeName ?? '');
+                    });
+            } catch (_e) {
+                this._workspaceNameLabelChangedId = 0;
+            }
+
+            return true;
         }
 
         _registerWorkspaceSourceMenu() {
@@ -419,6 +469,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _clearWorkspaceIndicatorContent() {
+            if (this._workspaceNameLabelChangedId) {
+                try {
+                    this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
+                } catch (_e) {
+                }
+                this._workspaceNameLabelChangedId = 0;
+            }
+            this._workspaceNameLabel = null;
+            this._workspaceNameStatusBox = null;
+
             if (this._workspacePreviewUpdateId) {
                 GLib.source_remove(this._workspacePreviewUpdateId);
                 this._workspacePreviewUpdateId = 0;
@@ -2460,7 +2520,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             keepAnchoredToMirror();
 
             if (menu.box)
-                menuBoxState = this._updateMenuPositioning(menu, monitorIndex);
+                menuBoxState = this._updateMenuPositioningNative(menu);
 
             openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
                 if (isOpen) {
@@ -2630,6 +2690,41 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 menuBox,
                 originalSetPosition,
                 removedConstraints,
+                sourceActorState,
+            };
+        }
+
+        // Variant of _updateMenuPositioning that trusts BoxPointer's built-in
+        // _reposition() (called from vfunc_allocate). The manual setPosition
+        // override above reads get_preferred_width(-1) which returns 0 the
+        // first time a menu is opened from a freshly-built mirror — before
+        // the boxpointer has ever been allocated — so the very first click
+        // appears to do nothing. _reposition handles extended monitors via
+        // Main.layoutManager.findIndexForActor() and uses the box's actual
+        // size at allocate time, so it doesn't have that timing dependency.
+        _updateMenuPositioningNative(menu, sourceActor = this) {
+            const menuBox = menu._boxPointer || menu.box;
+            if (!menuBox)
+                return null;
+
+            const sourceActorState = [];
+            for (const actor of [menu.box, menu._boxPointer]) {
+                if (!actor)
+                    continue;
+
+                sourceActorState.push({
+                    actor,
+                    sourceActor: actor._sourceActor,
+                    sourceAllocation: actor._sourceAllocation,
+                });
+                actor._sourceActor = sourceActor;
+                actor._sourceAllocation = null;
+            }
+
+            menuBox.queue_relayout();
+
+            return {
+                menuBox,
                 sourceActorState,
             };
         }
@@ -2823,6 +2918,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
                 this._workspaceSourceMenuRegistered = null;
             }
+
+            if (this._workspaceNameLabelChangedId) {
+                try {
+                    this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
+                } catch (_e) {
+                }
+                this._workspaceNameLabelChangedId = 0;
+            }
+            this._workspaceNameLabel = null;
+            this._workspaceNameStatusBox = null;
 
             if (this._workspaceMenuRestoreId) {
                 GLib.source_remove(this._workspaceMenuRestoreId);
