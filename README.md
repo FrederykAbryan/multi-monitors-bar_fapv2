@@ -208,10 +208,16 @@ After modifying the source:
    journalctl -f -o cat /usr/bin/gnome-shell
    ```
 
-## ❤️ Donations
+## ❤️ Donations & Sponsors
 
-If you find this extension useful, please consider supporting development:
+If you find this extension useful, please consider supporting development.
 
+### Top Sponsors
+| Sponsor | Type | Link |
+| :--- | :--- | :--- |
+| <img src="https://github.com/MrNerdy42.png" width="32"> **MrNerdy42** | Individual | [GitHub Profile](https://github.com/MrNerdy42) |
+
+### Support the Project
 - **Ko-fi:** [frederykabryan](https://ko-fi.com/frederykabryan)
 - **PayPal:** [multimonitorbar](https://paypal.me/multimonitorbar)
 
