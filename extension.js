@@ -60,6 +60,41 @@ export default class MultiMonitorsExtension extends Extension {
 		this._relayoutId = null;
 		this._prepareForSleepId = null;
 		this._resumeFromSleepId = null;
+		this._mainPanelClipState = null;
+	}
+
+	_applyMainPanelClipping() {
+		if (this._mainPanelClipState)
+			return;
+
+		const actors = [
+			Main.layoutManager?.panelBox,
+			Main.panel,
+			Main.panel?._leftBox,
+			Main.panel?._centerBox,
+			Main.panel?._rightBox,
+		].filter(actor => actor);
+
+		this._mainPanelClipState = actors.map(actor => ({
+			actor,
+			clipToAllocation: actor.clip_to_allocation,
+		}));
+
+		for (const actor of actors)
+			actor.clip_to_allocation = true;
+	}
+
+	_restoreMainPanelClipping() {
+		if (!this._mainPanelClipState)
+			return;
+
+		for (const state of this._mainPanelClipState) {
+			try {
+				state.actor.clip_to_allocation = state.clipToAllocation;
+			} catch (_e) {
+			}
+		}
+		this._mainPanelClipState = null;
 	}
 
 	_showThumbnailsSlider() {
@@ -176,6 +211,7 @@ export default class MultiMonitorsExtension extends Extension {
 
 		this._settings = this.getSettings();
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
+		this._applyMainPanelClipping();
 
 		this._switchOffThumbnailsMuId = this._mu_settings.connect('changed::' + WORKSPACES_ONLY_ON_PRIMARY_ID,
 			this._switchOffThumbnails.bind(this));
@@ -360,6 +396,8 @@ export default class MultiMonitorsExtension extends Extension {
 			this._settings.disconnect(this._thumbnailsSliderPositionId);
 			this._thumbnailsSliderPositionId = null;
 		}
+
+		this._restoreMainPanelClipping();
 
 		if (mmLayoutManager) {
 			mmLayoutManager.hidePanel();

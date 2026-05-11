@@ -330,7 +330,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                 x_expand: true,
                 y_expand: true,
                 x_align: Clutter.ActorAlign.FILL,
-                y_align: Clutter.ActorAlign.FILL
+                y_align: Clutter.ActorAlign.FILL,
+                clip_to_allocation: true,
             });
 
             this.monitorIndex = monitorIndex;
@@ -702,7 +703,8 @@ const MultiMonitorsPanel = GObject.registerClass(
             centerChildBox.x2 = rightChildBox.x1;
             centerChildBox.y2 = contentBox.y2;
             this._centerBox.allocate(centerChildBox);
-            this._centerBox.clip_to_allocation = false;  // Don't clip center
+            // Keep the center actor from painting outside monitor bounds.
+            this._centerBox.clip_to_allocation = true;
         }
 
         _hideIndicators() {

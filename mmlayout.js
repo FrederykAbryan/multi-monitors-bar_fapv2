@@ -46,6 +46,14 @@ function getMMPanelArray() {
 
 export class MultiMonitorsPanelBox {
 	constructor(monitor) {
+		this._monitor = {
+			x: monitor.x,
+			y: monitor.y,
+			width: monitor.width,
+		};
+		this._allocationChangedId = null;
+		this._enforcingGeometry = false;
+
 		this.panelBox = new St.BoxLayout({
 			name: 'panelBox',
 			vertical: true,
@@ -59,6 +67,8 @@ export class MultiMonitorsPanelBox {
 		// fullscreen transitions on the main monitor.
 		this._stableHeight = this._getStablePanelHeight();
 		this.panelBox.set_size(monitor.width, this._stableHeight);
+		this._allocationChangedId = this.panelBox.connect('notify::allocation',
+			this._enforceMonitorGeometry.bind(this));
 
 		Main.uiGroup.set_child_below_sibling(this.panelBox, Main.layoutManager.panelBox);
 	}
@@ -93,6 +103,11 @@ export class MultiMonitorsPanelBox {
 	}
 
 	destroy() {
+		if (this._allocationChangedId) {
+			this.panelBox.disconnect(this._allocationChangedId);
+			this._allocationChangedId = null;
+		}
+
 		// Explicitly removeChrome before destroy so struts are cleared
 		// synchronously — prevents stale geometry on suspend/wake.
 		try {
@@ -104,12 +119,36 @@ export class MultiMonitorsPanelBox {
 	}
 
 	updatePanel(monitor) {
-		this.panelBox.set_position(monitor.x, monitor.y);
+		this._monitor = {
+			x: monitor.x,
+			y: monitor.y,
+			width: monitor.width,
+		};
 		// Re-check the stable height (only updates if we get a valid new value)
 		const newHeight = this._getStablePanelHeight();
 		if (newHeight > 0)
 			this._stableHeight = newHeight;
-		this.panelBox.set_size(monitor.width, this._stableHeight);
+		this._enforceMonitorGeometry();
+	}
+
+	_enforceMonitorGeometry() {
+		if (this._enforcingGeometry || !this.panelBox || !this._monitor)
+			return;
+
+		const needsUpdate =
+			Math.round(this.panelBox.x) !== this._monitor.x ||
+			Math.round(this.panelBox.y) !== this._monitor.y ||
+			Math.round(this.panelBox.width) !== this._monitor.width ||
+			Math.round(this.panelBox.height) !== this._stableHeight;
+
+		if (!needsUpdate)
+			return;
+
+		this._enforcingGeometry = true;
+		this.panelBox.set_position(this._monitor.x, this._monitor.y);
+		this.panelBox.set_size(this._monitor.width, this._stableHeight);
+		this.panelBox.queue_relayout();
+		this._enforcingGeometry = false;
 	}
 }
 
@@ -149,6 +188,9 @@ export class MultiMonitorsLayoutManager {
 
 		this._showAppMenuId = null;
 		this._monitorsChangedId = null;
+		this._workareasChangedId = null;
+		this._fullscreenChangedId = null;
+		this._geometrySyncTimeoutIds = [];
 
 		this.statusIndicatorsController = null;
 		this._layoutManager_updateHotCorners = null;
@@ -257,6 +299,14 @@ export class MultiMonitorsLayoutManager {
 				this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', this._monitorsChanged.bind(this));
 				this._monitorsChanged();
 			}
+			if (!this._workareasChangedId) {
+				this._workareasChangedId = global.display.connect('workareas-changed',
+					this._scheduleGeometrySync.bind(this));
+			}
+			if (!this._fullscreenChangedId) {
+				this._fullscreenChangedId = global.display.connect('in-fullscreen-changed',
+					this._scheduleGeometrySync.bind(this));
+			}
 			if (!this._showAppMenuId) {
 				this._showAppMenuId = this._settings.connect('changed::' + MMPanel.SHOW_APP_MENU_ID, this._showAppMenu.bind(this));
 			}
@@ -336,6 +386,14 @@ export class MultiMonitorsLayoutManager {
 			Main.layoutManager.disconnect(this._monitorsChangedId);
 			this._monitorsChangedId = null;
 		}
+		if (this._workareasChangedId) {
+			global.display.disconnect(this._workareasChangedId);
+			this._workareasChangedId = null;
+		}
+		if (this._fullscreenChangedId) {
+			global.display.disconnect(this._fullscreenChangedId);
+			this._fullscreenChangedId = null;
+		}
 
 		if (this._blurMyShellStateChangedId && Main.extensionManager) {
 			Main.extensionManager.disconnect(this._blurMyShellStateChangedId);
@@ -357,6 +415,10 @@ export class MultiMonitorsLayoutManager {
 			GLib.source_remove(tid);
 		}
 		this._blurRetryTimeoutIds = [];
+		for (const tid of this._geometrySyncTimeoutIds) {
+			GLib.source_remove(tid);
+		}
+		this._geometrySyncTimeoutIds = [];
 
 		let panels2remove = this._monitorIds.length;
 		for (let i = 0; i < panels2remove; i++) {
@@ -436,6 +498,49 @@ export class MultiMonitorsLayoutManager {
 		this._showAppMenu();
 		if (tIndicators && this.statusIndicatorsController) {
 			this.statusIndicatorsController.transferIndicators();
+		}
+	}
+
+	_scheduleGeometrySync() {
+		for (const tid of this._geometrySyncTimeoutIds) {
+			GLib.source_remove(tid);
+		}
+		this._geometrySyncTimeoutIds = [];
+
+		this._syncPanelsToCurrentMonitors();
+
+		for (const delay of [50, 250, 1000, 2500, 5000, 10000]) {
+			const tid = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+				this._syncPanelsToCurrentMonitors();
+				const idx = this._geometrySyncTimeoutIds.indexOf(tid);
+				if (idx >= 0)
+					this._geometrySyncTimeoutIds.splice(idx, 1);
+				return GLib.SOURCE_REMOVE;
+			});
+			this._geometrySyncTimeoutIds.push(tid);
+		}
+	}
+
+	_syncPanelsToCurrentMonitors() {
+		// Fullscreen transitions can emit workareas changes without a
+		// monitors-changed signal. Re-apply panel geometry explicitly.
+		let j = 0;
+		for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
+			if (i === Main.layoutManager.primaryIndex)
+				continue;
+
+			const monitor = Main.layoutManager.monitors[i];
+			if (this.mmPanelBox[j]) {
+				this.mmPanelBox[j].updatePanel(monitor);
+			}
+			j++;
+		}
+
+		const mmPanelRef = getMMPanelArray();
+		if (mmPanelRef) {
+			for (const panel of mmPanelRef) {
+				panel?.queue_relayout?.();
+			}
 		}
 	}
 
