@@ -1405,11 +1405,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const sourceContainerClass = source instanceof St.BoxLayout
                 ? source.get_style_class_name()
                 : null;
+            const isIconOnlySource = source instanceof St.Icon;
 
             const container = new St.BoxLayout({
                 style_class: isClipboard
                     ? 'panel-status-menu-box mm-static-indicator-copy mm-clipboard-indicator-copy'
-                    : `${sourceContainerClass || 'panel-status-menu-box'} mm-static-indicator-copy`,
+                    : `${sourceContainerClass || 'panel-status-menu-box'} mm-static-indicator-copy${isIconOnlySource ? ' mm-static-icon-only-copy' : ''}`,
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: false,
@@ -1594,6 +1595,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _syncStaticCopyContainerSize(container, source) {
             const syncSize = () => {
                 if (this._isClipboardIndicator()) {
+                    const [minWidth, natWidth] = container.get_preferred_width(-1);
+                    const [, natHeight] = container.get_preferred_height(-1);
+                    const width = Math.round(natWidth || minWidth);
+                    const height = Math.round(natHeight);
+
+                    if (width > 0 && height > 0)
+                        container.set_size(width, height);
+                    return;
+                }
+
+                // Icon-only indicators (e.g. Tiling Shell) can have asymmetric
+                // allocation from the source button wrapper. Mirroring that raw
+                // allocation width makes the icon look off-center on secondary
+                // panels, so use the copied icon's natural size instead.
+                if (source instanceof St.Icon) {
                     const [minWidth, natWidth] = container.get_preferred_width(-1);
                     const [, natHeight] = container.get_preferred_height(-1);
                     const width = Math.round(natWidth || minWidth);
