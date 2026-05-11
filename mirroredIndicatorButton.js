@@ -161,21 +161,19 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _initGenericIndicator(role) {
             this._sourceIndicator = Main.panel.statusArea[role] || null;
+            this._isEmpty = false;
 
             if (this._sourceIndicator) {
                 // Check if the source indicator has any visible content
                 const sourceChild = this._sourceIndicator.get_first_child();
                 if (!sourceChild) {
-                    // No child content - mark as empty and hide
-                    this._isEmpty = true;
-                    this.visible = false;
+                    this._markEmpty();
                     return;
                 }
 
                 // Additional check: if the source indicator or its child is not visible, skip
                 if (!this._sourceIndicator.visible) {
-                    this._isEmpty = true;
-                    this.visible = false;
+                    this._markEmpty();
                     return;
                 }
 
@@ -183,16 +181,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 if (sourceChild instanceof St.BoxLayout) {
                     const visibleChildren = sourceChild.get_children().filter(c => c.visible);
                     if (visibleChildren.length === 0) {
-                        this._isEmpty = true;
-                        this.visible = false;
+                        this._markEmpty();
                         return;
                     }
                 }
 
                 this._createIndicatorClone();
             } else {
-                this._createFallbackIcon();
+                this._markEmpty();
             }
+        }
+
+        _markEmpty() {
+            this._isEmpty = true;
+            this.visible = false;
+            this.reactive = false;
+            this.can_focus = false;
+            this.track_hover = false;
         }
 
         _createIndicatorClone() {
@@ -311,7 +316,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             } catch (e) {
                 console.debug('[Multi Monitors Add-On] Failed to create mirrored indicator:', String(e));
-                this._createFallbackIcon();
+                this._markEmpty();
             }
         }
 
@@ -1725,11 +1730,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _createFallbackIcon() {
-            const label = new St.Label({
-                text: '⚙',
-                y_align: Clutter.ActorAlign.CENTER
-            });
-            this.add_child(label);
+            // Keep for backward compatibility, but never present fallback content
+            // in mirrored status area because it creates clickable ghost slots.
+            this._markEmpty();
         }
 
         vfunc_button_press_event(buttonEvent) {

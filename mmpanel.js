@@ -708,11 +708,13 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _hideIndicators() {
-            for (let role in MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS) {
+            for (let role in this.statusArea) {
                 let indicator = this.statusArea[role];
                 if (!indicator)
                     continue;
-                indicator.container.hide();
+                const container = indicator.container || indicator;
+                if (container?.hide)
+                    container.hide();
             }
         }
 
@@ -1020,8 +1022,15 @@ const MultiMonitorsPanel = GObject.registerClass(
                         continue;
                     }
 
-                    // Check if this child IS the indicator or is the indicator's container
-                    if (indicator === child || indicator.container === child) {
+                    const container = indicator.container || indicator;
+
+                    // Match direct ownership and wrapped/containerized indicators.
+                    // Some tray providers insert wrappers around the real container,
+                    // so strict equality misses them and causes skipped mirrors.
+                    if (indicator === child ||
+                        container === child ||
+                        (child.contains && child.contains(container)) ||
+                        (container.contains && container.contains(child))) {
                         return role;
                     }
                 }
