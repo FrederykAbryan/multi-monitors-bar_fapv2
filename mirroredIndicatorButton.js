@@ -1085,10 +1085,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _openAstraProxyMenu(proxy, targetChild) {
-            const monitorIndex = Main.layoutManager.findIndexForActor(this);
             const menu = targetChild.menu || targetChild._menu;
             
             if (!menu || menu.isOpen === undefined) return false;
+
+            if (this._astraMenuRestoreId) {
+                GLib.source_remove(this._astraMenuRestoreId);
+                this._astraMenuRestoreId = 0;
+            }
+            if (this._astraMenuPendingRestore) {
+                try {
+                    this._astraMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._astraMenuPendingRestore = null;
+            }
 
             let originalSourceActor = menu.sourceActor;
             let originalBoxPointer = menu.box?._sourceActor;
@@ -1097,8 +1108,73 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             let menuBoxState = null;
             let openStateId = 0;
+            let restored = false;
+
+            const keepAnchoredToProxy = () => {
+                menu.sourceActor = proxy;
+                for (const actor of [menu.box, menu._boxPointer]) {
+                    if (!actor)
+                        continue;
+
+                    actor._sourceActor = proxy;
+                    actor._sourceAllocation = null;
+                }
+            };
+
+            const restoreSourceActor = () => {
+                menu.sourceActor = originalSourceActor;
+                if (menu.box)
+                    menu.box._sourceActor = originalBoxPointer;
+
+                if (menuBoxState?.sourceActorState) {
+                    for (const state of menuBoxState.sourceActorState) {
+                        state.actor._sourceActor = state.sourceActor;
+                        state.actor._sourceAllocation = state.sourceAllocation;
+                    }
+                }
+
+                this._astraMenuRestoreId = 0;
+                this._astraMenuPendingRestore = null;
+                return GLib.SOURCE_REMOVE;
+            };
+
+            const restoreAfterClose = () => {
+                if (restored)
+                    return;
+                restored = true;
+
+                if (openStateId) {
+                    try {
+                        menu.disconnect(openStateId);
+                    } catch (_e) {
+                    }
+                    openStateId = 0;
+                }
+
+                if (originalSetActive)
+                    targetChild.setActive = originalSetActive;
+                if (originalAddPseudoClass)
+                    targetChild.add_style_pseudo_class = originalAddPseudoClass;
+
+                targetChild.remove_style_pseudo_class?.('active');
+                targetChild.remove_style_pseudo_class?.('checked');
+                proxy.remove_style_pseudo_class?.('active');
+                proxy.remove_style_pseudo_class?.('checked');
+
+                if (this._astraMenuRestoreId)
+                    GLib.source_remove(this._astraMenuRestoreId);
+
+                keepAnchoredToProxy();
+                this._astraMenuPendingRestore = restoreSourceActor;
+                this._astraMenuRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, restoreSourceActor);
+            };
 
             if (menu.isOpen) {
+                keepAnchoredToProxy();
+                openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                    if (!isOpen)
+                        restoreAfterClose();
+                });
                 menu.close();
                 return true;
             }
@@ -1122,51 +1198,31 @@ export const MirroredIndicatorButton = GObject.registerClass(
             proxy.add_style_pseudo_class('active');
             proxy.add_style_pseudo_class('checked');
 
-            menu.sourceActor = proxy;
+            keepAnchoredToProxy();
 
-            menuBoxState = this._updateMenuPositioning(menu, monitorIndex, proxy);
+            menuBoxState = this._updateMenuPositioningNative(menu, proxy);
 
             openStateId = menu.connect('open-state-changed', (m, isOpen) => {
                 if (isOpen) {
                     proxy.add_style_pseudo_class('active');
                     proxy.add_style_pseudo_class('checked');
+                    targetChild.remove_style_pseudo_class?.('active');
+                    targetChild.remove_style_pseudo_class?.('checked');
                 } else {
-                    if (originalSourceActor) menu.sourceActor = originalSourceActor;
-                    if (menu.box && originalBoxPointer) menu.box._sourceActor = originalBoxPointer;
-                    if (originalSetActive) targetChild.setActive = originalSetActive;
-                    if (originalAddPseudoClass) targetChild.add_style_pseudo_class = originalAddPseudoClass;
-
-                    if (menuBoxState?.menuBox) {
-                        if (menuBoxState.originalSetPosition)
-                            menuBoxState.menuBox.setPosition = menuBoxState.originalSetPosition;
-                        else
-                            delete menuBoxState.menuBox.setPosition;
-
-                        if (menuBoxState.removedConstraints?.length > 0) {
-                            menuBoxState.removedConstraints.forEach(c => menuBoxState.menuBox.add_constraint(c));
-                        }
-                        if (menuBoxState.sourceActorState) {
-                            for (const state of menuBoxState.sourceActorState) {
-                                state.actor._sourceActor = state.sourceActor;
-                                state.actor._sourceAllocation = state.sourceAllocation;
-                            }
-                        }
-                    }
-
-                    if (targetChild.remove_style_pseudo_class) {
-                        targetChild.remove_style_pseudo_class('active');
-                        targetChild.remove_style_pseudo_class('checked');
-                    }
-                    if (proxy.remove_style_pseudo_class) {
-                        proxy.remove_style_pseudo_class('active');
-                        proxy.remove_style_pseudo_class('checked');
-                    }
-
-                    menu.disconnect(openStateId);
+                    restoreAfterClose();
                 }
             });
 
-            menu.open();
+            try {
+                menu.open();
+            } catch (e) {
+                restoreAfterClose();
+                console.debug('[Multi Monitors Add-On] Failed to open Astra proxy menu:', String(e));
+            }
+
+            if (!menu.isOpen)
+                restoreAfterClose();
+
             return true;
         }
 
@@ -2570,8 +2626,19 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _openMirroredMenu() {
-            const monitorIndex = Main.layoutManager.findIndexForActor(this);
             const menu = this._sourceIndicator.menu;
+
+            if (this._genericMenuRestoreId) {
+                GLib.source_remove(this._genericMenuRestoreId);
+                this._genericMenuRestoreId = 0;
+            }
+            if (this._genericMenuPendingRestore) {
+                try {
+                    this._genericMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._genericMenuPendingRestore = null;
+            }
 
             // Store original state variables
             let originalSourceActor = menu.sourceActor;
@@ -2583,8 +2650,72 @@ export const MirroredIndicatorButton = GObject.registerClass(
             let menuBoxState = null;
 
             let openStateId = 0;
+            let restored = false;
+
+            const keepAnchoredToMirror = () => {
+                menu.sourceActor = this;
+                for (const actor of [menu.box, menu._boxPointer]) {
+                    if (!actor)
+                        continue;
+
+                    actor._sourceActor = this;
+                    actor._sourceAllocation = null;
+                }
+            };
+
+            const restoreSourceActor = () => {
+                menu.sourceActor = originalSourceActor;
+                if (menu.box)
+                    menu.box._sourceActor = originalBoxPointer;
+
+                if (menuBoxState?.sourceActorState) {
+                    for (const state of menuBoxState.sourceActorState) {
+                        state.actor._sourceActor = state.sourceActor;
+                        state.actor._sourceAllocation = state.sourceAllocation;
+                    }
+                }
+
+                this._genericMenuRestoreId = 0;
+                this._genericMenuPendingRestore = null;
+                return GLib.SOURCE_REMOVE;
+            };
+
+            const restoreAfterClose = () => {
+                if (restored)
+                    return;
+                restored = true;
+
+                if (openStateId) {
+                    try {
+                        menu.disconnect(openStateId);
+                    } catch (_e) {
+                    }
+                    openStateId = 0;
+                }
+
+                if (originalSetActive)
+                    this._sourceIndicator.setActive = originalSetActive;
+                if (originalAddPseudoClass)
+                    this._sourceIndicator.add_style_pseudo_class = originalAddPseudoClass;
+
+                this.remove_style_pseudo_class('active');
+                this.remove_style_pseudo_class('checked');
+                this._clearSourceIndicatorActiveState();
+
+                if (this._genericMenuRestoreId)
+                    GLib.source_remove(this._genericMenuRestoreId);
+
+                keepAnchoredToMirror();
+                this._genericMenuPendingRestore = restoreSourceActor;
+                this._genericMenuRestoreId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, restoreSourceActor);
+            };
 
             if (menu.isOpen) {
+                keepAnchoredToMirror();
+                openStateId = menu.connect('open-state-changed', (_m, isOpen) => {
+                    if (!isOpen)
+                        restoreAfterClose();
+                });
                 menu.close();
                 return Clutter.EVENT_STOP;
             }
@@ -2595,8 +2726,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // Add active style to THIS button
             this.add_style_pseudo_class('active');
 
-            // Update menu's sourceActor
-            menu.sourceActor = this;
+            keepAnchoredToMirror();
 
             // Update BoxPointer positioning and save state for restoration.
             // Native variant trusts BoxPointer._reposition() so freshly-built
@@ -2610,13 +2740,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
             openStateId = menu.connect('open-state-changed', (m, isOpen) => {
                 if (isOpen) {
                     this.add_style_pseudo_class('active');
+                    this._clearSourceIndicatorActiveState();
                 } else {
-                    this._restoreMenuState(menu, originalSourceActor, originalBoxPointer, originalSetActive, originalAddPseudoClass, menuBoxState);
-                    menu.disconnect(openStateId);
+                    restoreAfterClose();
                 }
             });
 
-            menu.open();
+            try {
+                menu.open();
+            } catch (e) {
+                restoreAfterClose();
+                console.debug('[Multi Monitors Add-On] Failed to open mirrored menu:', String(e));
+            }
+
+            if (!menu.isOpen)
+                restoreAfterClose();
 
             return Clutter.EVENT_STOP;
         }
@@ -2902,6 +3040,30 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 } catch (_e) {
                 }
                 this._quickSettingsMenuPendingRestore = null;
+            }
+
+            if (this._astraMenuRestoreId) {
+                GLib.source_remove(this._astraMenuRestoreId);
+                this._astraMenuRestoreId = 0;
+            }
+            if (this._astraMenuPendingRestore) {
+                try {
+                    this._astraMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._astraMenuPendingRestore = null;
+            }
+
+            if (this._genericMenuRestoreId) {
+                GLib.source_remove(this._genericMenuRestoreId);
+                this._genericMenuRestoreId = 0;
+            }
+            if (this._genericMenuPendingRestore) {
+                try {
+                    this._genericMenuPendingRestore();
+                } catch (_e) {
+                }
+                this._genericMenuPendingRestore = null;
             }
 
             if (this._overviewShowingId) {
