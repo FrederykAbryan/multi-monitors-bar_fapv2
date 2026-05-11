@@ -187,6 +187,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
 
                 this._createIndicatorClone();
+                this._setupSourcePresenceWatchers();
+                this._syncMirrorPresence();
             } else {
                 this._markEmpty();
             }
@@ -198,6 +200,80 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.reactive = false;
             this.can_focus = false;
             this.track_hover = false;
+        }
+
+        _setupSourcePresenceWatchers() {
+            if (this._sourcePresenceSignals)
+                return;
+
+            this._sourcePresenceSignals = [];
+            const scheduleSync = () => this._syncMirrorPresence();
+            const connectSafe = (obj, signal) => {
+                if (!obj || typeof obj.connect !== 'function')
+                    return;
+                try {
+                    const id = obj.connect(signal, scheduleSync);
+                    this._sourcePresenceSignals.push({ obj, id });
+                } catch (_e) {
+                    // Signal availability varies by shell/extension actor type.
+                }
+            };
+
+            connectSafe(this._sourceIndicator, 'notify::visible');
+            connectSafe(this._sourceIndicator, 'notify::mapped');
+            connectSafe(this._sourceIndicator, 'notify::allocation');
+
+            const sourceChild = this._sourceIndicator?.get_first_child?.();
+            connectSafe(sourceChild, 'notify::visible');
+            connectSafe(sourceChild, 'notify::mapped');
+            connectSafe(sourceChild, 'notify::allocation');
+            connectSafe(sourceChild, 'actor-added');
+            connectSafe(sourceChild, 'actor-removed');
+            connectSafe(sourceChild, 'child-added');
+            connectSafe(sourceChild, 'child-removed');
+        }
+
+        _syncMirrorPresence() {
+            if (!this._sourceIndicator) {
+                this._markEmpty();
+                return;
+            }
+
+            const sourceChild = this._sourceIndicator.get_first_child?.();
+            const hasContent = this._sourceIndicator.visible &&
+                sourceChild &&
+                this._hasVisibleRenderableSourceContent(sourceChild);
+
+            this._isEmpty = !hasContent;
+            this.visible = !!hasContent;
+            this.reactive = !!hasContent;
+            this.can_focus = !!hasContent;
+            this.track_hover = !!hasContent;
+        }
+
+        _hasVisibleRenderableSourceContent(actor) {
+            if (!actor || actor.visible === false)
+                return false;
+
+            if (actor instanceof St.Icon)
+                return !!actor.gicon || !!actor.icon_name;
+
+            if (actor instanceof St.Label)
+                return !!actor.text && actor.text.trim().length > 0;
+
+            if (actor instanceof Clutter.Clone)
+                return true;
+
+            const children = actor.get_children ? actor.get_children() : [];
+            if (children.length === 0)
+                return true;
+
+            for (const child of children) {
+                if (this._hasVisibleRenderableSourceContent(child))
+                    return true;
+            }
+
+            return false;
         }
 
         _createIndicatorClone() {
@@ -528,6 +604,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._allocationCloneSignals = null;
             }
 
+            if (this._sourcePresenceSignals) {
+                for (const signal of this._sourcePresenceSignals) {
+                    try {
+                        signal.obj.disconnect(signal.id);
+                    } catch (_e) {
+                    }
+                }
+                this._sourcePresenceSignals = null;
+            }
+
             const children = this.get_children ? this.get_children() : [];
             for (const child of children)
                 this.remove_child(child);
@@ -744,6 +830,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _createSimpleClone(parent, source) {
+            // Kopia status indicators can reserve panel width while exposing
+            // icon content through non-standard actors/pixmaps. Static icon
+            // extraction may produce an empty mirror, so keep a live clone.
+            if (this._role && this._role.toLowerCase().includes('kopia')) {
+                this._createAllocationMatchedClone(parent, source);
+                return;
+            }
+
             // Check if this is a problematic extension that needs static icon copies
             // (Extensions that resize during fullscreen or shrink on GNOME < 49)
             // This includes:
@@ -1419,6 +1513,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Copy all icons from the source
             this._copyIconsFromSource(container, source);
+
+            // Generic safety net: if static extraction produced no renderable
+            // content (common with pixmap/custom actors), fall back to a live
+            // allocation-matched clone so mirrors are never blank placeholders.
+            if (!this._hasRenderableMirrorContent(container)) {
+                container.destroy();
+                this._createAllocationMatchedClone(parent, source);
+                return;
+            }
+
             this._syncStaticCopyContainerSize(container, source);
             parent.add_child(container);
             this._iconContainer = container;
@@ -1645,6 +1749,28 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 widgets.push(...this._findAllDisplayWidgets(child));
             }
             return widgets;
+        }
+
+        _hasRenderableMirrorContent(actor) {
+            if (!actor)
+                return false;
+
+            if (actor instanceof Clutter.Clone)
+                return true;
+
+            if (actor instanceof St.Icon)
+                return !!actor.gicon || !!actor.icon_name;
+
+            if (actor instanceof St.Label)
+                return !!actor.text && actor.text.trim().length > 0;
+
+            const children = actor.get_children ? actor.get_children() : [];
+            for (const child of children) {
+                if (this._hasRenderableMirrorContent(child))
+                    return true;
+            }
+
+            return false;
         }
 
         _startIconSync() {
