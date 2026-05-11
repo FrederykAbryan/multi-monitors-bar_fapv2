@@ -1542,66 +1542,56 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             // Preserve one level of grouping for indicators like Vitals where
-            // spacing is defined on each child metric box.
+            // spacing is defined on each child metric box, but do not assume
+            // every direct child is a BoxLayout. AppIndicator/tray providers can
+            // mix BoxLayouts with button/bin wrappers, and returning after the
+            // first preserved group drops those wrapped icons from secondary
+            // panels.
             if (source instanceof St.BoxLayout) {
                 const sourceChildren = source.get_children();
-                let preservedAnyGroups = false;
+                let copiedAnyChildren = false;
 
                 for (const child of sourceChildren) {
-                    if (!(child instanceof St.BoxLayout))
+                    if (child.visible === false)
+                        continue;
+
+                    if (child instanceof St.Icon || child instanceof St.Label) {
+                        const widgetCopy = this._createDisplayWidgetCopy(child);
+                        if (widgetCopy) {
+                            container.add_child(widgetCopy);
+                            copiedAnyChildren = true;
+                        }
+                        continue;
+                    }
+
+                    const widgets = this._findAllDisplayWidgets(child);
+                    if (widgets.length === 0)
                         continue;
 
                     const groupCopy = new St.BoxLayout({
-                        style_class: child.get_style_class_name() || '',
+                        style_class: child.get_style_class_name?.() || '',
                         x_align: Clutter.ActorAlign.CENTER,
                         y_align: Clutter.ActorAlign.CENTER,
                         y_expand: false,
                         reactive: false,
                     });
 
-                    const widgets = this._findAllDisplayWidgets(child);
                     for (const widget of widgets) {
-                        if (widget instanceof St.Icon) {
-                            const iconCopy = new St.Icon({
-                                gicon: widget.gicon,
-                                icon_name: widget.icon_name,
-                                icon_size: this._getSourceIconSize(widget),
-                                style_class: widget.get_style_class_name() || 'system-status-icon',
-                                x_align: Clutter.ActorAlign.CENTER,
-                                y_align: Clutter.ActorAlign.CENTER,
-                                x_expand: false,
-                                y_expand: false,
-                            });
-                            groupCopy.add_child(iconCopy);
-                        } else if (widget instanceof St.Label) {
-                            // Keep existing exclusion behavior for Arc/clipboard labels.
-                            if (this._role && (
-                                this._role.toLowerCase().includes('arc') ||
-                                this._role.toLowerCase().includes('clipboard') ||
-                                this._role.toLowerCase().includes('clipman')
-                            )) {
-                                continue;
-                            }
-
-                            const labelCopy = new St.Label({
-                                text: widget.text,
-                                style_class: widget.get_style_class_name() || '',
-                                y_align: Clutter.ActorAlign.CENTER,
-                            });
-                            labelCopy._sourceLabel = widget;
-                            groupCopy.add_child(labelCopy);
-                        }
+                        const widgetCopy = this._createDisplayWidgetCopy(widget);
+                        if (widgetCopy)
+                            groupCopy.add_child(widgetCopy);
                     }
 
-                    if (groupCopy.get_n_children() > 0) {
-                        container.add_child(groupCopy);
-                        preservedAnyGroups = true;
-                    } else {
+                    if (groupCopy.get_n_children() === 0) {
                         groupCopy.destroy();
+                        continue;
                     }
+
+                    container.add_child(groupCopy);
+                    copiedAnyChildren = true;
                 }
 
-                if (preservedAnyGroups)
+                if (copiedAnyChildren)
                     return;
             }
 
@@ -1655,6 +1645,43 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 });
                 container.add_child(clone);
             }
+        }
+
+        _createDisplayWidgetCopy(widget) {
+            if (widget instanceof St.Icon) {
+                return new St.Icon({
+                    gicon: widget.gicon,
+                    icon_name: widget.icon_name,
+                    icon_size: this._getSourceIconSize(widget),
+                    style_class: widget.get_style_class_name() || 'system-status-icon',
+                    x_align: Clutter.ActorAlign.CENTER,
+                    y_align: Clutter.ActorAlign.CENTER,
+                    x_expand: false,
+                    y_expand: false,
+                });
+            }
+
+            if (widget instanceof St.Label) {
+                if (this._shouldSkipStaticLabelCopy())
+                    return null;
+
+                const labelCopy = new St.Label({
+                    text: widget.text,
+                    style_class: widget.get_style_class_name() || '',
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                labelCopy._sourceLabel = widget;
+                return labelCopy;
+            }
+
+            return null;
+        }
+
+        _shouldSkipStaticLabelCopy() {
+            const role = this._role ? this._role.toLowerCase() : '';
+            return role.includes('arc') ||
+                role.includes('clipboard') ||
+                role.includes('clipman');
         }
 
         _copyClipboardIconFromSource(container, source) {
