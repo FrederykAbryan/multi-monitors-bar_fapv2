@@ -294,7 +294,7 @@ const MultiMonitorsActivitiesButton = GObject.registerClass(
                 return Clutter.EVENT_STOP;
             }
 
-            return super.vfunc_event(event);
+            return Clutter.EVENT_PROPAGATE;
         }
 
         destroy() {

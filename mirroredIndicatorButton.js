@@ -1953,9 +1953,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return Clutter.EVENT_STOP;
             }
 
-            if (super.vfunc_scroll_event)
-                return super.vfunc_scroll_event(scrollEvent);
-
             return Clutter.EVENT_PROPAGATE;
         }
 
@@ -1966,7 +1963,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (event.type() === Clutter.EventType.SCROLL) {
                 return this.vfunc_scroll_event(event);
             }
-            return super.vfunc_event(event);
+            return Clutter.EVENT_PROPAGATE;
         }
 
         _onButtonPress(event = null) {
