@@ -1565,8 +1565,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     }
 
                     const widgets = this._findAllDisplayWidgets(child);
-                    if (widgets.length === 0)
+                    if (widgets.length === 0) {
+                        const cloneCopy = this._createRenderableActorClone(child);
+                        if (cloneCopy) {
+                            container.add_child(cloneCopy);
+                            copiedAnyChildren = true;
+                        }
                         continue;
+                    }
 
                     const groupCopy = new St.BoxLayout({
                         style_class: child.get_style_class_name?.() || '',
@@ -1675,6 +1681,39 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             return null;
+        }
+
+        _createRenderableActorClone(source) {
+            if (!source || source.visible === false)
+                return null;
+
+            const wrapper = new St.Widget({
+                layout_manager: new Clutter.BinLayout(),
+                style_class: source.get_style_class_name?.() || '',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: false,
+                y_expand: false,
+                reactive: false,
+            });
+
+            const clone = new Clutter.Clone({
+                source,
+                x_align: Clutter.ActorAlign.FILL,
+                y_align: Clutter.ActorAlign.FILL,
+                x_expand: true,
+                y_expand: true,
+            });
+            wrapper.add_child(clone);
+
+            const syncSize = () => {
+                const [width, height] = this._getActorAllocationSize(source);
+                if (width > 0 && height > 0)
+                    wrapper.set_size(width, height);
+            };
+            syncSize();
+
+            return wrapper;
         }
 
         _shouldSkipStaticLabelCopy() {
