@@ -100,5 +100,13 @@
         theme color.</description>
     </key>
 
+    <key name="show-dock-on-extended-monitors" type="b">
+      <default>false</default>
+      <summary>Show overview dock on extended monitors.</summary>
+      <description>When enabled, a native GNOME application dock is shown at the bottom
+        of each extended monitor while the Activities overview is open, mirroring the
+        main monitor overview dash.</description>
+    </key>
+
   </schema>
 </schemalist>

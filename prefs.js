@@ -33,6 +33,7 @@ const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
 const FORCE_WORKSPACES_ON_ALL_DISPLAYS_ID = 'force-workspaces-on-all-displays';
 const SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID = 'show-overview-on-extended-monitors';
 const PANEL_COLOR_ID = 'panel-color';
+const SHOW_DOCK_ON_EXTENDED_MONITORS_ID = 'show-dock-on-extended-monitors';
 
 
 class MultiMonitorsPrefsWidget extends Gtk.Grid {
@@ -66,6 +67,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._addBooleanSwitch(_('Show screenshot tools on all monitors.'), SCREENSHOT_ON_ALL_MONITORS_ID);
         this._addBooleanSwitch(_('Force workspaces on all displays.'), FORCE_WORKSPACES_ON_ALL_DISPLAYS_ID);
         this._addBooleanSwitch(_('Show App Grid and Search on extended monitors.'), SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID);
+        this._addBooleanSwitch(_('Show dock on extended monitors.'), SHOW_DOCK_ON_EXTENDED_MONITORS_ID);
 
         this._addColorPicker(_('Panel color on additional monitors.'), PANEL_COLOR_ID);
     }

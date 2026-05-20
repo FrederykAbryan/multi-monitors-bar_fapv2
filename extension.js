@@ -45,6 +45,9 @@ export let mmPanel = [];
 export let mmOverview = null;
 export let mmLayoutManager = null;
 
+const DASH_TO_DOCK_SCHEMA = 'org.gnome.shell.extensions.dash-to-dock';
+const DASH_TO_DOCK_MULTI_MONITOR_ID = 'multi-monitor';
+
 export default class MultiMonitorsExtension extends Extension {
 	constructor(metadata) {
 		super(metadata);
@@ -61,6 +64,60 @@ export default class MultiMonitorsExtension extends Extension {
 		this._prepareForSleepId = null;
 		this._resumeFromSleepId = null;
 		this._mainPanelClipState = null;
+		this._showDockId = null;
+		this._dtdSettings = null;
+		this._savedDockMultiMonitor = null;
+	}
+
+	_getDashToDockSettings() {
+		try {
+			const schemaSource = Gio.SettingsSchemaSource.get_default();
+			if (!schemaSource)
+				return null;
+			const schema = schemaSource.lookup(DASH_TO_DOCK_SCHEMA, true);
+			if (!schema)
+				return null;
+			return new Gio.Settings({ settings_schema: schema });
+		} catch (_e) {
+			return null;
+		}
+	}
+
+	_applyDashToDockMultiMonitor() {
+		const enabled = this._settings.get_boolean('show-dock-on-extended-monitors');
+		if (!this._dtdSettings)
+			this._dtdSettings = this._getDashToDockSettings();
+
+		if (!this._dtdSettings)
+			return;
+
+		try {
+			if (enabled) {
+				// Save original value only on first apply
+				if (this._savedDockMultiMonitor === null)
+					this._savedDockMultiMonitor = this._dtdSettings.get_boolean(DASH_TO_DOCK_MULTI_MONITOR_ID);
+				this._dtdSettings.set_boolean(DASH_TO_DOCK_MULTI_MONITOR_ID, true);
+			} else {
+				// Restore original value if we previously saved one
+				if (this._savedDockMultiMonitor !== null) {
+					this._dtdSettings.set_boolean(DASH_TO_DOCK_MULTI_MONITOR_ID, this._savedDockMultiMonitor);
+					this._savedDockMultiMonitor = null;
+				}
+			}
+		} catch (_e) {
+			// Dash to Dock may not be installed or schema unavailable
+		}
+	}
+
+	_restoreDashToDockMultiMonitor() {
+		if (!this._dtdSettings || this._savedDockMultiMonitor === null)
+			return;
+		try {
+			this._dtdSettings.set_boolean(DASH_TO_DOCK_MULTI_MONITOR_ID, this._savedDockMultiMonitor);
+		} catch (_e) {
+			// Ignore
+		}
+		this._savedDockMultiMonitor = null;
 	}
 
 	_applyMainPanelClipping() {
@@ -232,6 +289,10 @@ export default class MultiMonitorsExtension extends Extension {
 			this._showThumbnailsSlider();
 		});
 
+		this._showDockId = this._settings.connect('changed::show-dock-on-extended-monitors',
+			this._applyDashToDockMultiMonitor.bind(this));
+		this._applyDashToDockMultiMonitor();
+
 		mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
 
 		this._showPanelId = this._settings.connect('changed::' + MMLayout.SHOW_PANEL_ID, mmLayoutManager.showPanel.bind(mmLayoutManager));
@@ -386,6 +447,13 @@ export default class MultiMonitorsExtension extends Extension {
 			this._settings.disconnect(this._showOverviewId);
 			this._showOverviewId = null;
 		}
+
+		if (this._showDockId) {
+			this._settings.disconnect(this._showDockId);
+			this._showDockId = null;
+		}
+		this._restoreDashToDockMultiMonitor();
+		this._dtdSettings = null;
 
 		if (this._showPanelId) {
 			this._settings.disconnect(this._showPanelId);

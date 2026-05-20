@@ -22,8 +22,10 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
 import * as MMPanel from './mmpanel.js';
+import * as MMDock from './mmdock.js';
 
 export const SHOW_PANEL_ID = 'show-panel';
+export const SHOW_DOCK_ID = 'show-dock-on-extended-monitors';
 export const ENABLE_HOT_CORNERS = 'enable-hot-corners';
 
 // Store reference to mmPanel array set by extension.js
@@ -52,7 +54,9 @@ export class MultiMonitorsPanelBox {
 			width: monitor.width,
 		};
 		this._allocationChangedId = null;
-		this._enforcingGeometry = false;
+		this._geometryIdleId = 0;
+		this._geometryFightCount = 0;
+		this._geometryGiveUp = false;
 
 		this.panelBox = new St.BoxLayout({
 			name: 'panelBox',
@@ -68,7 +72,7 @@ export class MultiMonitorsPanelBox {
 		this._stableHeight = this._getStablePanelHeight();
 		this.panelBox.set_size(monitor.width, this._stableHeight);
 		this._allocationChangedId = this.panelBox.connect('notify::allocation',
-			this._enforceMonitorGeometry.bind(this));
+			this._onAllocationChanged.bind(this));
 
 		Main.uiGroup.set_child_below_sibling(this.panelBox, Main.layoutManager.panelBox);
 	}
@@ -103,6 +107,11 @@ export class MultiMonitorsPanelBox {
 	}
 
 	destroy() {
+		if (this._geometryIdleId) {
+			GLib.source_remove(this._geometryIdleId);
+			this._geometryIdleId = 0;
+		}
+
 		if (this._allocationChangedId) {
 			this.panelBox.disconnect(this._allocationChangedId);
 			this._allocationChangedId = null;
@@ -128,27 +137,64 @@ export class MultiMonitorsPanelBox {
 		const newHeight = this._getStablePanelHeight();
 		if (newHeight > 0)
 			this._stableHeight = newHeight;
-		this._enforceMonitorGeometry();
+
+		// Caller is requesting an explicit re-apply, so unblock the fight
+		// counter and apply directly (we are not inside an allocation pass).
+		this._geometryFightCount = 0;
+		this._geometryGiveUp = false;
+		this._applyMonitorGeometry();
 	}
 
-	_enforceMonitorGeometry() {
-		if (this._enforcingGeometry || !this.panelBox || !this._monitor)
+	// notify::allocation handler. NEVER call set_size/set_position/queue_relayout
+	// directly from here — Clutter is mid-allocation and re-entering the layout
+	// machinery can produce an infinite layout pass that freezes the shell.
+	// Defer to idle so the enforcement runs outside the current pass.
+	_onAllocationChanged() {
+		if (this._geometryGiveUp || this._geometryIdleId || !this.panelBox || !this._monitor)
 			return;
 
-		const needsUpdate =
+		if (!this._geometryNeedsUpdate())
+			return;
+
+		this._geometryIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+			this._geometryIdleId = 0;
+			this._applyMonitorGeometry();
+			return GLib.SOURCE_REMOVE;
+		});
+	}
+
+	_geometryNeedsUpdate() {
+		return (
 			Math.round(this.panelBox.x) !== this._monitor.x ||
 			Math.round(this.panelBox.y) !== this._monitor.y ||
 			Math.round(this.panelBox.width) !== this._monitor.width ||
-			Math.round(this.panelBox.height) !== this._stableHeight;
+			Math.round(this.panelBox.height) !== this._stableHeight
+		);
+	}
 
-		if (!needsUpdate)
+	_applyMonitorGeometry() {
+		if (!this.panelBox || !this._monitor)
 			return;
 
-		this._enforcingGeometry = true;
+		if (!this._geometryNeedsUpdate()) {
+			this._geometryFightCount = 0;
+			return;
+		}
+
+		// If something else keeps overriding our geometry on every pass,
+		// stop fighting — better a misaligned panel than a frozen shell.
+		// updatePanel() (monitor change, settings) will reset the counter.
+		this._geometryFightCount += 1;
+		if (this._geometryFightCount > 5) {
+			this._geometryGiveUp = true;
+			log('[MultiMonitors] Giving up geometry enforcement after repeated fights ' +
+				'(panelBox=' + Math.round(this.panelBox.width) + 'x' + Math.round(this.panelBox.height) +
+				' wanted=' + this._monitor.width + 'x' + this._stableHeight + ')');
+			return;
+		}
+
 		this.panelBox.set_position(this._monitor.x, this._monitor.y);
 		this.panelBox.set_size(this._monitor.width, this._stableHeight);
-		this.panelBox.queue_relayout();
-		this._enforcingGeometry = false;
 	}
 }
 
@@ -184,6 +230,7 @@ export class MultiMonitorsLayoutManager {
 		this._monitorIds = [];
 		this._lastPrimaryIndex = Main.layoutManager.primaryIndex;
 		this.mmPanelBox = [];
+		this.mmDock = [];
 		this.mmappMenu = false;
 
 		this._showAppMenuId = null;
@@ -293,6 +340,45 @@ export class MultiMonitorsLayoutManager {
 		}
 	}
 
+	showDock() {
+		if (this._settings.get_boolean(SHOW_DOCK_ID)) {
+			// Docks are created per-monitor inside _pushPanel; just rebuild if toggled.
+			if (this.mmDock.length === 0 && this._monitorIds.length > 0) {
+				let j = 0;
+				for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
+					if (i !== Main.layoutManager.primaryIndex) {
+						const monitor = Main.layoutManager.monitors[i];
+						this._pushDock(monitor);
+						j++;
+					}
+				}
+			}
+		} else {
+			this.hideDock();
+		}
+	}
+
+	hideDock() {
+		while (this.mmDock.length > 0) {
+			const dock = this.mmDock.pop();
+			if (dock)
+				dock.destroy();
+		}
+	}
+
+	_pushDock(monitor) {
+		if (!this._settings.get_boolean(SHOW_DOCK_ID))
+			return;
+		const dock = new MMDock.MultiMonitorsDock(monitor);
+		this.mmDock.push(dock);
+	}
+
+	_popDock() {
+		const dock = this.mmDock.pop();
+		if (dock)
+			dock.destroy();
+	}
+
 	showPanel() {
 		if (this._settings.get_boolean(SHOW_PANEL_ID)) {
 			if (!this._monitorsChangedId) {
@@ -309,6 +395,10 @@ export class MultiMonitorsLayoutManager {
 			}
 			if (!this._showAppMenuId) {
 				this._showAppMenuId = this._settings.connect('changed::' + MMPanel.SHOW_APP_MENU_ID, this._showAppMenu.bind(this));
+			}
+
+			if (!this._showDockId) {
+				this._showDockId = this._settings.connect('changed::' + SHOW_DOCK_ID, this.showDock.bind(this));
 			}
 
 			if (!this.statusIndicatorsController) {
@@ -353,6 +443,8 @@ export class MultiMonitorsLayoutManager {
 
 				Main.layoutManager._updateHotCorners();
 			}
+
+			this.showDock();
 		}
 		else {
 			this.hidePanel();
@@ -375,6 +467,12 @@ export class MultiMonitorsLayoutManager {
 			this.statusIndicatorsController.destroy();
 			this.statusIndicatorsController = null;
 		}
+
+		if (this._showDockId) {
+			this._settings.disconnect(this._showDockId);
+			this._showDockId = null;
+		}
+		this.hideDock();
 
 		if (this._showAppMenuId) {
 			this._settings.disconnect(this._showAppMenuId);
@@ -491,6 +589,8 @@ export class MultiMonitorsLayoutManager {
 				else if (this._monitorIds[j] != monitorId) {
 					this._monitorIds[j] = monitorId;
 					this.mmPanelBox[j].updatePanel(monitor);
+					if (this.mmDock[j])
+						this.mmDock[j].updateMonitor(monitor);
 				}
 				j++;
 			}
@@ -552,6 +652,8 @@ export class MultiMonitorsLayoutManager {
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor);
 		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox, this._settings);
 
+		this._pushDock(monitor);
+
 		const mmPanelRef = getMMPanelArray();
 		if (mmPanelRef) {
 			mmPanelRef.push(panel);
@@ -586,6 +688,7 @@ export class MultiMonitorsLayoutManager {
 		if (mmPanelBox) {
 			mmPanelBox.destroy();
 		}
+		this._popDock();
 	}
 
 	_showAppMenu() {
