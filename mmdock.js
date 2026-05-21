@@ -46,6 +46,7 @@ export class MultiMonitorsDock {
         this._overviewShowingId = null;
         this._overviewHidingId = null;
         this._ignoreShowAppsButtonToggle = false;
+        this._destroying = false;
 
         // Native GNOME Shell Dash widget (same class used by the overview)
         this._dash = new DashModule.Dash();
@@ -74,20 +75,40 @@ export class MultiMonitorsDock {
         this._connectOverviewStateAdjustment();
     }
 
+    _getLocalShowAppsButton() {
+        if (!this._dash)
+            return null;
+
+        try {
+            return this._dash.showAppsButton ?? null;
+        } catch (_e) {
+            this._dash = null;
+            return null;
+        }
+    }
+
     _connectShowAppsButton() {
-        const button = this._dash?.showAppsButton;
-        if (!button || this._showAppsButtonId)
+        const button = this._getLocalShowAppsButton();
+        if (this._destroying || !button || this._showAppsButtonId)
             return;
 
-        this._showAppsButtonId = button.connect('notify::checked',
-            () => this._onShowAppsButtonToggled());
+        try {
+            this._showAppsButtonId = button.connect('notify::checked',
+                () => this._onShowAppsButtonToggled());
+        } catch (_e) {
+            this._showAppsButtonId = null;
+        }
     }
 
     _getOverviewControls() {
-        return Main.overview?._overview?.controls ??
-            Main.overview?._overview?._controls ??
-            Main.overview?._controls ??
-            null;
+        try {
+            return Main.overview?._overview?.controls ??
+                Main.overview?._overview?._controls ??
+                Main.overview?._controls ??
+                null;
+        } catch (_e) {
+            return null;
+        }
     }
 
     _getOverviewStateAdjustment() {
@@ -95,14 +116,21 @@ export class MultiMonitorsDock {
     }
 
     _getPrimaryShowAppsButton() {
-        const controls = this._getOverviewControls();
-        return controls?.dash?.showAppsButton ??
-            controls?._dash?.showAppsButton ??
-            Main.overview?.dash?.showAppsButton ??
-            null;
+        try {
+            const controls = this._getOverviewControls();
+            return controls?.dash?.showAppsButton ??
+                controls?._dash?.showAppsButton ??
+                Main.overview?.dash?.showAppsButton ??
+                null;
+        } catch (_e) {
+            return null;
+        }
     }
 
     _connectOverviewStateAdjustment() {
+        if (this._destroying)
+            return;
+
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment || adjustment === this._stateAdjustment)
             return;
@@ -121,29 +149,45 @@ export class MultiMonitorsDock {
     }
 
     _setShowAppsChecked(checked) {
-        const button = this._dash?.showAppsButton;
-        if (!button || button.checked === checked)
+        const button = this._getLocalShowAppsButton();
+        if (this._destroying || !button)
             return;
 
-        this._ignoreShowAppsButtonToggle = true;
-        button.checked = checked;
-        this._ignoreShowAppsButtonToggle = false;
+        try {
+            if (button.checked === checked)
+                return;
+
+            this._ignoreShowAppsButtonToggle = true;
+            button.checked = checked;
+        } catch (_e) {
+            this._showAppsButtonId = null;
+        } finally {
+            this._ignoreShowAppsButtonToggle = false;
+        }
     }
 
     _syncShowAppsButton() {
+        if (this._destroying)
+            return;
+
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment)
             return;
 
         const appGridState = OverviewControls.ControlsState?.APP_GRID ?? 2;
-        this._setShowAppsChecked(adjustment.value >= appGridState - 0.5);
+        try {
+            this._setShowAppsChecked(adjustment.value >= appGridState - 0.5);
+        } catch (_e) {
+            this._stateAdjustment = null;
+            this._stateAdjustmentId = null;
+        }
     }
 
     _onShowAppsButtonToggled() {
-        if (this._ignoreShowAppsButtonToggle)
+        if (this._destroying || this._ignoreShowAppsButtonToggle)
             return;
 
-        const button = this._dash?.showAppsButton;
+        const button = this._getLocalShowAppsButton();
         if (!button)
             return;
 
@@ -151,9 +195,15 @@ export class MultiMonitorsDock {
             WINDOW_PICKER: 1,
             APP_GRID: 2,
         };
-        const targetState = button.checked
-            ? controlsState.APP_GRID
-            : controlsState.WINDOW_PICKER;
+        let checked = false;
+        try {
+            checked = button.checked;
+        } catch (_e) {
+            this._showAppsButtonId = null;
+            return;
+        }
+
+        const targetState = checked ? controlsState.APP_GRID : controlsState.WINDOW_PICKER;
 
         if (!Main.overview.visible) {
             if (targetState === controlsState.APP_GRID) {
@@ -168,37 +218,47 @@ export class MultiMonitorsDock {
         }
 
         const primaryButton = this._getPrimaryShowAppsButton();
-        if (primaryButton && primaryButton !== button &&
-            primaryButton.checked !== button.checked) {
-            primaryButton.checked = button.checked;
-            return;
+        if (primaryButton && primaryButton !== button) {
+            try {
+                if (primaryButton.checked === checked)
+                    return;
+                primaryButton.checked = checked;
+                return;
+            } catch (_e) {
+            }
         }
 
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment)
             return;
 
-        adjustment.remove_transition('value');
-        adjustment.ease(targetState, {
-            duration: OverviewControls.SIDE_CONTROLS_ANIMATION_TIME ?? 250,
-            mode: Clutter.AnimationMode.EASE_OUT_SINE,
-        });
+        try {
+            adjustment.remove_transition('value');
+            adjustment.ease(targetState, {
+                duration: OverviewControls.SIDE_CONTROLS_ANIMATION_TIME ?? 250,
+                mode: Clutter.AnimationMode.EASE_OUT_SINE,
+            });
+        } catch (_e) {
+        }
     }
 
     _updatePosition() {
-        if (!this._bin || !this._dash)
+        if (this._destroying || !this._bin || !this._dash)
             return;
 
-        // Use the Dash's natural height; fall back to 60 px
-        let [, natHeight] = this._dash.get_preferred_height(-1);
-        if (!natHeight || natHeight <= 0)
-            natHeight = 60;
+        try {
+            // Use the Dash's natural height; fall back to 60 px
+            let [, natHeight] = this._dash.get_preferred_height(-1);
+            if (!natHeight || natHeight <= 0)
+                natHeight = 60;
 
-        this._bin.set_size(this._monitor.width, natHeight);
-        this._bin.set_position(
-            this._monitor.x,
-            this._monitor.y + this._monitor.height - natHeight
-        );
+            this._bin.set_size(this._monitor.width, natHeight);
+            this._bin.set_position(
+                this._monitor.x,
+                this._monitor.y + this._monitor.height - natHeight
+            );
+        } catch (_e) {
+        }
     }
 
     updateMonitor(monitor) {
@@ -212,13 +272,21 @@ export class MultiMonitorsDock {
     }
 
     destroy() {
+        this._destroying = true;
+
         if (this._overviewShowingId) {
-            Main.overview.disconnect(this._overviewShowingId);
+            try {
+                Main.overview.disconnect(this._overviewShowingId);
+            } catch (_e) {
+            }
             this._overviewShowingId = null;
         }
 
         if (this._overviewHidingId) {
-            Main.overview.disconnect(this._overviewHidingId);
+            try {
+                Main.overview.disconnect(this._overviewHidingId);
+            } catch (_e) {
+            }
             this._overviewHidingId = null;
         }
 
@@ -231,13 +299,20 @@ export class MultiMonitorsDock {
             this._stateAdjustmentId = null;
         }
 
-        if (this._dash?.showAppsButton && this._showAppsButtonId) {
-            this._dash.showAppsButton.disconnect(this._showAppsButtonId);
+        const showAppsButton = this._getLocalShowAppsButton();
+        if (showAppsButton && this._showAppsButtonId) {
+            try {
+                showAppsButton.disconnect(this._showAppsButtonId);
+            } catch (_e) {
+            }
             this._showAppsButtonId = null;
         }
 
-        if (this._heightChangedId) {
-            this._dash.disconnect(this._heightChangedId);
+        if (this._dash && this._heightChangedId) {
+            try {
+                this._dash.disconnect(this._heightChangedId);
+            } catch (_e) {
+            }
             this._heightChangedId = null;
         }
 
@@ -245,7 +320,9 @@ export class MultiMonitorsDock {
             Main.layoutManager.overviewGroup.remove_child(this._bin);
         } catch (_e) {}
 
-        this._bin.destroy();
+        try {
+            this._bin.destroy();
+        } catch (_e) {}
         this._bin = null;
         this._dash = null;
     }
