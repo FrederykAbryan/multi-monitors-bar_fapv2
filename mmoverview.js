@@ -462,6 +462,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._fixGeometry = 0;
             this._visible = false;
             this._pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
+            this._overviewStateAdjustment = null;
+            this._overviewStateChangedId = 0;
 
             // Use a simple BinLayout to ensure we have full control over the child placement
             // The OverviewControls layouts are too complex and tied to primary monitor state
@@ -493,7 +495,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Connect search entry to filter app grid locally
             this._searchEntry.clutter_text.connect('text-changed', () => {
                 const text = this._searchEntry.get_text();
-                // Filter the local app grid based on search text
+                // Filter the local app grid based on search text or app-grid state.
                 this._filterAppGrid(text);
             });
 
@@ -551,6 +553,16 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Ensure scroll view is hidden by default
             this._appGridScrollView.visible = false;
 
+            this._appDisplay = null;
+            try {
+                this._appDisplay = new AppDisplay.AppDisplay();
+                this._appDisplay.visible = false;
+                this._appDisplay.x_expand = true;
+                this._appDisplay.y_expand = true;
+            } catch (e) {
+                console.debug('[MultiMonitors] Failed to create native app display: ' + e);
+            }
+
             // Populate app grid with installed applications
             try {
                 this._populateAppGrid();
@@ -567,6 +579,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             });
             this._contentArea.add_child(this._searchController);
             this._contentArea.add_child(this._appGridScrollView);
+            if (this._appDisplay)
+                this._contentArea.add_child(this._appDisplay);
 
 
             // 'page-changed' and 'page-empty' signals exist in GNOME < 46
@@ -587,6 +601,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     } catch (e) { /* signal may not exist */ }
                 }
             }
+            this._connectOverviewStateWatcher();
 
             this._group = new St.BoxLayout({
                 name: 'mm-overview-group-' + index,
@@ -634,6 +649,37 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
 
             console.debug('[MultiMonitors] App grid populated with ' + Math.min(apps.length, maxApps) + ' buttons');
+        }
+
+        _connectOverviewStateWatcher() {
+            const controls = Main.overview?._overview?._controls ?? Main.overview?._controls;
+            const adjustment = controls?._stateAdjustment;
+
+            if (!adjustment || adjustment === this._overviewStateAdjustment)
+                return;
+
+            if (this._overviewStateAdjustment && this._overviewStateChangedId) {
+                try {
+                    this._overviewStateAdjustment.disconnect(this._overviewStateChangedId);
+                } catch (_e) {
+                }
+            }
+
+            this._overviewStateAdjustment = adjustment;
+            this._overviewStateChangedId = adjustment.connect('notify::value',
+                () => this._syncAppGridState());
+        }
+
+        _isAppGridState() {
+            this._connectOverviewStateWatcher();
+
+            if (!this._overviewStateAdjustment)
+                return false;
+
+            const appGridState = OverviewControls.ControlsState?.APP_GRID ?? 2;
+            const value = this._overviewStateAdjustment.value;
+
+            return value >= appGridState - 0.5;
         }
 
         _createAppButton(app) {
@@ -862,8 +908,28 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _filterAppGrid(searchText) {
-            // Filter the app grid based on search text
-            const normalizedSearch = searchText.toLowerCase().trim();
+            this._syncAppGridState(searchText);
+        }
+
+        _refreshNativeAppDisplay() {
+            if (!this._appDisplay)
+                return;
+
+            try {
+                if (this._appDisplay._redisplayWorkId)
+                    Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
+                else if (this._appDisplay._redisplay)
+                    this._appDisplay._redisplay();
+            } catch (e) {
+                console.debug('[MultiMonitors] Error refreshing native app display: ' + e);
+            }
+        }
+
+        _syncAppGridState(searchText = null) {
+            const normalizedSearch = (searchText ?? this._searchEntry?.get_text() ?? '').toLowerCase().trim();
+            const hasText = this._visible && normalizedSearch.length > 0;
+            const showApps = this._visible && this._isAppGridState();
+            const useNativeAppDisplay = !!this._appDisplay;
 
             if (!this._appGrid) return;
 
@@ -874,16 +940,15 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             for (const child of children) {
                 if (!child._appInfo) {
-                    child.visible = normalizedSearch === '';
+                    child.visible = showApps && !hasText && !useNativeAppDisplay;
                     continue;
                 }
 
                 const appName = child._appInfo.get_name().toLowerCase();
                 const appId = child._appInfo.get_id() ? child._appInfo.get_id().toLowerCase() : '';
 
-                if (normalizedSearch === '') {
-                    // When clearing search, hide all apps (show windows instead)
-                    child.visible = false;
+                if (!hasText) {
+                    child.visible = showApps && !useNativeAppDisplay;
                 } else {
                     // Show only first 6 matching apps horizontally
                     const matches = appName.includes(normalizedSearch) || appId.includes(normalizedSearch);
@@ -900,32 +965,36 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
 
             // Set focus on first visible app using the shared method
-            this._setFocusedApp(firstVisibleApp);
+            this._setFocusedApp(hasText ? firstVisibleApp : null);
 
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
-                const hasText = normalizedSearch.length > 0;
                 console.debug('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', visibleApps=' + visibleCount);
 
                 // Always re-discover workspacesViews to ensure we have a valid reference
                 this._tryFindWorkspacesViews();
 
-                this._appGridScrollView.visible = hasText;
+                this._appGridScrollView.visible = hasText || (showApps && !useNativeAppDisplay);
 
-                // When searching (hasText is true), hide workspace views
-                // When not searching (hasText is false), show workspace views
+                if (this._appDisplay) {
+                    this._appDisplay.visible = showApps && !hasText;
+                    if (this._appDisplay.visible)
+                        this._refreshNativeAppDisplay();
+                }
+
+                // Hide workspace views while showing search results or the app grid.
                 if (this._workspacesViews) {
-                    this._workspacesViews.visible = !hasText;
-                    this._workspacesViews.opacity = hasText ? 0 : 255;
-                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                    this._workspacesViews.visible = !(hasText || showApps);
+                    this._workspacesViews.opacity = (hasText || showApps) ? 0 : 255;
+                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !(hasText || showApps) + ', opacity=' + ((hasText || showApps) ? 0 : 255));
                 }
 
-                // Also hide our own thumbnails box when searching
+                // Also hide our own thumbnails box when searching or showing apps.
                 if (this._thumbnailsBox) {
-                    this._thumbnailsBox.visible = !hasText;
+                    this._thumbnailsBox.visible = !(hasText || showApps);
                 }
 
-                // Hide the searchController placeholder when searching (we use our own grid)
+                // Hide the searchController placeholder when using our own grid.
                 if (this._searchController) {
                     this._searchController.visible = false;
                 }
@@ -958,6 +1027,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         show() {
             // Called when overview is shown
             this._visible = true;
+            this._connectOverviewStateWatcher();
+            this._syncAppGridState();
 
             // Check if cursor is on this monitor and focus search entry
             const [x, y] = global.get_pointer();
@@ -993,6 +1064,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (this._appGridScrollView) {
                 this._appGridScrollView.visible = false;
             }
+            if (this._appDisplay)
+                this._appDisplay.visible = false;
+            this._syncAppGridState('');
             // Clear the first visible app reference
             this._firstVisibleApp = null;
         }
@@ -1017,6 +1091,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
             if (this._monitorsChangedId) {
                 Main.layoutManager.disconnect(this._monitorsChangedId);
+            }
+            if (this._overviewStateAdjustment && this._overviewStateChangedId) {
+                try {
+                    this._overviewStateAdjustment.disconnect(this._overviewStateChangedId);
+                } catch (_e) {
+                }
+                this._overviewStateChangedId = 0;
+                this._overviewStateAdjustment = null;
             }
             super.destroy();
         }
