@@ -38,16 +38,37 @@ const MMWorkspacePreviewLayout = GObject.registerClass(
         vfunc_allocate(container, box) {
             const monitorIndex = Main.layoutManager.findIndexForActor(container);
             const workArea = Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
-            if (!workArea)
+            if (!workArea) {
+                const fallbackBox = new Clutter.ActorBox();
+                fallbackBox.set_origin(0, 0);
+                fallbackBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
+                for (const child of container.get_children ? container.get_children() : [])
+                    child.allocate(fallbackBox);
                 return;
+            }
 
             const hscale = box.get_width() / workArea.width;
             const vscale = box.get_height() / workArea.height;
+            if (!Number.isFinite(hscale) || !Number.isFinite(vscale) ||
+                hscale <= 0 || vscale <= 0) {
+                const fallbackBox = new Clutter.ActorBox();
+                fallbackBox.set_origin(0, 0);
+                fallbackBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
+                for (const child of container.get_children ? container.get_children() : [])
+                    child.allocate(fallbackBox);
+                return;
+            }
+
             const children = container.get_children ? container.get_children() : [];
 
             for (const child of children) {
-                if (!child.metaWindow)
+                if (!child.metaWindow) {
+                    const fallbackBox = new Clutter.ActorBox();
+                    fallbackBox.set_origin(0, 0);
+                    fallbackBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
+                    child.allocate(fallbackBox);
                     continue;
+                }
 
                 const childBox = new Clutter.ActorBox();
                 const frameRect = child.metaWindow.get_frame_rect();
@@ -744,7 +765,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
             });
             thumbnail.set_child(box);
 
-            const previewLayer = new Clutter.Actor({
+            const previewLayer = new St.Widget({
+                name: 'mm-workspace-preview-layer',
                 layout_manager: new MMWorkspacePreviewLayout(),
                 clip_to_allocation: true,
                 x_expand: true,
@@ -752,6 +774,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 x_align: Clutter.ActorAlign.FILL,
                 y_align: Clutter.ActorAlign.FILL,
             });
+            previewLayer.set_size(52, 18);
 
             const preview = new St.Bin({
                 style_class: active ? 'workspace active' : 'workspace',

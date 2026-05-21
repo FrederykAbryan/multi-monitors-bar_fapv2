@@ -59,11 +59,17 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
 
         this._removed = false;
 
-        this._contents = new Clutter.Actor();
+        this._contents = new Clutter.Actor({
+            name: 'mm-workspace-thumbnail-contents',
+            clip_to_allocation: true,
+        });
         this.add_child(this._contents);
 
         // Initialize _viewport for GNOME 46 compatibility
-        this._viewport = new Clutter.Actor();
+        this._viewport = new Clutter.Actor({
+            name: 'mm-workspace-thumbnail-viewport',
+            clip_to_allocation: true,
+        });
         this._contents.add_child(this._viewport);
 
 
@@ -71,6 +77,8 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
 
         let workArea = Main.layoutManager.getWorkAreaForMonitor(this.monitorIndex);
         this.setPorthole(workArea.x, workArea.y, workArea.width, workArea.height);
+        this._contents.set_size(workArea.width, workArea.height);
+        this._viewport.set_size(workArea.width, workArea.height);
 
         let windows = global.get_window_actors().filter(actor => {
             let win = actor.meta_window;
@@ -105,6 +113,28 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
         this.state = WorkspaceThumbnail.ThumbnailState.NORMAL;
         this._slidePosition = 0; // Fully slid in
         this._collapseFraction = 0; // Not collapsed
+    }
+
+    vfunc_allocate(box) {
+        this.set_allocation(box);
+
+        const childBox = new Clutter.ActorBox();
+        childBox.set_origin(0, 0);
+        childBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
+
+        if (this._contents)
+            this._contents.allocate(childBox);
+        if (this._viewport)
+            this._viewport.allocate(childBox);
+
+        const upstreamAllocate = WorkspaceThumbnail.WorkspaceThumbnail.prototype.vfunc_allocate;
+        if (upstreamAllocate) {
+            try {
+                upstreamAllocate.call(this, box);
+            } catch (e) {
+                console.debug('[MultiMonitors] Workspace thumbnail upstream allocation failed: ' + e);
+            }
+        }
     }
 
     _createBackground() {

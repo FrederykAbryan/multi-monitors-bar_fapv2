@@ -63,6 +63,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._relayoutId = null;
 		this._prepareForSleepId = null;
 		this._resumeFromSleepId = null;
+		this._resumeSessionModeUpdatedId = null;
 		this._mainPanelClipState = null;
 		this._showDockId = null;
 		this._dtdSettings = null;
@@ -358,6 +359,7 @@ export default class MultiMonitorsExtension extends Extension {
 			GLib.source_remove(this._resumeFromSleepId);
 			this._resumeFromSleepId = null;
 		}
+		this._disconnectResumeSessionWatcher();
 
 		if (mmLayoutManager) {
 			mmLayoutManager.hidePanel();
@@ -375,42 +377,105 @@ export default class MultiMonitorsExtension extends Extension {
 	 */
 	_onResumeFromSleep() {
 		log('[MultiMonitors] _onResumeFromSleep: scheduling rebuild after wake');
+		this._queueResumeRebuild(1000);
+	}
 
+	_queueResumeRebuild(delayMs) {
 		if (this._resumeFromSleepId)
 			GLib.source_remove(this._resumeFromSleepId);
 
-		this._resumeFromSleepId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+		this._resumeFromSleepId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
 			this._resumeFromSleepId = null;
 
 			if (!this._settings)
 				return GLib.SOURCE_REMOVE;
 
-			if (!mmLayoutManager) {
-				mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
-
-				if (this._showPanelId) {
-					this._settings.disconnect(this._showPanelId);
-					this._showPanelId = null;
-				}
-				this._showPanelId = this._settings.connect('changed::' + MMLayout.SHOW_PANEL_ID,
-					mmLayoutManager.showPanel.bind(mmLayoutManager));
-			} else {
-				mmLayoutManager.hidePanel();
+			if (!this._isUserSessionActive()) {
+				log('[MultiMonitors] Resume rebuild waiting for unlocked user session');
+				this._waitForUserSessionResume();
+				return GLib.SOURCE_REMOVE;
 			}
 
-			mmPanel.length = 0;
-			MMLayout.setMMPanelArrayRef(mmPanel);
-			MMPanel.setMMPanelArrayRef(mmPanel);
-			MMOverview.setMMPanelArrayRef(mmPanel);
+			if (!this._isOverviewIdle()) {
+				log('[MultiMonitors] Resume rebuild waiting for overview to become idle');
+				this._queueResumeRebuild(500);
+				return GLib.SOURCE_REMOVE;
+			}
 
-			mmLayoutManager.showPanel();
-			this._hideThumbnailsSlider();
-			this._mmMonitors = 0;
-			this._primaryIndex = -1;
-			this._relayout();
-
+			this._disconnectResumeSessionWatcher();
+			this._rebuildAfterResume();
 			return GLib.SOURCE_REMOVE;
 		});
+	}
+
+	_isUserSessionActive() {
+		const sessionMode = Main.sessionMode;
+		if (!sessionMode)
+			return true;
+
+		const isLocked = typeof sessionMode.isLocked === 'function'
+			? sessionMode.isLocked()
+			: sessionMode.isLocked;
+		if (isLocked)
+			return false;
+
+		return !sessionMode.currentMode || sessionMode.currentMode === 'user';
+	}
+
+	_isOverviewIdle() {
+		return !Main.overview?.visible && !Main.overview?.animationInProgress;
+	}
+
+	_waitForUserSessionResume() {
+		if (this._resumeSessionModeUpdatedId || !Main.sessionMode?.connect)
+			return;
+
+		this._resumeSessionModeUpdatedId = Main.sessionMode.connect('updated', () => {
+			if (!this._isUserSessionActive())
+				return;
+
+			this._disconnectResumeSessionWatcher();
+			this._queueResumeRebuild(750);
+		});
+	}
+
+	_disconnectResumeSessionWatcher() {
+		if (!this._resumeSessionModeUpdatedId)
+			return;
+
+		try {
+			Main.sessionMode.disconnect(this._resumeSessionModeUpdatedId);
+		} catch (_e) {
+		}
+		this._resumeSessionModeUpdatedId = null;
+	}
+
+	_rebuildAfterResume() {
+		log('[MultiMonitors] Rebuilding secondary monitor chrome after resume');
+
+		if (!mmLayoutManager) {
+			mmLayoutManager = new MMLayout.MultiMonitorsLayoutManager(this._settings);
+
+			if (this._showPanelId) {
+				this._settings.disconnect(this._showPanelId);
+				this._showPanelId = null;
+			}
+			this._showPanelId = this._settings.connect('changed::' + MMLayout.SHOW_PANEL_ID,
+				mmLayoutManager.showPanel.bind(mmLayoutManager));
+		} else {
+			mmLayoutManager.hidePanel();
+		}
+
+		mmPanel.length = 0;
+		MMLayout.setMMPanelArrayRef(mmPanel);
+		MMPanel.setMMPanelArrayRef(mmPanel);
+		MMOverview.setMMPanelArrayRef(mmPanel);
+
+		mmLayoutManager.showPanel();
+		this._hideThumbnailsSlider();
+		this._mmMonitors = 0;
+		this._primaryIndex = -1;
+		this._relayout();
 	}
 
 	disable() {
@@ -431,6 +496,7 @@ export default class MultiMonitorsExtension extends Extension {
 			GLib.source_remove(this._resumeFromSleepId);
 			this._resumeFromSleepId = null;
 		}
+		this._disconnectResumeSessionWatcher();
 
 		if (this._relayoutId) {
 			Main.layoutManager.disconnect(this._relayoutId);
