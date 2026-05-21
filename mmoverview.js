@@ -559,6 +559,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._appDisplay.visible = false;
                 this._appDisplay.x_expand = true;
                 this._appDisplay.y_expand = true;
+                this._configureNativeAppDisplayLayout();
             } catch (e) {
                 console.debug('[MultiMonitors] Failed to create native app display: ' + e);
             }
@@ -916,6 +917,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
 
             try {
+                this._configureNativeAppDisplayLayout();
                 if (this._appDisplay._redisplayWorkId)
                     Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
                 else if (this._appDisplay._redisplay)
@@ -923,6 +925,86 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             } catch (e) {
                 console.debug('[MultiMonitors] Error refreshing native app display: ' + e);
             }
+        }
+
+        _configureNativeAppDisplayLayout() {
+            const layoutManager = this._appDisplay?._grid?.layoutManager;
+            if (!layoutManager)
+                return;
+
+            const portrait = this._isPortraitMonitor();
+            layoutManager.columnsPerPage = portrait ? 4 : 8;
+            layoutManager.rowsPerPage = portrait ? 5 : 3;
+            this._appDisplay._grid.queue_relayout();
+        }
+
+        _isPortraitMonitor() {
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+            return !!monitor && monitor.height > monitor.width;
+        }
+
+        _getAppGridWorkspacePreviewGeometry() {
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+            if (!monitor)
+                return null;
+
+            const portrait = this._isPortraitMonitor();
+            const width = portrait
+                ? Math.max(240, Math.min(Math.round(monitor.width * 0.25), 320))
+                : Math.max(560, Math.min(Math.round(monitor.width * 0.34), 700));
+            const height = Math.round(width * 0.28);
+            const yOffset = portrait
+                ? Math.max(24, Math.round(monitor.height * 0.018))
+                : Math.max(88, Math.round(monitor.height * 0.075));
+
+            return {
+                x: monitor.x + Math.round((monitor.width - width) / 2),
+                y: monitor.y + yOffset,
+                width,
+                height,
+            };
+        }
+
+        _getFullWorkspaceGeometry() {
+            const workArea = Main.layoutManager.getWorkAreaForMonitor(this._monitorIndex);
+            if (!workArea)
+                return null;
+
+            return {
+                x: workArea.x,
+                y: workArea.y,
+                width: workArea.width,
+                height: workArea.height,
+            };
+        }
+
+        _syncWorkspacesViewGeometry(compact) {
+            if (!this._workspacesViews)
+                return;
+
+            const fullGeometry = this._getFullWorkspaceGeometry();
+            if (!fullGeometry)
+                return;
+
+            this._workspacesViews.set_pivot_point(0, 0);
+
+            if (!compact) {
+                this._workspacesViews.translation_x = 0;
+                this._workspacesViews.translation_y = 0;
+                this._workspacesViews.scale_x = 1;
+                this._workspacesViews.scale_y = 1;
+                return;
+            }
+
+            const compactGeometry = this._getAppGridWorkspacePreviewGeometry();
+            if (!compactGeometry)
+                return;
+
+            const scale = compactGeometry.width / fullGeometry.width;
+            this._workspacesViews.translation_x = compactGeometry.x - fullGeometry.x;
+            this._workspacesViews.translation_y = compactGeometry.y - fullGeometry.y;
+            this._workspacesViews.scale_x = scale;
+            this._workspacesViews.scale_y = scale;
         }
 
         _syncAppGridState(searchText = null) {
@@ -982,11 +1064,13 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                         this._refreshNativeAppDisplay();
                 }
 
-                // Hide workspace views while showing search results or the app grid.
+                // Keep the real workspace preview strip visible in app-grid mode,
+                // matching the primary overview. Only hide it for typed search.
                 if (this._workspacesViews) {
-                    this._workspacesViews.visible = !(hasText || showApps);
-                    this._workspacesViews.opacity = (hasText || showApps) ? 0 : 255;
-                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !(hasText || showApps) + ', opacity=' + ((hasText || showApps) ? 0 : 255));
+                    this._workspacesViews.visible = !hasText;
+                    this._workspacesViews.opacity = hasText ? 0 : 255;
+                    this._syncWorkspacesViewGeometry(showApps && !hasText);
+                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
                 }
 
                 // Also hide our own thumbnails box when searching or showing apps.
