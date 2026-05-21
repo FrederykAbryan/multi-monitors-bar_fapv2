@@ -464,6 +464,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
             this._overviewStateAdjustment = null;
             this._overviewStateChangedId = 0;
+            this._lastAppDisplayLayout = null;
+            this._appDisplayVisible = false;
+            this._lastWorkspaceTransformKey = null;
 
             // Use a simple BinLayout to ensure we have full control over the child placement
             // The OverviewControls layouts are too complex and tied to primary monitor state
@@ -933,9 +936,23 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
 
             const portrait = this._isPortraitMonitor();
-            layoutManager.columnsPerPage = portrait ? 4 : 8;
-            layoutManager.rowsPerPage = portrait ? 5 : 3;
-            this._appDisplay._grid.queue_relayout();
+            const columns = portrait ? 4 : 8;
+            const rows = portrait ? 5 : 3;
+            const layoutKey = `${columns}x${rows}`;
+
+            if (this._lastAppDisplayLayout === layoutKey &&
+                layoutManager.columnsPerPage === columns &&
+                layoutManager.rowsPerPage === rows)
+                return;
+
+            layoutManager.columnsPerPage = columns;
+            layoutManager.rowsPerPage = rows;
+            this._lastAppDisplayLayout = layoutKey;
+
+            try {
+                this._appDisplay._grid.queue_relayout();
+            } catch (_e) {
+            }
         }
 
         _isPortraitMonitor() {
@@ -989,10 +1006,11 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._workspacesViews.set_pivot_point(0, 0);
 
             if (!compact) {
-                this._workspacesViews.translation_x = 0;
-                this._workspacesViews.translation_y = 0;
-                this._workspacesViews.scale_x = 1;
-                this._workspacesViews.scale_y = 1;
+                if (this._lastWorkspaceTransformKey === 'full')
+                    return;
+
+                this._resetWorkspacesViewTransform();
+                this._lastWorkspaceTransformKey = 'full';
                 return;
             }
 
@@ -1001,10 +1019,32 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
 
             const scale = compactGeometry.width / fullGeometry.width;
+            const transformKey = [
+                Math.round(compactGeometry.x),
+                Math.round(compactGeometry.y),
+                Math.round(scale * 1000),
+            ].join(':');
+            if (this._lastWorkspaceTransformKey === transformKey)
+                return;
+
             this._workspacesViews.translation_x = compactGeometry.x - fullGeometry.x;
             this._workspacesViews.translation_y = compactGeometry.y - fullGeometry.y;
             this._workspacesViews.scale_x = scale;
             this._workspacesViews.scale_y = scale;
+            this._lastWorkspaceTransformKey = transformKey;
+        }
+
+        _resetWorkspacesViewTransform() {
+            if (!this._workspacesViews)
+                return;
+
+            try {
+                this._workspacesViews.translation_x = 0;
+                this._workspacesViews.translation_y = 0;
+                this._workspacesViews.scale_x = 1;
+                this._workspacesViews.scale_y = 1;
+            } catch (_e) {
+            }
         }
 
         _syncAppGridState(searchText = null) {
@@ -1059,18 +1099,27 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._appGridScrollView.visible = hasText || (showApps && !useNativeAppDisplay);
 
                 if (this._appDisplay) {
-                    this._appDisplay.visible = showApps && !hasText;
-                    if (this._appDisplay.visible)
+                    const nextAppDisplayVisible = showApps && !hasText;
+                    this._configureNativeAppDisplayLayout();
+                    this._appDisplay.visible = nextAppDisplayVisible;
+                    if (nextAppDisplayVisible && !this._appDisplayVisible)
                         this._refreshNativeAppDisplay();
+                    this._appDisplayVisible = nextAppDisplayVisible;
                 }
 
                 // Keep the real workspace preview strip visible in app-grid mode,
                 // matching the primary overview. Only hide it for typed search.
                 if (this._workspacesViews) {
-                    this._workspacesViews.visible = !hasText;
-                    this._workspacesViews.opacity = hasText ? 0 : 255;
-                    this._syncWorkspacesViewGeometry(showApps && !hasText);
-                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                    try {
+                        this._workspacesViews.visible = !hasText;
+                        this._workspacesViews.opacity = hasText ? 0 : 255;
+                        this._syncWorkspacesViewGeometry(showApps && !hasText);
+                        console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                    } catch (e) {
+                        console.debug('[MultiMonitors] Dropping stale workspacesView reference: ' + e);
+                        this._workspacesViews = null;
+                        this._lastWorkspaceTransformKey = null;
+                    }
                 }
 
                 // Also hide our own thumbnails box when searching or showing apps.
@@ -1150,6 +1199,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
             if (this._appDisplay)
                 this._appDisplay.visible = false;
+            this._appDisplayVisible = false;
+            this._resetWorkspacesViewTransform();
+            this._lastWorkspaceTransformKey = null;
             this._syncAppGridState('');
             // Clear the first visible app reference
             this._firstVisibleApp = null;
@@ -1184,6 +1236,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._overviewStateChangedId = 0;
                 this._overviewStateAdjustment = null;
             }
+            this._resetWorkspacesViewTransform();
             super.destroy();
         }
 
@@ -1238,17 +1291,20 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             let panelGhost_height = 0;
             const mmOverviewRef = ('mmOverview' in Main) ? Main.mmOverview : MultiMonitors.mmOverview;
-            if (mmOverviewRef && mmOverviewRef[this._monitorIndex]._overview._panelGhost)
-                panelGhost_height = mmOverviewRef[this._monitorIndex]._overview._panelGhost.get_height();
+            const mmOverviewActor = mmOverviewRef?.[this._monitorIndex]?._overview;
+            if (mmOverviewActor?._panelGhost)
+                panelGhost_height = mmOverviewActor._panelGhost.get_height();
 
-            let allocation = Main.overview._overview._controls.allocation;
+            const allocation = Main.overview?._overview?._controls?.allocation;
+            if (!allocation)
+                return;
             let primaryControl_height = allocation.get_height();
             let bottom_spacer_height = Main.layoutManager.primaryMonitor.height - allocation.y2;
 
             top_spacer_height -= primaryControl_height + panelGhost_height + bottom_spacer_height;
             top_spacer_height = Math.round(top_spacer_height);
 
-            let spacer = mmOverviewRef ? mmOverviewRef[this._monitorIndex]._overview._spacer : null;
+            let spacer = mmOverviewActor?._spacer ?? null;
             if (!spacer) return;
             if (spacer.get_height() != top_spacer_height) {
                 this._spacer_height = top_spacer_height;
@@ -1257,7 +1313,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         getWorkspacesActualGeometry() {
-            return this._overview._controls.getWorkspacesActualGeometry();
+            return this._getFullWorkspaceGeometry() ?? { x: 0, y: 0, width: 0, height: 0 };
         }
 
         /*
