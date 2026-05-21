@@ -184,7 +184,13 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
 
         this._delegate = this;
         this._monitorIndex = monitorIndex;
-        this._settings = settings;
+        this._extensionSettings = settings;
+
+        // Methods copied from GNOME Shell's ThumbnailsBox expect _settings to
+        // point at org.gnome.mutter. Keep extension preferences separate so
+        // upstream code does not query mutter keys from our extension schema.
+        this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
+        this._settings = this._mutterSettings;
 
         let indicator = new St.Bin({ style_class: 'workspace-thumbnail-indicator' });
 
@@ -235,12 +241,6 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
             this._onDragEnd.bind(this));
         this._windowDragCancelledId = Main.overview.connect('window-drag-cancelled',
             this._onDragCancelled.bind(this));
-
-        // On GNOME 50, WorkspaceThumbnail.MUTTER_SCHEMA can return the
-        // extension's own schema id instead of 'org.gnome.mutter', which
-        // then fails the key lookup below. The mutter schema id is stable,
-        // so we just hardcode it.
-        this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
 
         if (this._mutterSettings.settings_schema.has_key('dynamic-workspaces')) {
             this._changedDynamicWorkspacesId = this._mutterSettings.connect('changed::dynamic-workspaces',

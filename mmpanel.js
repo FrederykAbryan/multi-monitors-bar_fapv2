@@ -425,7 +425,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._applyPanelColor.bind(this));
             this._applyPanelColor();
 
-            this.connect('destroy', this.destroy.bind(this));
+            this._isDestroyed = false;
+            this.connect('destroy', this._cleanup.bind(this));
         }
 
         _startExtensionWatcher() {
@@ -502,7 +503,11 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._showDateTime();
         }
 
-        destroy() {
+        _cleanup() {
+            if (this._isDestroyed)
+                return;
+            this._isDestroyed = true;
+
             // Clean up extension watcher
             if (this._extensionStateChangedId) {
                 Main.extensionManager.disconnect(this._extensionStateChangedId);
@@ -568,7 +573,10 @@ const MultiMonitorsPanel = GObject.registerClass(
             for (const role in this.statusArea) {
                 this._disconnectIndicatorSignals(this.statusArea[role]);
             }
+        }
 
+        destroy() {
+            this._cleanup();
             super.destroy();
         }
 

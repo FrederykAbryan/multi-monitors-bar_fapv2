@@ -67,6 +67,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._showDockId = null;
 		this._dtdSettings = null;
 		this._savedDockMultiMonitor = null;
+		this._mainPanelEnsureIndicator = null;
 	}
 
 	_getDashToDockSettings() {
@@ -322,6 +323,9 @@ export default class MultiMonitorsExtension extends Extension {
 		MMPanel.setMMPanelArrayRef(mmPanel);
 		MMOverview.setMMPanelArrayRef(mmPanel);
 
+		if (!this._mainPanelEnsureIndicator)
+			this._mainPanelEnsureIndicator = Main.panel._ensureIndicator;
+
 		Main.panel._ensureIndicator = function (role) {
 			let indicator = this.statusArea[role];
 			if (indicator) {
@@ -470,6 +474,11 @@ export default class MultiMonitorsExtension extends Extension {
 		if (mmLayoutManager) {
 			mmLayoutManager.hidePanel();
 			mmLayoutManager = null;
+		}
+
+		if (this._mainPanelEnsureIndicator) {
+			Main.panel._ensureIndicator = this._mainPanelEnsureIndicator;
+			this._mainPanelEnsureIndicator = null;
 		}
 
 		this._hideThumbnailsSlider();

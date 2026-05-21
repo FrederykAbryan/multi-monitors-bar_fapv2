@@ -76,6 +76,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             this._role = role;
             this._panel = panel;
+            this._isCleanedUp = false;
 
             // Ensure cleanup happens when the underlying Clutter object is destroyed
             // This captures cases where mmpanel implicitely destroys children
@@ -195,6 +196,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _markEmpty() {
+            if (this._isCleanedUp)
+                return;
+
             this._isEmpty = true;
             this.visible = false;
             this.reactive = false;
@@ -234,6 +238,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _syncMirrorPresence() {
+            if (this._isCleanedUp)
+                return;
+
             if (!this._sourceIndicator) {
                 this._markEmpty();
                 return;

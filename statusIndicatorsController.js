@@ -104,7 +104,9 @@ export class StatusIndicatorsController {
 
 	_transferBack(transfer_back, panel) {
 		transfer_back.forEach((element) => {
-			this._transfered_indicators.splice(this._transfered_indicators.indexOf(element));
+			const index = this._transfered_indicators.indexOf(element);
+			if (index >= 0)
+				this._transfered_indicators.splice(index, 1);
 			if (Main.panel.statusArea[element.iname]) {
 				let indicator = Main.panel.statusArea[element.iname];
 				if (!panel) {
