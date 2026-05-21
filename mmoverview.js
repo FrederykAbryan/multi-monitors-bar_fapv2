@@ -921,6 +921,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             try {
                 this._configureNativeAppDisplayLayout();
+                this._syncNativePageIndicatorsPosition();
                 if (this._appDisplay._redisplayWorkId)
                     Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
                 else if (this._appDisplay._redisplay)
@@ -953,6 +954,22 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._appDisplay._grid.queue_relayout();
             } catch (_e) {
             }
+        }
+
+        _syncNativePageIndicatorsPosition() {
+            const indicators = this._appDisplay?._pageIndicators;
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+            if (!indicators || !monitor)
+                return;
+
+            const portrait = this._isPortraitMonitor();
+            const lift = portrait
+                ? Math.max(180, Math.min(Math.round(monitor.height * 0.14), 320))
+                : Math.max(90, Math.min(Math.round(monitor.height * 0.09), 160));
+
+            indicators.translation_y = -lift;
+            indicators.visible = true;
+            indicators.opacity = 255;
         }
 
         _isPortraitMonitor() {
@@ -1101,6 +1118,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 if (this._appDisplay) {
                     const nextAppDisplayVisible = showApps && !hasText;
                     this._configureNativeAppDisplayLayout();
+                    this._syncNativePageIndicatorsPosition();
                     this._appDisplay.visible = nextAppDisplayVisible;
                     if (nextAppDisplayVisible && !this._appDisplayVisible)
                         this._refreshNativeAppDisplay();
