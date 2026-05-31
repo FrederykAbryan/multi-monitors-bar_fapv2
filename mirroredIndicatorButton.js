@@ -25,6 +25,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 
+// YOL 5 per-monitor taskButton filtreleme — debug log anahtari (Faz 4'te false yapilacak).
+const MMB_PM_DEBUG = false;
+
 const MMWorkspacePreviewLayout = GObject.registerClass(
     class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
         vfunc_get_preferred_width() {
@@ -185,6 +188,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._sourceIndicator = Main.panel.statusArea[role] || null;
             this._isEmpty = false;
 
+            // >>> FILTRE-A (YOL 5): taskButton isaretle. Klon HER ZAMAN tam olusturulur
+            // (icerik + box); gorunurluk _syncMirrorPresence guard + _syncTaskbarFilter ile
+            // yonetilir. (Early-return KALDIRILDI — bos-klon bug'i: pencere sonradan gelince
+            // gorunur yapilsa da Clutter.Clone icerigi olusturulmamis kaliyordu.) <<<
+            if (this._isTaskButtonRole(role))
+                this._isTaskButtonClone = true;
+
             if (this._sourceIndicator) {
                 // Check if the source indicator has any visible content
                 const sourceChild = this._sourceIndicator.get_first_child();
@@ -227,6 +237,38 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.track_hover = false;
         }
 
+        // >>> YOL 5 per-monitor taskButton filtre yardimcilari <<<
+        _isTaskButtonRole(role) {
+            // tasks-in-panel format: `taskButton${windowId}` (extension.js:424), windowId pozitif int.
+            // Kati regex — gelecekteki 'taskButtonGroup' gibi roller yanlis-pozitif vermesin.
+            return typeof role === 'string' && /^taskButton\d+$/.test(role);
+        }
+
+        _getTaskButtonWindow() {
+            // TaskButton._window addToStatusArea ONCESI set → klon gorunurken _window dolu.
+            const src = this._sourceIndicator;
+            if (!src)
+                return null;
+            const win = src._window;
+            return (win && typeof win.get_monitor === 'function') ? win : null;
+        }
+
+        _shouldShowTaskButton() {
+            const win = this._getTaskButtonWindow();
+            if (!win)
+                return false;                    // _window yok/dangling → guvenli default: gizle
+            let mon = -1;
+            try {
+                mon = win.get_monitor();         // dangling Meta.Window guard
+            } catch (_e) {
+                return false;
+            }
+            if (mon < 0)
+                return false;                    // monitor henuz atanmamis (gecis ani)
+            return mon === this._panel.monitorIndex; // _panel monitorIndex (mmpanel.js:337)
+        }
+        // <<< filtre yardimcilari bitti >>>
+
         _setupSourcePresenceWatchers() {
             if (this._sourcePresenceSignals)
                 return;
@@ -266,6 +308,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._markEmpty();
                 return;
             }
+
+            // >>> FILTRE-B guard (YOL 5): taskButton gorunurlugu SADECE _syncTaskbarFilter'da
+            // (window-entered/left-monitor → tum paneller). _syncMirrorPresence kaynak-allocation
+            // spam'i ile tetiklenir; surukleme sirasinda get_monitor()=-1 geçiş-ani okuyup klonu
+            // yanlis gizliyordu. taskButton'a DOKUNMA → yaris kosulu cozulur. <<<
+            if (this._isTaskButtonClone)
+                return;
 
             const sourceChild = this._sourceIndicator.get_first_child?.();
             const hasContent = this._sourceIndicator.visible &&
@@ -1179,7 +1228,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const forwardSpec = (eventName, vfuncName, event) => {
                 let handled = false;
 
-                if ((eventName === 'button-press-event' || eventName === 'touch-event') && (targetChild.menu || targetChild._menu)) {
+                // BUG FIX (taskButton sol-tik davranisi): Astra Monitor menu-acma workaround'u SADECE
+                // menu-merkezli indicator'lar (Astra gibi) icindir. tasks-in-panel TaskButton bir
+                // PanelMenu.Button (default bos .menu var) ama tiklamayi button-RELEASE ile
+                // pencere-aktive/minimize olarak isler (tasks-in-panel extension.js:469 → _onClick).
+                // Bu workaround taskButton klonunda button-PRESS'te yanlislikla menu aciyordu → sol-tik
+                // "sag-tik gibi options" gosteriyordu. taskButton klonu icin ATLA → asagidaki normal
+                // forward tasks-in-panel'in kendi sol/sag davranisini calistirir (primary ile ayni).
+                if ((eventName === 'button-press-event' || eventName === 'touch-event')
+                    && !this._isTaskButtonClone
+                    && (targetChild.menu || targetChild._menu)) {
                     if (this._openAstraProxyMenu(proxy, targetChild)) {
                         return Clutter.EVENT_STOP;
                     }
@@ -2024,6 +2082,29 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._role === 'quickSettings' && this._sourceIndicator?.menu) {
                 return this._openQuickSettingsMenu();
+            }
+
+            // BUG FIX (taskButton klonu sol-tik = primary ile AYNI davranis):
+            // Klon kendi PanelMenu.Button _onButtonPress'inden gecer (Astra forwardSpec DEGIL — taskButton
+            // o yola hic girmez). Kaynak TaskButton'in AppMenu'su dolu oldugundan, asagidaki generic dal
+            // (this._sourceIndicator.menu) HER tikta menuyu aciyordu → sol-tik "sag-tik gibi options".
+            // tasks-in-panel primary'de menu-on-press'i vfunc_event no-op ile oldurur ve button-RELEASE'te
+            // _onClick ile sol=aktive/sag=menu yapar. Klonda bunu buton-ayrimli olarak yeniden uretiyoruz:
+            //   sol  → kaynagin _toggleWindow() (pencere aktive/minimize)   [tasks-in-panel extension.js:513-524]
+            //   orta → kaynagin _onClick(event) (yeni pencere)              [extension.js:541-546]
+            //   sag  → asagi dus → _openMirroredMenu (kaynak AppMenu, klona anchor'lu = primary'deki sag-tik)
+            if (this._isTaskButtonClone) {
+                const src = this._sourceIndicator;
+                const button = event?.get_button?.() ?? Clutter.BUTTON_PRIMARY;
+                if (button === Clutter.BUTTON_PRIMARY && src && typeof src._toggleWindow === 'function') {
+                    src._toggleWindow();
+                    return Clutter.EVENT_STOP;
+                }
+                if (button === Clutter.BUTTON_MIDDLE && src && typeof src._onClick === 'function') {
+                    src._onClick(event);
+                    return Clutter.EVENT_STOP;
+                }
+                // SECONDARY (sag) → asagidaki _openMirroredMenu'ye dusur (kaynak AppMenu)
             }
 
             // Check for standard menu first
