@@ -69,6 +69,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._dtdSettings = null;
 		this._savedDockMultiMonitor = null;
 		this._mainPanelEnsureIndicator = null;
+		this._loginManager = null;
 	}
 
 	_getDashToDockSettings() {
@@ -306,18 +307,14 @@ export default class MultiMonitorsExtension extends Extension {
 
 		// Proactively tear down extra panels before suspend so the lock
 		// screen on wake gets correct single-monitor geometry.
-		try {
-			const loginMgr = LoginManager.getLoginManager();
-			this._prepareForSleepId = loginMgr.connect('prepare-for-sleep',
-				(mgr, aboutToSuspend) => {
-					if (aboutToSuspend)
-						this._onPrepareForSleep();
-					else
-						this._onResumeFromSleep();
-				});
-		} catch (e) {
-			log('[MultiMonitors] Could not connect prepare-for-sleep: ' + e);
-		}
+		this._loginManager = LoginManager.getLoginManager();
+		this._prepareForSleepId = this._loginManager.connect('prepare-for-sleep',
+			(mgr, aboutToSuspend) => {
+				if (aboutToSuspend)
+					this._onPrepareForSleep();
+				else
+					this._onResumeFromSleep();
+			});
 
 		mmPanel.length = 0;
 		MMLayout.setMMPanelArrayRef(mmPanel);
@@ -413,10 +410,7 @@ export default class MultiMonitorsExtension extends Extension {
 		if (!sessionMode)
 			return true;
 
-		const isLocked = typeof sessionMode.isLocked === 'function'
-			? sessionMode.isLocked()
-			: sessionMode.isLocked;
-		if (isLocked)
+		if (sessionMode.isLocked)
 			return false;
 
 		return !sessionMode.currentMode || sessionMode.currentMode === 'user';
@@ -427,7 +421,7 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	_waitForUserSessionResume() {
-		if (this._resumeSessionModeUpdatedId || !Main.sessionMode?.connect)
+		if (this._resumeSessionModeUpdatedId)
 			return;
 
 		this._resumeSessionModeUpdatedId = Main.sessionMode.connect('updated', () => {
@@ -443,10 +437,7 @@ export default class MultiMonitorsExtension extends Extension {
 		if (!this._resumeSessionModeUpdatedId)
 			return;
 
-		try {
-			Main.sessionMode.disconnect(this._resumeSessionModeUpdatedId);
-		} catch (_e) {
-		}
+		Main.sessionMode.disconnect(this._resumeSessionModeUpdatedId);
 		this._resumeSessionModeUpdatedId = null;
 	}
 
@@ -483,14 +474,10 @@ export default class MultiMonitorsExtension extends Extension {
 		ScreenshotPatch.unpatchScreenshotUI();
 
 		if (this._prepareForSleepId) {
-			try {
-				const loginMgr = LoginManager.getLoginManager();
-				loginMgr.disconnect(this._prepareForSleepId);
-			} catch (e) {
-				// Ignore
-			}
+			this._loginManager.disconnect(this._prepareForSleepId);
 			this._prepareForSleepId = null;
 		}
+		this._loginManager = null;
 
 		if (this._resumeFromSleepId) {
 			GLib.source_remove(this._resumeFromSleepId);

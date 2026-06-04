@@ -97,11 +97,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             this._role = role;
             this._panel = panel;
-            this._isCleanedUp = false;
-
-            // Ensure cleanup happens when the underlying Clutter object is destroyed
-            // This captures cases where mmpanel implicitely destroys children
-            this.connect('destroy', this._cleanup.bind(this));
 
             if (role === 'activities') {
                 this._initActivitiesButton();
@@ -217,9 +212,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _markEmpty() {
-            if (this._isCleanedUp)
-                return;
-
             this._isEmpty = true;
             this.visible = false;
             this.reactive = false;
@@ -259,9 +251,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _syncMirrorPresence() {
-            if (this._isCleanedUp)
-                return;
-
             if (!this._sourceIndicator) {
                 this._markEmpty();
                 return;
@@ -360,13 +349,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         y_expand: true,
                     });
 
-                    const updateClock = () => {
-                        if (this._sourceIndicator._clockDisplay) {
-                            clockDisplay.text = this._sourceIndicator._clockDisplay.text;
-                        }
-                    };
-
-                    updateClock();
+                    if (!this._bindMirroredClockDisplay(clockDisplay)) {
+                        clockDisplay.destroy();
+                        this._markEmpty();
+                        return;
+                    }
 
                     // Remove existing timeout before creating new one
                     if (this._clockUpdateId) {
@@ -375,13 +362,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     }
 
                     this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                        try {
-                            updateClock();
-                            return GLib.SOURCE_CONTINUE;
-                        } catch (e) {
+                        if (!this._updateMirroredClockDisplay(clockDisplay)) {
                             this._clockUpdateId = null;
                             return GLib.SOURCE_REMOVE;
                         }
+
+                        return GLib.SOURCE_CONTINUE;
                     });
 
                     this.add_child(clockDisplay);
@@ -588,10 +574,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _clearWorkspaceIndicatorContent() {
             if (this._workspaceNameLabelChangedId) {
-                try {
-                    this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
-                } catch (_e) {
-                }
+                this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
                 this._workspaceNameLabelChangedId = 0;
             }
             this._workspaceNameLabel = null;
@@ -604,10 +587,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._workspacePreviewSignalIds) {
                 for (const { object, id } of this._workspacePreviewSignalIds) {
-                    try {
-                        object.disconnect(id);
-                    } catch (_e) {
-                    }
+                    object.disconnect(id);
                 }
                 this._workspacePreviewSignalIds = null;
             }
@@ -624,20 +604,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._allocationCloneSignals) {
                 for (const signal of this._allocationCloneSignals) {
-                    try {
-                        signal.source.disconnect(signal.id);
-                    } catch (_e) {
-                    }
+                    signal.source.disconnect(signal.id);
                 }
                 this._allocationCloneSignals = null;
             }
 
             if (this._sourcePresenceSignals) {
                 for (const signal of this._sourcePresenceSignals) {
-                    try {
-                        signal.obj.disconnect(signal.id);
-                    } catch (_e) {
-                    }
+                    signal.obj.disconnect(signal.id);
                 }
                 this._sourcePresenceSignals = null;
             }
@@ -831,13 +805,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 y_align: Clutter.ActorAlign.CENTER,
             });
 
-            const updateClock = () => {
-                if (this._sourceIndicator._clockDisplay) {
-                    clockDisplay.text = this._sourceIndicator._clockDisplay.text;
-                }
-            };
-
-            updateClock();
+            if (!this._bindMirroredClockDisplay(clockDisplay)) {
+                clockDisplay.destroy();
+                this._markEmpty();
+                return;
+            }
 
             // Remove existing timeout before creating new one
             if (this._clockUpdateId) {
@@ -846,17 +818,67 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                try {
-                    updateClock();
-                    return GLib.SOURCE_CONTINUE;
-                } catch (e) {
+                if (!this._updateMirroredClockDisplay(clockDisplay)) {
                     this._clockUpdateId = null;
                     return GLib.SOURCE_REMOVE;
                 }
+
+                return GLib.SOURCE_CONTINUE;
             });
 
             container.add_child(clockDisplay);
             this._clockDisplay = clockDisplay;
+        }
+
+        _bindMirroredClockDisplay(clockDisplay) {
+            const sourceClockDisplay = this._sourceIndicator?._clockDisplay;
+            if (!sourceClockDisplay)
+                return false;
+
+            this._disconnectMirroredClockDisplay();
+            this._clockSourceDisplay = sourceClockDisplay;
+            this._clockDisplay = clockDisplay;
+            this._clockSourceDestroyId = sourceClockDisplay.connect('destroy', () => {
+                this._clockSourceDisplay = null;
+                this._clockSourceDestroyId = 0;
+                if (this._clockUpdateId) {
+                    GLib.source_remove(this._clockUpdateId);
+                    this._clockUpdateId = null;
+                }
+            });
+            this._clockDisplayDestroyId = clockDisplay.connect('destroy', () => {
+                this._clockDisplayDestroyId = 0;
+                this._disconnectMirroredClockDisplay();
+            });
+
+            return this._updateMirroredClockDisplay(clockDisplay);
+        }
+
+        _updateMirroredClockDisplay(clockDisplay) {
+            if (!clockDisplay)
+                return false;
+
+            const sourceClockDisplay = this._clockSourceDisplay;
+            if (!sourceClockDisplay)
+                return false;
+
+            clockDisplay.text = sourceClockDisplay.text ?? '';
+            return true;
+        }
+
+        _disconnectMirroredClockDisplay() {
+            if (this._clockSourceDestroyId && this._clockSourceDisplay) {
+                this._clockSourceDisplay.disconnect(this._clockSourceDestroyId);
+                this._clockSourceDestroyId = 0;
+            }
+
+            if (this._clockDisplayDestroyId && this._clockDisplay) {
+                this._clockDisplay.disconnect(this._clockDisplayDestroyId);
+                this._clockDisplayDestroyId = 0;
+            }
+
+            this._clockSourceDisplay = null;
+            this._clockDisplay = null;
         }
 
         _createSimpleClone(parent, source) {
@@ -1555,11 +1577,48 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             this._syncStaticCopyContainerSize(container, source);
             parent.add_child(container);
-            this._iconContainer = container;
-            this._iconSource = source;
+            this._bindIconSyncSource(container, source);
 
             // Periodically sync icons (every 5 seconds) to catch icon changes
             this._startIconSync();
+        }
+
+        _bindIconSyncSource(container, source) {
+            this._disconnectIconSyncSource();
+
+            this._iconContainer = container;
+            this._iconSource = source;
+            this._iconContainerDestroyId = container.connect('destroy', () => {
+                this._iconContainerDestroyId = 0;
+                this._disconnectIconSyncSource();
+            });
+            this._iconSourceDestroyId = source.connect('destroy', () => {
+                this._iconSource = null;
+                this._iconSourceDestroyId = 0;
+                if (this._iconSyncId) {
+                    GLib.source_remove(this._iconSyncId);
+                    this._iconSyncId = null;
+                }
+                if (this._labelSyncId) {
+                    GLib.source_remove(this._labelSyncId);
+                    this._labelSyncId = null;
+                }
+            });
+        }
+
+        _disconnectIconSyncSource() {
+            if (this._iconContainerDestroyId && this._iconContainer) {
+                this._iconContainer.disconnect(this._iconContainerDestroyId);
+                this._iconContainerDestroyId = 0;
+            }
+
+            if (this._iconSourceDestroyId && this._iconSource) {
+                this._iconSource.disconnect(this._iconSourceDestroyId);
+                this._iconSourceDestroyId = 0;
+            }
+
+            this._iconContainer = null;
+            this._iconSource = null;
         }
 
         _copyIconsFromSource(container, source) {
@@ -1660,13 +1719,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         }
 
                         // Copy labels (like Vitals' numbers/text values)
-                        const labelCopy = new St.Label({
-                            text: widget.text,
-                            style_class: widget.get_style_class_name() || '',
-                            y_align: Clutter.ActorAlign.CENTER,
-                        });
-                        // Store reference to sync text later
-                        labelCopy._sourceLabel = widget;
+                        const labelCopy = this._createLabelCopy(widget);
                         container.add_child(labelCopy);
                     }
                 }
@@ -1701,16 +1754,33 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 if (this._shouldSkipStaticLabelCopy())
                     return null;
 
-                const labelCopy = new St.Label({
-                    text: widget.text,
-                    style_class: widget.get_style_class_name() || '',
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                labelCopy._sourceLabel = widget;
-                return labelCopy;
+                return this._createLabelCopy(widget);
             }
 
             return null;
+        }
+
+        _createLabelCopy(sourceLabel) {
+            const labelCopy = new St.Label({
+                text: sourceLabel.text,
+                style_class: sourceLabel.get_style_class_name() || '',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+
+            labelCopy._sourceLabel = sourceLabel;
+            labelCopy._sourceLabelDestroyId = sourceLabel.connect('destroy', () => {
+                labelCopy._sourceLabel = null;
+                labelCopy._sourceLabelDestroyId = 0;
+            });
+            labelCopy.connect('destroy', () => {
+                if (labelCopy._sourceLabelDestroyId && labelCopy._sourceLabel) {
+                    labelCopy._sourceLabel.disconnect(labelCopy._sourceLabelDestroyId);
+                    labelCopy._sourceLabelDestroyId = 0;
+                }
+                labelCopy._sourceLabel = null;
+            });
+
+            return labelCopy;
         }
 
         _createRenderableActorClone(source) {
@@ -1881,34 +1951,30 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Full rebuild every 5 seconds to catch added/removed icons
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
-                try {
-                    if (this._iconContainer && this._iconSource) {
-                        this._copyIconsFromSource(this._iconContainer, this._iconSource);
-                    }
-                    return GLib.SOURCE_CONTINUE;
-                } catch (e) {
+                if (!this._iconContainer || !this._iconSource) {
                     this._iconSyncId = null;
                     return GLib.SOURCE_REMOVE;
                 }
+
+                this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                return GLib.SOURCE_CONTINUE;
             });
 
             // Sync label text more frequently (every 2 seconds) for Vitals-like extensions
             this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-                try {
-                    if (this._iconContainer) {
-                        this._syncLabelTexts(this._iconContainer);
-                    }
-                    return GLib.SOURCE_CONTINUE;
-                } catch (e) {
+                if (!this._iconContainer) {
                     this._labelSyncId = null;
                     return GLib.SOURCE_REMOVE;
                 }
+
+                this._syncLabelTexts(this._iconContainer);
+                return GLib.SOURCE_CONTINUE;
             });
         }
 
         _syncLabelTexts(container) {
             if (container instanceof St.Label && container._sourceLabel) {
-                container.text = container._sourceLabel.text;
+                container.text = container._sourceLabel.text ?? '';
                 return;
             }
 
@@ -2321,7 +2387,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
                 this._quickSettingsOpenAfterPrimeId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
                     this._quickSettingsOpenAfterPrimeId = 0;
-                    if (!this._isCleanedUp)
+                    if (this._sourceIndicator)
                         this._openQuickSettingsMirroredMenu();
                     return GLib.SOURCE_REMOVE;
                 });
@@ -3185,8 +3251,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _cleanup() {
-            if (this._isCleanedUp) return;
-            this._isCleanedUp = true;
+            this._disconnectMirroredClockDisplay();
+            this._disconnectIconSyncSource();
 
             if (this._clockUpdateId) {
                 GLib.source_remove(this._clockUpdateId);
@@ -3228,10 +3294,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._clipboardSourceRestoreId = null;
             }
             if (this._clipboardPendingSourceRestore) {
-                try {
-                    this._clipboardPendingSourceRestore();
-                } catch (_e) {
-                }
+                this._clipboardPendingSourceRestore();
                 this._clipboardPendingSourceRestore = null;
             }
 
@@ -3261,10 +3324,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             if (this._quickSettingsPrimeRestore) {
-                try {
-                    this._quickSettingsPrimeRestore();
-                } catch (_e) {
-                }
+                this._quickSettingsPrimeRestore();
                 this._quickSettingsPrimeRestore = null;
             }
 
@@ -3273,10 +3333,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._quickSettingsMenuRestoreId = 0;
             }
             if (this._quickSettingsMenuPendingRestore) {
-                try {
-                    this._quickSettingsMenuPendingRestore();
-                } catch (_e) {
-                }
+                this._quickSettingsMenuPendingRestore();
                 this._quickSettingsMenuPendingRestore = null;
             }
 
@@ -3285,10 +3342,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._astraMenuRestoreId = 0;
             }
             if (this._astraMenuPendingRestore) {
-                try {
-                    this._astraMenuPendingRestore();
-                } catch (_e) {
-                }
+                this._astraMenuPendingRestore();
                 this._astraMenuPendingRestore = null;
             }
 
@@ -3297,10 +3351,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._genericMenuRestoreId = 0;
             }
             if (this._genericMenuPendingRestore) {
-                try {
-                    this._genericMenuPendingRestore();
-                } catch (_e) {
-                }
+                this._genericMenuPendingRestore();
                 this._genericMenuPendingRestore = null;
             }
 
@@ -3330,27 +3381,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             if (this._workspaceIndicatorModeWatchSource && this._workspaceIndicatorModeWatchId) {
-                try {
-                    this._workspaceIndicatorModeWatchSource.disconnect(this._workspaceIndicatorModeWatchId);
-                } catch (_e) {
-                }
+                this._workspaceIndicatorModeWatchSource.disconnect(this._workspaceIndicatorModeWatchId);
                 this._workspaceIndicatorModeWatchSource = null;
                 this._workspaceIndicatorModeWatchId = 0;
             }
 
             if (this._workspaceSourceMenuRegistered) {
-                try {
-                    this._panel?.menuManager?.removeMenu(this._workspaceSourceMenuRegistered);
-                } catch (_e) {
-                }
+                this._panel?.menuManager?.removeMenu(this._workspaceSourceMenuRegistered);
                 this._workspaceSourceMenuRegistered = null;
             }
 
             if (this._workspaceNameLabelChangedId) {
-                try {
-                    this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
-                } catch (_e) {
-                }
+                this._sourceIndicator?.menu?.disconnect(this._workspaceNameLabelChangedId);
                 this._workspaceNameLabelChangedId = 0;
             }
             this._workspaceNameLabel = null;
@@ -3361,10 +3403,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._workspaceMenuRestoreId = 0;
             }
             if (this._workspaceMenuPendingRestore) {
-                try {
-                    this._workspaceMenuPendingRestore();
-                } catch (_e) {
-                }
+                this._workspaceMenuPendingRestore();
                 this._workspaceMenuPendingRestore = null;
             }
 
@@ -3375,10 +3414,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._workspacePreviewSignalIds) {
                 for (const { object, id } of this._workspacePreviewSignalIds) {
-                    try {
-                        object.disconnect(id);
-                    } catch (_e) {
-                    }
+                    object.disconnect(id);
                 }
                 this._workspacePreviewSignalIds = null;
             }
@@ -3394,10 +3430,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._allocationCloneSignals) {
                 for (const signal of this._allocationCloneSignals) {
-                    try {
-                        signal.source.disconnect(signal.id);
-                    } catch (e) {
-                    }
+                    signal.source.disconnect(signal.id);
                 }
                 this._allocationCloneSignals = null;
             }
@@ -3422,6 +3455,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._nWorkspacesChangedId = null;
                 }
             }
+
+            this._sourceIndicator = null;
+            this._panel = null;
+            this._workspaceManager = null;
         }
 
         destroy() {

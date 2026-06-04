@@ -774,7 +774,7 @@ var MultiMonitorsDateMenuButton = (() => {
             // appearing on the primary monitor.
 
             this._clock = new GnomeDesktop.WallClock();
-            this._clock.bind_property('clock', this._clockDisplay, 'text', GObject.BindingFlags.SYNC_CREATE);
+            this._clockBinding = this._clock.bind_property('clock', this._clockDisplay, 'text', GObject.BindingFlags.SYNC_CREATE);
             this._clockNotifyTimezoneId = this._clock.connect('notify::timezone', this._updateTimeZone.bind(this));
 
             this._sessionModeUpdatedId = MainRef.sessionMode.connect('updated', this._sessionUpdated.bind(this));
@@ -802,26 +802,49 @@ var MultiMonitorsDateMenuButton = (() => {
             }
         }
 
+        _cleanupClock() {
+            if (this._clockBinding) {
+                this._clockBinding.unbind();
+                this._clockBinding = null;
+            }
+
+            if (this._clockNotifyTimezoneId && this._clock) {
+                this._clock.disconnect(this._clockNotifyTimezoneId);
+                this._clockNotifyTimezoneId = 0;
+            }
+
+            if (this._clock) {
+                this._clock.run_dispose();
+                this._clock = null;
+            }
+        }
+
         destroy() {
             if (DateMenu.DateMenuButton) {
+                this._cleanupClock();
                 super.destroy();
+                this._clockDisplay = null;
+                this._panel = null;
                 return;
             }
 
             if (this._sessionModeUpdatedId)
                 MainRef.sessionMode.disconnect(this._sessionModeUpdatedId);
-            if (this._clockNotifyTimezoneId)
-                this._clock.disconnect(this._clockNotifyTimezoneId);
+            this._cleanupClock();
 
             // Clean up world clocks and weather if they were created
             if (this._clocksItem) {
                 this._clocksItem.destroy();
+                this._clocksItem = null;
             }
             if (this._weatherItem) {
                 this._weatherItem.destroy();
+                this._weatherItem = null;
             }
 
             super.destroy();
+            this._clockDisplay = null;
+            this._panel = null;
         }
 
         _onOpenStateChanged(menu, open) {
@@ -835,12 +858,9 @@ var MultiMonitorsDateMenuButton = (() => {
                 return;
 
             let monitorIndex = this._panel?.monitorIndex;
-            try {
-                const actorMonitor = layoutManager.findIndexForActor?.(this);
-                if (actorMonitor !== undefined && actorMonitor !== null && actorMonitor >= 0)
-                    monitorIndex = actorMonitor;
-            } catch (_e) {
-            }
+            const actorMonitor = layoutManager.findIndexForActor(this);
+            if (actorMonitor >= 0)
+                monitorIndex = actorMonitor;
 
             if (monitorIndex === undefined || monitorIndex === null || monitorIndex < 0)
                 monitorIndex = layoutManager.primaryIndex;

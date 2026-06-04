@@ -57,6 +57,23 @@ for (let timeoutId of this._pendingTimeouts) {
 this._pendingTimeouts = [];
 ```
 
+### Do not wrap source removal in try-catch
+Tracked GLib source IDs are owned by the class that created them. Remove them directly, then null the stored ID.
+
+```javascript
+// ❌ Bad - hides lifecycle bugs
+try {
+    GLib.source_remove(this._timeoutId);
+} catch (_e) {
+}
+
+// ✅ Good
+if (this._timeoutId) {
+    GLib.source_remove(this._timeoutId);
+    this._timeoutId = null;
+}
+```
+
 ---
 
 ## Signal Connections
@@ -69,6 +86,23 @@ this._signalId = someObject.connect('signal-name', this._handler.bind(this));
 // In destroy()
 if (this._signalId) {
     someObject.disconnect(this._signalId);
+    this._signalId = null;
+}
+```
+
+### Do not wrap disconnect in try-catch
+Signal IDs should be disconnected from the same object that created them. If a disconnect can fail, fix ownership and reference cleanup instead of swallowing the error.
+
+```javascript
+// ❌ Bad - masks stale object references
+try {
+    this._source.disconnect(this._signalId);
+} catch (_e) {
+}
+
+// ✅ Good
+if (this._signalId) {
+    this._source.disconnect(this._signalId);
     this._signalId = null;
 }
 ```
@@ -95,6 +129,32 @@ vfunc_destroy() {
 }
 ```
 
+### Do not use `_isDestroyed` guard flags
+Avoid flags such as `this._isDestroyed` or `this._isCleanedUp` to prevent access after destroy. The owner should null the property that holds the instance after calling `destroy()`, and destroyed objects should null their owned references during cleanup.
+
+```javascript
+// ❌ Bad
+if (this._isDestroyed)
+    return;
+this._isDestroyed = true;
+
+// ✅ Good - owner side
+if (this._panel) {
+    this._panel.destroy();
+    this._panel = null;
+}
+
+// ✅ Good - destroyed instance cleanup
+destroy() {
+    if (this._signalId) {
+        this._source.disconnect(this._signalId);
+        this._signalId = null;
+    }
+    this._source = null;
+    super.destroy();
+}
+```
+
 ---
 
 ## Error Handling
@@ -103,6 +163,8 @@ vfunc_destroy() {
 - ✅ Version-specific API calls that may not exist
 - ✅ External/async operations that can genuinely fail
 - ❌ Simple property access or safe operations
+- ❌ Normal `disconnect()` or `GLib.source_remove()` cleanup
+- ❌ Compatibility checks for stable GNOME Shell properties, such as treating `sessionMode.isLocked` as either a function or property in code that targets versions where it is known
 - ❌ Empty catch blocks with `// ignore`
 
 ```javascript

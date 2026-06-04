@@ -425,8 +425,6 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._applyPanelColor.bind(this));
             this._applyPanelColor();
 
-            this._isDestroyed = false;
-            this.connect('destroy', this._cleanup.bind(this));
         }
 
         _startExtensionWatcher() {
@@ -504,10 +502,6 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _cleanup() {
-            if (this._isDestroyed)
-                return;
-            this._isDestroyed = true;
-
             // Clean up extension watcher
             if (this._extensionStateChangedId) {
                 Main.extensionManager.disconnect(this._extensionStateChangedId);
@@ -515,10 +509,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             }
             if (this._primaryPanelSignalIds) {
                 for (const { actor, id } of this._primaryPanelSignalIds) {
-                    try {
-                        actor.disconnect(id);
-                    } catch (_e) {
-                    }
+                    actor.disconnect(id);
                 }
                 this._primaryPanelSignalIds = [];
             }
@@ -573,6 +564,8 @@ const MultiMonitorsPanel = GObject.registerClass(
             for (const role in this.statusArea) {
                 this._disconnectIndicatorSignals(this.statusArea[role]);
             }
+            this.statusArea = {};
+            this._settings = null;
         }
 
         destroy() {
@@ -731,18 +724,12 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
 
             if (indicator._mmDestroyId) {
-                try {
-                    indicator.disconnect(indicator._mmDestroyId);
-                } catch (_e) {
-                }
+                indicator.disconnect(indicator._mmDestroyId);
                 indicator._mmDestroyId = 0;
             }
 
             if (indicator._mmMenuSetId) {
-                try {
-                    indicator.disconnect(indicator._mmMenuSetId);
-                } catch (_e) {
-                }
+                indicator.disconnect(indicator._mmMenuSetId);
                 indicator._mmMenuSetId = 0;
             }
         }
