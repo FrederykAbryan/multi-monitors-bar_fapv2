@@ -3435,7 +3435,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._allocationCloneSignals = null;
             }
 
-
+            if (this._sourcePresenceSignals) {
+                for (const signal of this._sourcePresenceSignals) {
+                    signal.obj.disconnect(signal.id);
+                }
+                this._sourcePresenceSignals = null;
+            }
 
             if (this._role === 'activities') {
                 if (this._showingId) {
