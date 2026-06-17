@@ -814,7 +814,6 @@ var MultiMonitorsDateMenuButton = (() => {
             }
 
             if (this._clock) {
-                this._clock.run_dispose();
                 this._clock = null;
             }
         }

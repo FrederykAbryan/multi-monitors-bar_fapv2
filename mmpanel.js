@@ -20,6 +20,7 @@ import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
 import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
+import Graphene from 'gi://Graphene';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 
@@ -385,9 +386,19 @@ const MultiMonitorsPanel = GObject.registerClass(
             });
             this.add_child(this._rightBox);
 
-            // Connect drag signals for dragging maximized windows off the panel
-            this.connect('button-press-event', this._onButtonPress.bind(this));
-            this.connect('touch-event', this._onTouchEvent.bind(this));
+            // Connect drag signals for dragging maximized windows off the panel.
+            if (Clutter.ClickGesture) {
+                this._clickGesture = new Clutter.ClickGesture({
+                    recognize_on_press: true,
+                });
+                this._clickGestureRecognizeId = this._clickGesture.connect(
+                    'recognize', this._onWindowDragGestureRecognize.bind(this));
+                this.add_action_full(
+                    'window-drag', Clutter.EventPhase.TARGET, this._clickGesture);
+            } else {
+                this.connect('button-press-event', this._onButtonPress.bind(this));
+                this.connect('touch-event', this._onTouchEvent.bind(this));
+            }
 
 
             this._showingId = Main.overview.connect('showing', () => {
@@ -523,6 +534,11 @@ const MultiMonitorsPanel = GObject.registerClass(
                 for (const timeoutId of this._panelRefreshTimeouts)
                     GLib.source_remove(timeoutId);
                 this._panelRefreshTimeouts = [];
+            }
+
+            if (this._clickGestureRecognizeId && this._clickGesture) {
+                this._clickGesture.disconnect(this._clickGestureRecognizeId);
+                this._clickGestureRecognizeId = null;
             }
 
             if (this._workareasChangedId) {
@@ -846,9 +862,66 @@ const MultiMonitorsPanel = GObject.registerClass(
             return false;
         }
 
+        _getGrabSprite(event) {
+            try {
+                const backend = global.stage.get_context().get_backend();
+                if (backend && typeof backend.get_sprite === 'function')
+                    return backend.get_sprite(global.stage, event);
+            } catch (e) {
+                console.debug('[Multi Monitor Bar] Failed to get grab sprite: ' + String(e));
+            }
+
+            return null;
+        }
+
+        _beginWindowGrab(dragWindow, event, x, y, button = -1) {
+            if (dragWindow && typeof dragWindow.begin_grab_op === 'function') {
+                const coords = new Graphene.Point({ x, y });
+                dragWindow.begin_grab_op(
+                    Meta.GrabOp.MOVING,
+                    this._getGrabSprite(event),
+                    event.get_time(),
+                    coords);
+                return true;
+            }
+
+            if (global.display && typeof global.display.begin_grab_op === 'function') {
+                return global.display.begin_grab_op(
+                    dragWindow,
+                    Meta.GrabOp.MOVING,
+                    false, /* pointer grab */
+                    true,  /* frame action */
+                    button,
+                    event.get_state(),
+                    event.get_time(),
+                    x, y);
+            }
+
+            return false;
+        }
+
+        _onWindowDragGestureRecognize() {
+            if (Main.modalCount > 0)
+                return;
+
+            const event = this._clickGesture.get_point_event(0);
+            if (!event || this._isInteractiveEventTarget(event))
+                return;
+
+            const coords = this._clickGesture.get_coords_abs();
+            const monitorIndex = this._getMonitorIndexForPosition(coords.x, coords.y);
+            const dragWindow = this._getDraggableWindowForPosition(coords.x, monitorIndex);
+            if (!dragWindow)
+                return;
+
+            this._beginWindowGrab(dragWindow, event, coords.x, coords.y);
+        }
+
         _tryDragWindow(event) {
-            // Prefer GNOME Shell's own implementation when available so behavior
-            // matches the main monitor exactly on this shell version.
+            // GNOME 45-49 (no Clutter.ClickGesture): prefer the running shell's
+            // own Panel._tryDragWindow so the grab uses the exact begin_grab_op
+            // signature for this version. Our _beginWindowGrab below assumes the
+            // GNOME 50 window-level API and does not match older shells.
             if (Main.panel && typeof Main.panel._tryDragWindow === 'function') {
                 try {
                     return Main.panel._tryDragWindow.call(this, event);
@@ -877,21 +950,12 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (!dragWindow)
                 return Clutter.EVENT_PROPAGATE;
 
-            // Let Mutter handle the real drag interaction (including threshold),
-            // matching GNOME Shell panel behavior.
             const button = event.type() === Clutter.EventType.BUTTON_PRESS
                 ? event.get_button()
                 : -1;
 
-            return global.display.begin_grab_op(
-                dragWindow,
-                Meta.GrabOp.MOVING,
-                false, /* pointer grab */
-                true,  /* frame action */
-                button,
-                event.get_state(),
-                event.get_time(),
-                x, y) ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+            return this._beginWindowGrab(dragWindow, event, x, y, button)
+                ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
         }
 
         _onButtonPress(_actor, event) {

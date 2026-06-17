@@ -19,7 +19,6 @@ const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
 let _originalOpen = null;
 let _originalClose = null;
 let _settings = null;
-let _originalPrimaryIndex = null;
 let _screenshotClones = [];
 let _stageEventId = null;
 let _cloneRects = []; // Store clone bounding boxes for click detection
@@ -33,6 +32,28 @@ function getMonitorAtCursor() {
         if (x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height) return i;
     }
     return Main.layoutManager.primaryIndex;
+}
+
+// Restore the primary index only if this patch has an in-flight screenshot
+// change recorded on the screenshot UI, and only if the saved index is still
+// valid for the *current* monitor set. The monitor index->physical mapping can
+// change across suspend/resume and monitor (dis)connect, so a stale saved index
+// must never be force-applied over GNOME's recomputed primary.
+function _restorePendingPrimary(ui) {
+    if (!ui || ui._restorePrimary === undefined)
+        return;
+
+    const saved = ui._restorePrimary;
+    delete ui._restorePrimary;
+
+    if (!Number.isInteger(saved))
+        return;
+
+    const monitorCount = Main.layoutManager.monitors.length;
+    if (saved >= 0 && saved < monitorCount &&
+        Main.layoutManager.primaryIndex !== saved) {
+        Main.layoutManager.primaryIndex = saved;
+    }
 }
 
 function _destroyClones() {
@@ -485,7 +506,6 @@ export function patchScreenshotUI(settings) {
     if (!Main.screenshotUI) return;
 
     _settings = settings;
-    _originalPrimaryIndex = Main.layoutManager.primaryIndex;
 
     _originalOpen = Main.screenshotUI.open.bind(Main.screenshotUI);
     if (Main.screenshotUI.close) {
@@ -535,10 +555,7 @@ export function patchScreenshotUI(settings) {
             const openPromise = _originalOpen(screenshotType, options);
             await openPromise;
         } catch (e) {
-            if (Main.screenshotUI._restorePrimary !== undefined) {
-                Main.layoutManager.primaryIndex = Main.screenshotUI._restorePrimary;
-                delete Main.screenshotUI._restorePrimary;
-            }
+            _restorePendingPrimary(Main.screenshotUI);
         }
     };
 
@@ -546,10 +563,7 @@ export function patchScreenshotUI(settings) {
         // Destroy clones first
         _destroyClones();
 
-        if (this._restorePrimary !== undefined) {
-            Main.layoutManager.primaryIndex = this._restorePrimary;
-            delete this._restorePrimary;
-        }
+        _restorePendingPrimary(this);
 
         let ret;
         if (_originalClose) ret = _originalClose.call(this);
@@ -560,14 +574,11 @@ export function patchScreenshotUI(settings) {
 export function unpatchScreenshotUI() {
     _destroyClones();
 
-    if (Main.screenshotUI && Main.screenshotUI._restorePrimary !== undefined) {
-        Main.layoutManager.primaryIndex = Main.screenshotUI._restorePrimary;
-        delete Main.screenshotUI._restorePrimary;
-    }
-
-    if (_originalPrimaryIndex !== null && Main.layoutManager.primaryIndex !== _originalPrimaryIndex) {
-        Main.layoutManager.primaryIndex = _originalPrimaryIndex;
-    }
+    // Only undo an in-flight screenshot change (validated against the current
+    // monitor set). Never force a snapshot taken at patch time over GNOME's
+    // primary index -- across suspend/resume that snapshot is stale and would
+    // move the primary monitor to the wrong (e.g. external) display.
+    _restorePendingPrimary(Main.screenshotUI);
 
     if (_originalOpen && Main.screenshotUI) {
         Main.screenshotUI.open = _originalOpen;
@@ -578,5 +589,4 @@ export function unpatchScreenshotUI() {
         _originalClose = null;
     }
     _settings = null;
-    _originalPrimaryIndex = null;
 }
