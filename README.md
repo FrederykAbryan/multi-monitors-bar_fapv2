@@ -99,13 +99,19 @@ gnome-extensions prefs multi-monitors-bar@frederykabryan
 ### Advanced: gsettings CLI
 
 ```bash
+SCHEMA_DIR="$HOME/.local/share/gnome-shell/extensions/multi-monitors-bar@frederykabryan/schemas"
+
 # View / set any setting
-gsettings get  org.gnome.shell.extensions.multi-monitors-add-on show-panel
-gsettings set  org.gnome.shell.extensions.multi-monitors-add-on show-panel true
+GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get \
+  org.gnome.shell.extensions.multi-monitors-bar show-panel
+GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings set \
+  org.gnome.shell.extensions.multi-monitors-bar show-panel true
 
 # Exclude indicators from transfer
-gsettings get  org.gnome.shell.extensions.multi-monitors-add-on exclude-indicators
-gsettings set  org.gnome.shell.extensions.multi-monitors-add-on exclude-indicators \
+GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings get \
+  org.gnome.shell.extensions.multi-monitors-bar exclude-indicators
+GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR" gsettings set \
+  org.gnome.shell.extensions.multi-monitors-bar exclude-indicators \
   "['fildem-indicator', 'another-indicator']"
 ```
 
@@ -158,7 +164,8 @@ gnome-extensions info multi-monitors-bar@frederykabryan
 
 1. Check the exclude list:
    ```bash
-   gsettings get org.gnome.shell.extensions.multi-monitors-add-on exclude-indicators
+   GSETTINGS_SCHEMA_DIR="$HOME/.local/share/gnome-shell/extensions/multi-monitors-bar@frederykabryan/schemas" \
+     gsettings get org.gnome.shell.extensions.multi-monitors-bar exclude-indicators
    ```
 2. Refresh by toggling the extension.
 </details>
@@ -190,7 +197,7 @@ rm -rf ~/.local/share/gnome-shell/extensions/multi-monitors-bar@frederykabryan
 ├── metadata.json                 # Extension metadata & version
 ├── stylesheet.css                # Panel & indicator CSS
 ├── schemas/                      # GSettings schema definitions
-│   └── org.gnome.shell.extensions.multi-monitors-add-on.gschema.xml
+│   └── org.gnome.shell.extensions.multi-monitors-bar.gschema.xml
 └── reinstall.sh                  # One-step reinstall script
 ```
 

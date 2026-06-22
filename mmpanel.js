@@ -338,6 +338,15 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.monitorIndex = monitorIndex;
             this._settings = settings;
 
+            this._destroyed = false;
+            // Cleanup MUST run from the `destroy` SIGNAL, not only the destroy()
+            // method. On resume from sleep a monitor can disappear and mutter
+            // destroys this panel from C code without calling our JS destroy()
+            // override. The signal handler guarantees timeouts are cancelled and
+            // signals on Main.panel boxes are disconnected, so queued
+            // _updatePanel() callbacks can't run against disposed actors.
+            this.connect('destroy', () => this._cleanup());
+
             this.set_offscreen_redirect(Clutter.OffscreenRedirect.ALWAYS);
 
             this._sessionStyle = null;
@@ -345,7 +354,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.statusArea = {};
 
             this.menuManager = new PopupMenu.PopupMenuManager(this);
-            this._primaryPanelSignalIds = [];
+            this._primaryPanelBoxes = [];
             this._panelRefreshTimeouts = [];
 
             // GNOME 46 FIX: Create boxes with proper expansion and alignment
@@ -474,16 +483,20 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._schedulePanelRefresh([50, 250, 1000]);
             };
 
+            // connectObject ties these handlers on the surviving Main.panel
+            // boxes to THIS panel's lifetime, so they auto-disconnect when the
+            // panel is destroyed (even from C on a monitor change). Otherwise
+            // they keep firing scheduleUpdate against a disposed panel.
             const signals = ['child-added', 'child-removed', 'actor-added', 'actor-removed'];
             for (const boxName of ['_leftBox', '_centerBox', '_rightBox']) {
                 const box = mainPanel[boxName];
                 if (!box)
                     continue;
 
+                this._primaryPanelBoxes.push(box);
                 for (const signal of signals) {
                     try {
-                        const id = box.connect(signal, scheduleUpdate);
-                        this._primaryPanelSignalIds.push({ actor: box, id });
+                        box.connectObject(signal, scheduleUpdate, this);
                     } catch (_e) {
                         // Signal names differ between Shell/Clutter versions.
                     }
@@ -513,16 +526,22 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _cleanup() {
+            if (this._destroyed)
+                return;
+            this._destroyed = true;
+
             // Clean up extension watcher
             if (this._extensionStateChangedId) {
                 Main.extensionManager.disconnect(this._extensionStateChangedId);
                 this._extensionStateChangedId = null;
             }
-            if (this._primaryPanelSignalIds) {
-                for (const { actor, id } of this._primaryPanelSignalIds) {
-                    actor.disconnect(id);
+            // Handlers were connected with connectObject(this); auto-disconnect
+            // on destroy covers it, but disconnect explicitly for completeness.
+            if (this._primaryPanelBoxes) {
+                for (const box of this._primaryPanelBoxes) {
+                    box.disconnectObject(this);
                 }
-                this._primaryPanelSignalIds = [];
+                this._primaryPanelBoxes = [];
             }
             if (this._initialCheckTimeouts) {
                 for (const timeoutId of this._initialCheckTimeouts) {
@@ -1034,6 +1053,8 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _updatePanel() {
+            if (this._destroyed)
+                return;
             this._hideIndicators();
 
             // Clone ALL indicators from main panel instead of just the default ones

@@ -95,6 +95,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // source indicator's real menu. We never use the default menu.
             super._init(0.0, null, true);
 
+            this._destroyed = false;
+            // Cleanup MUST run from the `destroy` SIGNAL, not only the destroy()
+            // method. When a parent panel is destroyed from C code (e.g. a
+            // monitor disappears on resume from sleep), Clutter destroys its
+            // children without ever calling our JS destroy() override. Without
+            // this, handlers connected to surviving Main.panel indicators stay
+            // live and fire against this already-disposed actor, which floods
+            // the log with "already disposed" errors and crashes gnome-shell.
+            this.connect('destroy', () => this._cleanup());
+
             this._role = role;
             this._panel = panel;
 
@@ -220,37 +230,43 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _setupSourcePresenceWatchers() {
-            if (this._sourcePresenceSignals)
+            if (this._sourcePresenceWatched)
                 return;
+            this._sourcePresenceWatched = true;
 
-            this._sourcePresenceSignals = [];
             const scheduleSync = () => this._syncMirrorPresence();
-            const connectSafe = (obj, signal) => {
-                if (!obj || typeof obj.connect !== 'function')
+            // connectObject ties each handler to THIS button as the owner, so
+            // GJS auto-disconnects them when the button is destroyed — including
+            // C-side destruction when a monitor disappears on resume. Without
+            // this, handlers on the surviving Main.panel source indicator fire
+            // against the disposed button and crash gnome-shell.
+            const watch = (obj, signal) => {
+                if (!obj || typeof obj.connectObject !== 'function')
                     return;
                 try {
-                    const id = obj.connect(signal, scheduleSync);
-                    this._sourcePresenceSignals.push({ obj, id });
+                    obj.connectObject(signal, scheduleSync, this);
                 } catch (_e) {
                     // Signal availability varies by shell/extension actor type.
                 }
             };
 
-            connectSafe(this._sourceIndicator, 'notify::visible');
-            connectSafe(this._sourceIndicator, 'notify::mapped');
-            connectSafe(this._sourceIndicator, 'notify::allocation');
+            watch(this._sourceIndicator, 'notify::visible');
+            watch(this._sourceIndicator, 'notify::mapped');
+            watch(this._sourceIndicator, 'notify::allocation');
 
             const sourceChild = this._sourceIndicator?.get_first_child?.();
-            connectSafe(sourceChild, 'notify::visible');
-            connectSafe(sourceChild, 'notify::mapped');
-            connectSafe(sourceChild, 'notify::allocation');
-            connectSafe(sourceChild, 'actor-added');
-            connectSafe(sourceChild, 'actor-removed');
-            connectSafe(sourceChild, 'child-added');
-            connectSafe(sourceChild, 'child-removed');
+            watch(sourceChild, 'notify::visible');
+            watch(sourceChild, 'notify::mapped');
+            watch(sourceChild, 'notify::allocation');
+            watch(sourceChild, 'actor-added');
+            watch(sourceChild, 'actor-removed');
+            watch(sourceChild, 'child-added');
+            watch(sourceChild, 'child-removed');
         }
 
         _syncMirrorPresence() {
+            if (this._destroyed)
+                return;
             if (!this._sourceIndicator) {
                 this._markEmpty();
                 return;
@@ -609,12 +625,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._allocationCloneSignals = null;
             }
 
-            if (this._sourcePresenceSignals) {
-                for (const signal of this._sourcePresenceSignals) {
-                    signal.obj.disconnect(signal.id);
-                }
-                this._sourcePresenceSignals = null;
-            }
+            // Source-presence handlers were connected with connectObject(this);
+            // GJS auto-disconnects them on destroy, but disconnect explicitly
+            // for the non-destroy cleanup path too.
+            this._sourceIndicator?.disconnectObject?.(this);
+            this._sourceIndicator?.get_first_child?.()?.disconnectObject?.(this);
+            this._sourcePresenceWatched = false;
 
             const children = this.get_children ? this.get_children() : [];
             for (const child of children)
@@ -3251,6 +3267,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _cleanup() {
+            if (this._destroyed)
+                return;
+            this._destroyed = true;
+
             this._disconnectMirroredClockDisplay();
             this._disconnectIconSyncSource();
 
@@ -3435,12 +3455,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._allocationCloneSignals = null;
             }
 
-            if (this._sourcePresenceSignals) {
-                for (const signal of this._sourcePresenceSignals) {
-                    signal.obj.disconnect(signal.id);
-                }
-                this._sourcePresenceSignals = null;
-            }
+            // Source-presence handlers were connected with connectObject(this);
+            // GJS auto-disconnects them on destroy, but disconnect explicitly
+            // for the non-destroy cleanup path too.
+            this._sourceIndicator?.disconnectObject?.(this);
+            this._sourceIndicator?.get_first_child?.()?.disconnectObject?.(this);
+            this._sourcePresenceWatched = false;
 
             if (this._role === 'activities') {
                 if (this._showingId) {
