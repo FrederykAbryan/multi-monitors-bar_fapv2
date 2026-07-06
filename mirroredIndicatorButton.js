@@ -25,6 +25,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 
+// Per-monitor taskButton filtering debug-log flag.
+const MMB_PM_DEBUG = false;
+
 const MMWorkspacePreviewLayout = GObject.registerClass(
     class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
         vfunc_get_preferred_width() {
@@ -190,6 +193,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._sourceIndicator = Main.panel.statusArea[role] || null;
             this._isEmpty = false;
 
+            // FILTER-A: flag taskButton clones. The clone is ALWAYS fully built
+            // (content + box); visibility is managed by the _syncMirrorPresence guard +
+            // _syncTaskbarFilter. (The early-return was REMOVED — empty-clone bug: a later window
+            // gorunur yapilsa da Clutter.Clone icerigi olusturulmamis kaliyordu.) <<<
+            if (this._isTaskButtonRole(role))
+                this._isTaskButtonClone = true;
+
             if (this._sourceIndicator) {
                 // Check if the source indicator has any visible content
                 const sourceChild = this._sourceIndicator.get_first_child();
@@ -228,6 +238,38 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.can_focus = false;
             this.track_hover = false;
         }
+
+        // Per-monitor taskButton filter helpers
+        _isTaskButtonRole(role) {
+            // tasks-in-panel format: `taskButton${windowId}`, windowId is a positive int.
+            // Strict regex so future roles like 'taskButtonGroup' don't produce false positives.
+            return typeof role === 'string' && /^taskButton\d+$/.test(role);
+        }
+
+        _getTaskButtonWindow() {
+            // TaskButton._window is set BEFORE addToStatusArea, so _window is populated while the clone is visible.
+            const src = this._sourceIndicator;
+            if (!src)
+                return null;
+            const win = src._window;
+            return (win && typeof win.get_monitor === 'function') ? win : null;
+        }
+
+        _shouldShowTaskButton() {
+            const win = this._getTaskButtonWindow();
+            if (!win)
+                return false;                    // no/dangling _window -> safe default: hide
+            let mon = -1;
+            try {
+                mon = win.get_monitor();         // dangling Meta.Window guard
+            } catch (_e) {
+                return false;
+            }
+            if (mon < 0)
+                return false;                    // monitor not assigned yet (transition moment)
+            return mon === this._panel.monitorIndex; // this._panel.monitorIndex
+        }
+        // end of filter helpers
 
         _setupSourcePresenceWatchers() {
             if (this._sourcePresenceWatched)
@@ -271,6 +313,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._markEmpty();
                 return;
             }
+
+            // FILTER-B guard: taskButton visibility is owned ONLY by _syncTaskbarFilter
+            // (window-entered/left-monitor -> all panels). _syncMirrorPresence is triggered by source-
+            // allocation spam; during a drag it could read the get_monitor()=-1 transition moment and hide
+            // the clone incorrectly. Do NOT touch taskButton clones here -> the race is resolved.
+            if (this._isTaskButtonClone)
+                return;
 
             const sourceChild = this._sourceIndicator.get_first_child?.();
             const hasContent = this._sourceIndicator.visible &&
@@ -1217,7 +1266,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const forwardSpec = (eventName, vfuncName, event) => {
                 let handled = false;
 
-                if ((eventName === 'button-press-event' || eventName === 'touch-event') && (targetChild.menu || targetChild._menu)) {
+                // BUG FIX (taskButton left-click behavior): the Astra Monitor menu-opening workaround is ONLY
+                // for menu-centric indicators (like Astra). A tasks-in-panel TaskButton handles a left-click
+                // PanelMenu.Button (default bos .menu var) ama tiklamayi button-RELEASE ile
+                // as window-activate/minimize (its own _onClick).
+                // On a taskButton clone this workaround wrongly opened a menu on button-PRESS -> left-click
+                // showed "right-click-like options". SKIP it for taskButton clones -> the normal forward below
+                // runs tasks-in-panel's own left/right behavior (same as on the primary).
+                if ((eventName === 'button-press-event' || eventName === 'touch-event')
+                    && !this._isTaskButtonClone
+                    && (targetChild.menu || targetChild._menu)) {
                     if (this._openAstraProxyMenu(proxy, targetChild)) {
                         return Clutter.EVENT_STOP;
                     }
@@ -2106,6 +2164,29 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             if (this._role === 'quickSettings' && this._sourceIndicator?.menu) {
                 return this._openQuickSettingsMenu();
+            }
+
+            // BUG FIX (taskButton clone left-click = SAME behavior as on the primary):
+            // The clone goes through its own PanelMenu.Button _onButtonPress (not the Astra forwardSpec — a
+            // taskButton never enters that path). Since the source TaskButton's AppMenu is populated, the
+            // (this._sourceIndicator.menu) HER tikta menuyu aciyordu → sol-tik "sag-tik gibi options".
+            // tasks-in-panel primary'de menu-on-press'i vfunc_event no-op ile oldurur ve button-RELEASE'te
+            // generic branch below would do left=activate/right=menu. We reproduce that per-button on the clone:
+            //   left   -> source _toggleWindow() (activate/minimize the window)
+            //   middle -> source _onClick(event) (new window)
+            //   right  -> fall through -> _openMirroredMenu (source AppMenu anchored to the clone = primary right-click)
+            if (this._isTaskButtonClone) {
+                const src = this._sourceIndicator;
+                const button = event?.get_button?.() ?? Clutter.BUTTON_PRIMARY;
+                if (button === Clutter.BUTTON_PRIMARY && src && typeof src._toggleWindow === 'function') {
+                    src._toggleWindow();
+                    return Clutter.EVENT_STOP;
+                }
+                if (button === Clutter.BUTTON_MIDDLE && src && typeof src._onClick === 'function') {
+                    src._onClick(event);
+                    return Clutter.EVENT_STOP;
+                }
+                // SECONDARY (right) -> fall through to _openMirroredMenu below (source AppMenu)
             }
 
             // Check for standard menu first
