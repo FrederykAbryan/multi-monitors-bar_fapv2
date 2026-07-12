@@ -371,21 +371,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         return;
                     }
 
-                    // Remove existing timeout before creating new one
-                    if (this._clockUpdateId) {
-                        GLib.source_remove(this._clockUpdateId);
-                        this._clockUpdateId = null;
-                    }
-
-                    this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                        if (!this._updateMirroredClockDisplay(clockDisplay)) {
-                            this._clockUpdateId = null;
-                            return GLib.SOURCE_REMOVE;
-                        }
-
-                        return GLib.SOURCE_CONTINUE;
-                    });
-
                     this.add_child(clockDisplay);
                     this._clockDisplay = clockDisplay;
                     return;
@@ -827,21 +812,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return;
             }
 
-            // Remove existing timeout before creating new one
-            if (this._clockUpdateId) {
-                GLib.source_remove(this._clockUpdateId);
-                this._clockUpdateId = null;
-            }
-
-            this._clockUpdateId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
-                if (!this._updateMirroredClockDisplay(clockDisplay)) {
-                    this._clockUpdateId = null;
-                    return GLib.SOURCE_REMOVE;
-                }
-
-                return GLib.SOURCE_CONTINUE;
-            });
-
             container.add_child(clockDisplay);
             this._clockDisplay = clockDisplay;
         }
@@ -854,43 +824,15 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._disconnectMirroredClockDisplay();
             this._clockSourceDisplay = sourceClockDisplay;
             this._clockDisplay = clockDisplay;
-            this._clockSourceDestroyId = sourceClockDisplay.connect('destroy', () => {
-                this._clockSourceDisplay = null;
-                this._clockSourceDestroyId = 0;
-                if (this._clockUpdateId) {
-                    GLib.source_remove(this._clockUpdateId);
-                    this._clockUpdateId = null;
-                }
-            });
-            this._clockDisplayDestroyId = clockDisplay.connect('destroy', () => {
-                this._clockDisplayDestroyId = 0;
-                this._disconnectMirroredClockDisplay();
-            });
-
-            return this._updateMirroredClockDisplay(clockDisplay);
-        }
-
-        _updateMirroredClockDisplay(clockDisplay) {
-            if (!clockDisplay)
-                return false;
-
-            const sourceClockDisplay = this._clockSourceDisplay;
-            if (!sourceClockDisplay)
-                return false;
-
-            clockDisplay.text = sourceClockDisplay.text ?? '';
+            this._clockBinding = sourceClockDisplay.bind_property(
+                'text', clockDisplay, 'text', GObject.BindingFlags.SYNC_CREATE);
             return true;
         }
 
         _disconnectMirroredClockDisplay() {
-            if (this._clockSourceDestroyId && this._clockSourceDisplay) {
-                this._clockSourceDisplay.disconnect(this._clockSourceDestroyId);
-                this._clockSourceDestroyId = 0;
-            }
-
-            if (this._clockDisplayDestroyId && this._clockDisplay) {
-                this._clockDisplay.disconnect(this._clockDisplayDestroyId);
-                this._clockDisplayDestroyId = 0;
+            if (this._clockBinding) {
+                this._clockBinding.unbind();
+                this._clockBinding = null;
             }
 
             this._clockSourceDisplay = null;
@@ -1615,10 +1557,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     GLib.source_remove(this._iconSyncId);
                     this._iconSyncId = null;
                 }
-                if (this._labelSyncId) {
-                    GLib.source_remove(this._labelSyncId);
-                    this._labelSyncId = null;
-                }
             });
         }
 
@@ -1778,23 +1716,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _createLabelCopy(sourceLabel) {
             const labelCopy = new St.Label({
-                text: sourceLabel.text,
                 style_class: sourceLabel.get_style_class_name() || '',
                 y_align: Clutter.ActorAlign.CENTER,
             });
 
-            labelCopy._sourceLabel = sourceLabel;
-            labelCopy._sourceLabelDestroyId = sourceLabel.connect('destroy', () => {
-                labelCopy._sourceLabel = null;
-                labelCopy._sourceLabelDestroyId = 0;
-            });
-            labelCopy.connect('destroy', () => {
-                if (labelCopy._sourceLabelDestroyId && labelCopy._sourceLabel) {
-                    labelCopy._sourceLabel.disconnect(labelCopy._sourceLabelDestroyId);
-                    labelCopy._sourceLabelDestroyId = 0;
-                }
-                labelCopy._sourceLabel = null;
-            });
+            // A native binding is released automatically when either label is
+            // finalized. Do not attach JS callbacks to St.Label::destroy: GJS
+            // 1.86 (GNOME 50) blocks those callbacks if finalization happens
+            // while SpiderMonkey is sweeping the wrappers.
+            sourceLabel.bind_property(
+                'text', labelCopy, 'text', GObject.BindingFlags.SYNC_CREATE);
 
             return labelCopy;
         }
@@ -1960,10 +1891,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 GLib.source_remove(this._iconSyncId);
                 this._iconSyncId = null;
             }
-            if (this._labelSyncId) {
-                GLib.source_remove(this._labelSyncId);
-                this._labelSyncId = null;
-            }
 
             // Full rebuild every 5 seconds to catch added/removed icons
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
@@ -1975,29 +1902,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._copyIconsFromSource(this._iconContainer, this._iconSource);
                 return GLib.SOURCE_CONTINUE;
             });
-
-            // Sync label text more frequently (every 2 seconds) for Vitals-like extensions
-            this._labelSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
-                if (!this._iconContainer) {
-                    this._labelSyncId = null;
-                    return GLib.SOURCE_REMOVE;
-                }
-
-                this._syncLabelTexts(this._iconContainer);
-                return GLib.SOURCE_CONTINUE;
-            });
-        }
-
-        _syncLabelTexts(container) {
-            if (container instanceof St.Label && container._sourceLabel) {
-                container.text = container._sourceLabel.text ?? '';
-                return;
-            }
-
-            const children = container.get_children ? container.get_children() : [];
-            for (const child of children) {
-                this._syncLabelTexts(child);
-            }
         }
 
         _createFillClone(parent, source) {
@@ -3274,11 +3178,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._disconnectMirroredClockDisplay();
             this._disconnectIconSyncSource();
 
-            if (this._clockUpdateId) {
-                GLib.source_remove(this._clockUpdateId);
-                this._clockUpdateId = null;
-            }
-
             if (this._forwardClickTimeoutId) {
                 GLib.source_remove(this._forwardClickTimeoutId);
                 this._forwardClickTimeoutId = null;
@@ -3287,11 +3186,6 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (this._iconSyncId) {
                 GLib.source_remove(this._iconSyncId);
                 this._iconSyncId = null;
-            }
-
-            if (this._labelSyncId) {
-                GLib.source_remove(this._labelSyncId);
-                this._labelSyncId = null;
             }
 
             if (this._arcMenuTimeoutId) {
