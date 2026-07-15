@@ -33,6 +33,9 @@ import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as MultiMonitors from './extension.js';
+
+// Per-monitor taskButton filtering debug-log flag.
+const MMB_PM_DEBUG = false;
 import * as MMCalendar from './mmcalendar.js';
 import * as Constants from './mmPanelConstants.js';
 import { StatusIndicatorsController } from './statusIndicatorsController.js';
@@ -425,6 +428,26 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             this._workareasChangedId = global.display.connect('workareas-changed', () => this.queue_relayout());
 
+            // FILTER-B: window monitor change -> taskbar re-filter
+            // tasks-in-panel does NOT listen for monitor changes, so this watcher is required.
+            // connectObject(owner=this) → panel destroy'da otomatik disconnect (leak-proof,
+            // mevcut disposed-error baseline'ini cogaltmaz).
+            global.display.connectObject(
+                'window-entered-monitor', (_d, idx, win) => this._onWindowMonitorChanged(idx, win),
+                'window-left-monitor', (_d, idx, win) => this._onWindowMonitorChanged(idx, win),
+                // restacked: after a window's stacking/monitor transition settles -> idempotent re-filter
+                // (window-list/aztaskbar listen to the same signal; cheap thanks to the no-op guard).
+                'restacked', () => this._scheduleTaskbarFilterSync(),
+                // grab-op-end: a final re-sync guarantee at the end of a drag (even if a signal is missed).
+                'grab-op-end', () => this._scheduleTaskbarFilterSync(),
+                this);
+
+            // ROOT CAUSE #3 FIX: deferred-work (GNOME-native). _scheduleTaskbarFilterSync no longer uses a
+            // GLib trailing-timeout but Main.queueDeferredWork -> it runs once BEFORE the next frame,
+            // automatically coalescing the drag's signal burst with zero lag. The old 100ms
+            // trailing-debounce never fired until the drag ENDED (the fast-drag bug).
+            this._taskbarFilterWorkId = Main.initializeDeferredWork(this, () => this._syncTaskbarFilter());
+
             this._showActivitiesId = this._settings.connect('changed::' + SHOW_ACTIVITIES_ID,
                 this._showActivities.bind(this));
             this._showActivities();
@@ -554,6 +577,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                     GLib.source_remove(timeoutId);
                 this._panelRefreshTimeouts = [];
             }
+            // The FILTER-B deferred-work (this._taskbarFilterWorkId) is cleaned up automatically by Main
+            // on panel destroy (initializeDeferredWork hooks the actor's 'destroy' signal), so no
+            // manual source_remove is needed. The old GLib trailing-timeout was removed.
+            this._taskbarFilterWorkId = null;
 
             if (this._clickGestureRecognizeId && this._clickGesture) {
                 this._clickGesture.disconnect(this._clickGestureRecognizeId);
@@ -1169,6 +1196,20 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._removeRole(rightIndicators, 'activities');
             }
 
+            // BUG FIX (show-activities ayari extended panelde de onurlanir):
+            // MMB's synthetic Activities (workspace-dots) button is recreated on every _updatePanel via
+            // HER _updatePanel'de yeniden yaratiliyordu. _showActivities (mmpanel:612) ayari onurlandirir
+            // ama bu clone pipeline SHOW_ACTIVITIES_ID gate'ini yok sayip onu yeniden yaratiyordu →
+            // _ensureIndicator('activities'), so show-activities=false had no effect. Fix (same pattern as
+            // ayar kapaliysa 'activities' rolunu listelerden cikar → desiredRoles disi kalir →
+            // _removeStaleIndicators temizler, _updateBox yeniden yaratmaz.
+            // the ArcMenu drop, no deletion). (Independent MMB bug — does NOT touch the taskButton filters.)
+            if (!this._settings.get_boolean(SHOW_ACTIVITIES_ID)) {
+                this._removeRole(leftIndicators, 'activities');
+                this._removeRole(centerIndicators, 'activities');
+                this._removeRole(rightIndicators, 'activities');
+            }
+
             // Now mirror them in order
             const desiredRoles = new Set([...leftIndicators, ...centerIndicators, ...rightIndicators]);
             this._removeStaleIndicators(desiredRoles);
@@ -1176,7 +1217,71 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._updateBox(leftIndicators, this._leftBox);
             this._updateBox(centerIndicators, this._centerBox);
             this._updateBox(rightIndicators, this._rightBox);
+            this._syncTaskbarFilter();   // taskbar per-monitor filter after re-scan (FILTER-B)
         }
+
+        // FILTER-B: dynamic taskbar filtering methods
+        _onWindowMonitorChanged(monitorIndex, metaWin) {
+            // The monitorIndex guard was REMOVED: every panel re-syncs on EVERY monitor event.
+            // Even if the window-entered(target) signal is missed/reordered during a fast drag, on any
+            // incoming window-left/entered event ALL panels recompute the absolute state
+            // (idempotent + cheap no-op guard). Robust against missed-signal/ordering races.
+            const t = metaWin?.get_window_type?.();
+            if (t === Meta.WindowType.NORMAL || t === Meta.WindowType.DIALOG ||
+                t === Meta.WindowType.MODAL_DIALOG || t === Meta.WindowType.SPLASHSCREEN)
+                this._scheduleTaskbarFilterSync();
+        }
+
+        _scheduleTaskbarFilterSync() {
+            // DEFERRED-WORK coalescing (ROOT CAUSE #3 FIX). _syncTaskbarFilter runs once before the
+            // next frame; a drag's signal burst is coalesced automatically, with zero lag.
+            // queueDeferredWork only runs while the actor is MAPPED -> no wasted work while the panel is hidden.
+            if (this._taskbarFilterWorkId)
+                Main.queueDeferredWork(this._taskbarFilterWorkId);
+        }
+
+        _syncTaskbarFilter() {
+            // IDEMPOTENT — every call recomputes the absolute state from scratch (not a toggle/delta).
+            //
+            // ROOT CAUSE #1 FIX: shouldShow no longer DEPENDS on the source taskButton's `.visible`.
+            // Eski kod `&& !!src.visible` kullaniyordu. Ama PrimaryTaskbarFilter (extension.js) primary-
+            // The old code used `&& !!src.visible`, but PrimaryTaskbarFilter (extension.js) sets the REAL
+            // Main.panel taskButton.visible to false for non-primary windows; that factor carried the
+            // gorunmuyordu. window-list/aztaskbar kanonik pattern'i: kaynagin gorunurlugunu DEGIL,
+            // hiding into the extended clones too. Compute the window's own state (skip_taskbar + active
+            const myMonitor = this.monitorIndex;
+            const activeWs = global.workspace_manager.get_active_workspace();
+            let changed = 0;
+            // Object.keys snapshot — so a statusArea mutation during iteration (clone
+            // add/remove) can't crash (edge: window close + re-filter race).
+            for (const role of Object.keys(this.statusArea)) {
+                if (!/^taskButton\d+$/.test(role))
+                    continue;
+                const clone = this.statusArea[role];
+                if (!clone)
+                    continue;
+                const win = clone._sourceIndicator?._window;
+                let shouldShow = false;
+                try {
+                    shouldShow = !!win
+                        && !win.skip_taskbar
+                        && win.located_on_workspace(activeWs)
+                        && win.get_monitor() === myMonitor;
+                } catch (_e) {
+                    shouldShow = false;   // dangling Meta.Window -> hide
+                }
+                if (shouldShow === clone.visible)
+                    continue;   // NO-OP guard (visible-based; _isEmpty'e dokunma → box'ta kalir)
+                clone.visible = shouldShow;
+                clone.reactive = shouldShow;
+                clone.can_focus = shouldShow;
+                clone.track_hover = shouldShow;
+                changed++;
+            }
+            if (MMB_PM_DEBUG && changed)
+                log(`[MMB-FILTER] sync panel=${myMonitor} changed=${changed}`);
+        }
+        // end of FILTER-B methods
 
         _isArcMenuRole(role) {
             if (role !== 'ArcMenu')

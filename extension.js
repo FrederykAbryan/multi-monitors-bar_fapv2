@@ -48,6 +48,112 @@ export let mmLayoutManager = null;
 const DASH_TO_DOCK_SCHEMA = 'org.gnome.shell.extensions.dash-to-dock';
 const DASH_TO_DOCK_MULTI_MONITOR_ID = 'multi-monitor';
 
+// Per-monitor taskbar filtering debug flag.
+const MMB_PM_DEBUG = false;
+
+// Primary-monitor taskButton per-monitor filter.
+// The primary monitor has no MMB panel; the third-party tasks-in-panel taskbar lives
+// on Main.panel. This filter hides Main.panel taskButtons for windows that are NOT on
+// the primary monitor. tasks-in-panel is left untouched: this is a runtime
+// notify::visible override — whenever tasks-in-panel shows a button whose window is on
+// another monitor, we hide it again (recursion-safe).
+class PrimaryTaskbarFilter {
+    constructor() {
+        this._watched = new Set();
+        this._scanId = 0;
+        this._scanAndFilter();
+        global.display.connectObject(
+            'window-created', () => this._scheduleScan(),
+            'window-entered-monitor', () => this._scheduleScan(),
+            'window-left-monitor', () => this._scheduleScan(),
+            'grab-op-end', () => this._scheduleScan(),   // end of drag -> definitive re-sync
+            this);
+        global.workspace_manager.connectObject(
+            'active-workspace-changed', () => this._scheduleScan(), this);
+        Main.layoutManager.connectObject('monitors-changed', () => this._scheduleScan(), this);
+    }
+
+    _scheduleScan() {
+        // Trailing-edge debounce (same logic as mmpanel _scheduleTaskbarFilterSync):
+        // reset the timer on every event -> the scan runs once the drag STOPS, so
+        // get_monitor() is definitive.
+        if (this._scanId)
+            GLib.source_remove(this._scanId);
+        this._scanId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            this._scanId = 0;
+            this._scanAndFilter();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _scanAndFilter() {
+        const statusArea = Main.panel.statusArea;
+        let count = 0;
+        for (const role of Object.keys(statusArea)) {
+            if (!/^taskButton\d+$/.test(role))
+                continue;
+            const tb = statusArea[role];
+            if (!tb)
+                continue;
+            if (!this._watched.has(tb)) {
+                this._watched.add(tb);
+                tb.connectObject('notify::visible', () => this._applyFilter(tb), this);
+                tb.connect('destroy', () => this._watched.delete(tb));
+            }
+            this._applyFilter(tb);
+            count++;
+        }
+        if (MMB_PM_DEBUG)
+            log(`[MMB-FILTER] primary scan: ${count} taskButton`);
+    }
+
+    _applyFilter(tb) {
+        const win = tb?._window;
+        if (!win)
+            return;
+        const primaryIndex = Main.layoutManager.primaryIndex;   // read live (primary can change)
+        let desired = false;
+        try {
+            // Canonical window-list/aztaskbar pattern (symmetric with mmpanel
+            // _syncTaskbarFilter): show a window that lives on the primary monitor, hide
+            // one that does not — computed from the window's own state, never from the
+            // source button's .visible.
+            desired = win.get_monitor() === primaryIndex
+                && !win.skip_taskbar
+                && win.located_on_workspace(global.workspace_manager.get_active_workspace());
+        } catch (_e) {
+            return;   // dangling Meta.Window
+        }
+        // Idempotent, two-way: the old code was one-way (only `tb.visible = false`).
+        // When a window moves back from an extended monitor to the primary it must be
+        // shown again, but it wasn't; since tasks-in-panel doesn't listen for monitor
+        // changes either, the button stayed hidden on the primary.
+        // Recursion-safe: if tb.visible already equals desired, no notify fires -> the chain stops.
+        if (tb.visible !== desired)
+            tb.visible = desired;
+    }
+
+    destroy() {
+        if (this._scanId) {
+            GLib.source_remove(this._scanId);
+            this._scanId = 0;
+        }
+        global.display.disconnectObject(this);
+        global.workspace_manager.disconnectObject(this);
+        Main.layoutManager.disconnectObject(this);
+        // Remove the filter: hand the taskButtons back to tasks-in-panel's control.
+        for (const tb of this._watched) {
+            try {
+                tb.disconnectObject(this);
+                if (typeof tb._updateVisibility === 'function')
+                    tb._updateVisibility();   // tasks-in-panel restores the correct visibility
+            } catch (_e) {
+            }
+        }
+        this._watched.clear();
+    }
+}
+
 export default class MultiMonitorsExtension extends Extension {
 	constructor(metadata) {
 		super(metadata);
@@ -273,6 +379,9 @@ export default class MultiMonitorsExtension extends Extension {
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
 		this._applyMainPanelClipping();
 
+		// Primary-monitor taskButton per-monitor filter (see PrimaryTaskbarFilter above)
+		this._pmTaskbarFilter = new PrimaryTaskbarFilter();
+
 		this._switchOffThumbnailsMuId = this._mu_settings.connect('changed::' + WORKSPACES_ONLY_ON_PRIMARY_ID,
 			this._switchOffThumbnails.bind(this));
 		this._forceWorkspacesId = this._settings.connect('changed::force-workspaces-on-all-displays', () => {
@@ -472,6 +581,10 @@ export default class MultiMonitorsExtension extends Extension {
 	disable() {
 		// Unpatch screenshot UI
 		ScreenshotPatch.unpatchScreenshotUI();
+
+		// Remove the primary taskButton filter (hand the taskButtons back to tasks-in-panel)
+		this._pmTaskbarFilter?.destroy();
+		this._pmTaskbarFilter = null;
 
 		if (this._prepareForSleepId) {
 			this._loginManager.disconnect(this._prepareForSleepId);
