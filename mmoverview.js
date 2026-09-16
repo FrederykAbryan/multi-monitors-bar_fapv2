@@ -38,7 +38,7 @@ import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.j
 
 import * as MultiMonitors from './extension.js';
 import * as Common from './common.js';
-import { shellVersion } from './common.js';
+import { shellVersion, boxLayoutOrientation } from './common.js';
 import * as Constants from './mmPanelConstants.js';
 
 // Re-export for backward compatibility
@@ -575,7 +575,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             });
 
             this._appGridContainer = new St.BoxLayout({
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 x_expand: true,
                 style: 'spacing: 10px;',
                 x_align: Clutter.ActorAlign.CENTER,
@@ -649,7 +649,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._group = new St.BoxLayout({
                 name: 'mm-overview-group-' + index,
                 x_expand: true, y_expand: true,
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 style: 'padding: 30px;' // Add some padding so it doesn't touch edges
             });
             this.add_child(this._group);
@@ -854,7 +854,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             button._appInfo = app;
 
             const box = new St.BoxLayout({
-                vertical: true, // Vertical layout for grid icon style
+                ...boxLayoutOrientation(true), // Vertical layout for grid icon style
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 style: 'spacing: 8px;',
@@ -1737,7 +1737,7 @@ export const MultiMonitorsOverviewActor = GObject.registerClass(
                 /* Translators: This is the main view to select
                     activities. See also note for "Activities" string. */
                 accessible_name: _("MMOverview@" + index),
-                vertical: true,
+                ...boxLayoutOrientation(true),
             });
 
             this.add_constraint(new LayoutManager.MonitorConstraint({ index: this._monitorIndex }));

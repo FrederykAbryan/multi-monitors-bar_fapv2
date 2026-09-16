@@ -23,6 +23,7 @@ import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
 import * as MMPanel from './mmpanel.js';
 import * as MMDock from './mmdock.js';
+import { boxLayoutOrientation } from './utils.js';
 
 export const SHOW_PANEL_ID = 'show-panel';
 export const SHOW_DOCK_ID = 'show-dock-on-extended-monitors';
@@ -60,7 +61,7 @@ export class MultiMonitorsPanelBox {
 
 		this.panelBox = new St.BoxLayout({
 			name: 'panelBox',
-			vertical: true,
+			...boxLayoutOrientation(true),
 			clip_to_allocation: true,
 			visible: true
 		});

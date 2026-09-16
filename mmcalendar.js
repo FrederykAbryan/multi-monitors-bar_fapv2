@@ -34,7 +34,7 @@ import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.j
 import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as MultiMonitors from './extension.js';
 import * as Common from './common.js';
-import { shellVersion } from './common.js';
+import { shellVersion, boxLayoutOrientation } from './common.js';
 
 export let MainRef = null;
 export function setMainRef(m) { MainRef = m; }
@@ -51,7 +51,7 @@ const MultiMonitorsTodayButton = GObject.registerClass(
                 can_focus: true,
             });
 
-            let hbox = new St.BoxLayout({ vertical: true });
+            let hbox = new St.BoxLayout({ ...boxLayoutOrientation(true) });
             this.add_child(hbox);
 
             this._dayLabel = new St.Label({
@@ -128,7 +128,7 @@ const MultiMonitorsPlaceholder = GObject.registerClass(
         _init() {
             super._init({
                 style_class: 'message-list-placeholder',
-                vertical: true,
+                ...boxLayoutOrientation(true),
             });
             this._date = new Date();
 
@@ -203,7 +203,7 @@ var MultiMonitorsEventsSection = (() => {
                 x_expand: true,
                 child: new St.BoxLayout({
                     style_class: 'events-box',
-                    vertical: true,
+                    ...boxLayoutOrientation(true),
                     x_expand: true,
                 }),
             });
@@ -221,7 +221,7 @@ var MultiMonitorsEventsSection = (() => {
 
             this._eventsList = new St.BoxLayout({
                 style_class: 'events-list',
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 x_expand: true,
             });
             this.child.add_child(this._eventsList);
@@ -339,7 +339,7 @@ var MultiMonitorsCalendarMessageList = (() => {
             this.add_child(this._placeholder);
 
             let box = new St.BoxLayout({
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 x_expand: true, y_expand: true
             });
             this.add_child(box);
@@ -393,7 +393,7 @@ var MultiMonitorsCalendarMessageList = (() => {
 
             this._sectionList = new St.BoxLayout({
                 style_class: 'message-list-sections',
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 x_expand: true,
                 y_expand: true,
                 y_align: Clutter.ActorAlign.START
@@ -757,7 +757,7 @@ var MultiMonitorsDateMenuButton = (() => {
             vbox.add_child(this._displaysSection);
 
             let displaysBox = new St.BoxLayout({
-                vertical: true,
+                ...boxLayoutOrientation(true),
                 x_expand: true,
                 style_class: 'datemenu-displays-box'
             });

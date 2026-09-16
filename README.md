@@ -12,7 +12,7 @@
 
 ---
 
-An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/multi-monitors-add-on) with modern GNOME Shell support (45 – 49), mirrored indicators, screenshot tool cloning, Blur my Shell integration, and more.
+An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/multi-monitors-add-on) with modern GNOME Shell support (45 – 51), mirrored indicators, screenshot tool cloning, Blur my Shell integration, and more.
 
 ## ✨ Features
 
@@ -34,7 +34,7 @@ An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/mult
 
 ## 📋 Compatibility
 
-**GNOME Shell:** 45, 46, 47, 48, 49
+**GNOME Shell:** 45, 46, 47, 48, 49, 50, 51
 
 Tested on:
 - Fedora 43 — GNOME 49

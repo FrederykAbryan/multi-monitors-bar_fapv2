@@ -19,6 +19,7 @@ import * as Utils from './utils.js';
 
 // Shell version for feature detection - centralized here and exported for other modules
 export const shellVersion = Utils.SHELL_VERSION;
+export const boxLayoutOrientation = Utils.boxLayoutOrientation;
 
 export function patchAddActorMethod(prototype) {
     if (!prototype.add_actor) {
