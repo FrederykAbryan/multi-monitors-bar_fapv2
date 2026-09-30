@@ -58,6 +58,12 @@
         or on the right before or after Quick Settings.</description>
     </key>
 
+    <key name="show-app-indicators" type="b">
+      <default>true</default>
+      <summary>Show AppIndicators on additional monitors.</summary>
+      <description>Change visibility of AppIndicator/tray icons on additional monitors.</description>
+    </key>
+
     <key name="thumbnails-slider-position" type="s">
       <choices>
         <choice value='none' />

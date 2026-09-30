@@ -28,6 +28,7 @@ import { MonitorIndicatorPreferences } from './monitorIndicatorPrefs.js';
 const SHOW_PANEL_ID = 'show-panel';
 const SHOW_APP_MENU_ID = 'show-app-menu';
 const DATE_TIME_POSITION_ID = 'date-time-position';
+const SHOW_APP_INDICATORS_ID = 'show-app-indicators';
 const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 const ENABLE_HOT_CORNERS = 'enable-hot-corners';
 const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
@@ -62,6 +63,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
                 'right-before-tray': _('Right side, before system tray'),
                 'right-after-tray': _('Right side, after system tray'),
             });
+        this._addBooleanSwitch(_('Show AppIndicators on additional monitors.'), SHOW_APP_INDICATORS_ID);
         this._addComboBoxSwitch(_('Show Thumbnails-Slider on additional monitors.'), THUMBNAILS_SLIDER_POSITION_ID, {
             none: _('No'),
             right: _('On the right'),
