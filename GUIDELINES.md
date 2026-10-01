@@ -226,13 +226,25 @@ says which versions differ. If it applies to every version in `shell-version`, d
 
 ## Error Handling
 
-### Use try-catch only when necessary
-- ✅ Version-specific API calls that may not exist
-- ✅ External/async operations that can genuinely fail
-- ❌ Simple property access or safe operations
-- ❌ Normal `disconnect()`, `disconnectObject()`, or `GLib.source_remove()` cleanup
-- ❌ Compatibility checks for stable GNOME Shell properties, such as treating `sessionMode.isLocked` as either a function or property in code that targets versions where it is known
-- ❌ Empty catch blocks with `// ignore`
+### Avoid unnecessary try-catch wrappers
+
+Follow [GNOME Extension Best Practices: Avoid Unnecessary try-catch Wrappers](https://gjs.guide/extensions/review-guidelines/best-practices.html#avoid-unnecessary-try-catch-wrappers).
+
+Do not wrap operations that do not throw during normal execution. This includes
+`destroy()`, `connect()`, `disconnect()`, `disconnectObject()`, `abort()`,
+`GLib.Source.remove()`, and `GLib.source_remove()`. Call them directly and manage
+their references and signal/source IDs correctly. Fix lifecycle bugs instead of
+hiding them behind a catch.
+
+- Use a catch only for a concrete, expected failure, such as malformed external JSON or a failing I/O operation, with meaningful recovery or error reporting.
+- Keep the try block limited to the operation that can fail; do not wrap an entire method or callback containing ordinary UI work.
+- Do not catch simple property access, settings reads for known schema keys, or normal actor creation, updates, and cleanup.
+- Missing APIs or signals are not a blanket exception. Target the declared Shell versions and use documented version differences or signal introspection where needed.
+- Do not add empty catches, catches containing only `// ignore`, or logging-only wrappers around operations that should run directly.
+- Third-party integration alone does not justify a catch: identify the specific failing operation and recovery.
+
+`try`/`finally` is different: it may restore temporary state while allowing errors
+to propagate. Do not add a catch just to perform that restoration.
 
 ```javascript
 // ❌ Bad - unnecessary try-catch
@@ -242,13 +254,25 @@ try {
     // ignore
 }
 
-// ✅ Good - used for version compatibility
+// ✅ Good - recover from malformed external input
+let data;
 try {
-    this._signalId = controller.connect('page-changed', handler);
+    data = JSON.parse(contents);
 } catch (e) {
-    // Signal may not exist in this GNOME version
+    console.warn(`[MultiMonitors] Invalid external JSON: ${e.message}`);
+    return;
 }
+processData(data);
 ```
+
+### Required check before submission
+
+Review every `try`/`catch` in the files included in the submission archive. For each
+catch, identify the operation that can throw during normal execution and the
+recovery it provides. Remove wrappers that cannot satisfy both requirements,
+including nested wrappers and broad catches that conceal routine cleanup. Verify
+the actual archive after rebuilding; documenting this rule does not make existing
+code compliant.
 
 ---
 
