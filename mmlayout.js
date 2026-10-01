@@ -87,14 +87,10 @@ export class MultiMonitorsPanelBox {
 	_getStablePanelHeight() {
 		// 1. Try to get the panel's natural preferred height from its theme node
 		//    This is the CSS-defined height and doesn't change during animations
-		try {
-			if (Main.panel) {
-				const [, natHeight] = Main.panel.get_preferred_height(-1);
-				if (natHeight > 0)
-					return natHeight;
-			}
-		} catch (e) {
-			// Fallthrough
+		if (Main.panel) {
+			const [, natHeight] = Main.panel.get_preferred_height(-1);
+			if (natHeight > 0)
+				return natHeight;
 		}
 
 		// 2. Try panelBox height (may be 0 during fullscreen or animations)
@@ -119,11 +115,7 @@ export class MultiMonitorsPanelBox {
 
 		// Explicitly removeChrome before destroy so struts are cleared
 		// synchronously — prevents stale geometry on suspend/wake.
-		try {
-			Main.layoutManager.removeChrome(this.panelBox);
-		} catch (e) {
-			// Already untracked or destroyed
-		}
+		Main.layoutManager.removeChrome(this.panelBox);
 		this.panelBox.destroy();
 	}
 
@@ -239,19 +231,15 @@ export class MultiMonitorsLayoutManager {
 	}
 
 	_setupBlurMyShellWatcher() {
-		try {
-			if (!Main.extensionManager) return;
+		if (!Main.extensionManager) return;
 
-			this._blurMyShellStateChangedId = Main.extensionManager.connect('extension-state-changed',
-				(manager, extension) => {
-					if (extension.uuid === 'blur-my-shell@aunetx' && this._settings.get_boolean('enable-blur-my-shell')) {
-						this._refreshBlurMyShellIntegration();
-					}
+		this._blurMyShellStateChangedId = Main.extensionManager.connect('extension-state-changed',
+			(manager, extension) => {
+				if (extension.uuid === 'blur-my-shell@aunetx' && this._settings.get_boolean('enable-blur-my-shell')) {
+					this._refreshBlurMyShellIntegration();
 				}
-			);
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Blur watcher setup failed:', String(e));
-		}
+			}
+		);
 	}
 
 	_refreshBlurMyShellIntegration() {
@@ -267,61 +255,53 @@ export class MultiMonitorsLayoutManager {
 
 	// Re-register blur after BMS resets on workareas-changed
 	_setupWorkareasBlurWatcher() {
-		try {
-			this._workareasChangedBlurId = global.display.connect('workareas-changed', () => {
-				if (!this._settings.get_boolean('enable-blur-my-shell')) return;
+		this._workareasChangedBlurId = global.display.connect('workareas-changed', () => {
+			if (!this._settings.get_boolean('enable-blur-my-shell')) return;
 
-				// Cancel any pending re-registration
-				if (this._blurReRegisterTimeoutId) {
-					GLib.source_remove(this._blurReRegisterTimeoutId);
-					this._blurReRegisterTimeoutId = null;
-				}
+			// Cancel any pending re-registration
+			if (this._blurReRegisterTimeoutId) {
+				GLib.source_remove(this._blurReRegisterTimeoutId);
+				this._blurReRegisterTimeoutId = null;
+			}
 
-				// BMS resets async (disable + setTimeout(enable, 1)), so wait
-				// long enough for BMS to finish its reset and re-enable
-				this._blurReRegisterTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
-					this._refreshBlurMyShellIntegration();
-					this._blurReRegisterTimeoutId = null;
-					return GLib.SOURCE_REMOVE;
-				});
+			// BMS resets async (disable + setTimeout(enable, 1)), so wait
+			// long enough for BMS to finish its reset and re-enable
+			this._blurReRegisterTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+				this._refreshBlurMyShellIntegration();
+				this._blurReRegisterTimeoutId = null;
+				return GLib.SOURCE_REMOVE;
 			});
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Workareas blur watcher setup failed:', String(e));
-		}
+		});
 	}
 
 	_registerPanelWithBlurMyShell(panel) {
-		try {
-			// Primary access path: BMS exposes itself via global.blur_my_shell
-			let panelBlur = null;
+		// Primary access path: BMS exposes itself via global.blur_my_shell
+		let panelBlur = null;
 
-			if (global.blur_my_shell && global.blur_my_shell._panel_blur) {
-				panelBlur = global.blur_my_shell._panel_blur;
-			} else {
-				// Fallback: extension manager lookup
-				const extensionManager = Main.extensionManager;
-				if (!extensionManager) return;
+		if (global.blur_my_shell && global.blur_my_shell._panel_blur) {
+			panelBlur = global.blur_my_shell._panel_blur;
+		} else {
+			// Fallback: extension manager lookup
+			const extensionManager = Main.extensionManager;
+			if (!extensionManager) return;
 
-				const blurExt = extensionManager.lookup('blur-my-shell@aunetx');
-				if (!blurExt || blurExt.state !== 1) return;
+			const blurExt = extensionManager.lookup('blur-my-shell@aunetx');
+			if (!blurExt || blurExt.state !== 1) return;
 
-				// GNOME 45+: stateObj points to the extension instance
-				const blurMyShell = blurExt.stateObj || blurExt;
-				if (!blurMyShell || !blurMyShell._panel_blur) return;
+			// GNOME 45+: stateObj points to the extension instance
+			const blurMyShell = blurExt.stateObj || blurExt;
+			if (!blurMyShell || !blurMyShell._panel_blur) return;
 
-				panelBlur = blurMyShell._panel_blur;
-			}
+			panelBlur = blurMyShell._panel_blur;
+		}
 
-			if (!panelBlur) return;
+		if (!panelBlur) return;
 
-			// Use maybe_blur_panel which checks if already blurred
-			if (typeof panelBlur.maybe_blur_panel === 'function') {
-				panelBlur.maybe_blur_panel(panel);
-			} else if (typeof panelBlur.blur_panel === 'function') {
-				panelBlur.blur_panel(panel);
-			}
-		} catch (e) {
-			console.debug('[Multi Monitors Add-On] Blur integration failed:', String(e));
+		// Use maybe_blur_panel which checks if already blurred
+		if (typeof panelBlur.maybe_blur_panel === 'function') {
+			panelBlur.maybe_blur_panel(panel);
+		} else if (typeof panelBlur.blur_panel === 'function') {
+			panelBlur.blur_panel(panel);
 		}
 	}
 
@@ -668,6 +648,9 @@ export class MultiMonitorsLayoutManager {
 		if (panel && this.statusIndicatorsController) {
 			this.statusIndicatorsController.transferBack(panel);
 		}
+		// Run JavaScript cleanup before destroying the containing actor.
+		panel?.destroy();
+		panel = null;
 		let mmPanelBox = this.mmPanelBox.pop();
 		if (mmPanelBox) {
 			mmPanelBox.destroy();

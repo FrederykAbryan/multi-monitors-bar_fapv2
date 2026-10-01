@@ -307,7 +307,6 @@ assert.equal(dock._edge.y, -362);
 reveal();
 dock._dash.emit('notify::width');
 dock.destroy();
-dock.destroy();
 assert.equal(sources.size, 0, 'Destroy cancels hover and layout sources');
 assert.equal(tracked.size, 0);
 assert.equal(settings.handlers.size, 0);

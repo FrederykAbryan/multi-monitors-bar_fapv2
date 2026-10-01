@@ -15,7 +15,6 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, visit https://www.gnu.org/licenses/.
 */
 
-import { cleanupSafely } from './actorLifecycle.js';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
@@ -76,10 +75,7 @@ const MultiMonitorsAppMenuButton = GObject.registerClass(
 
             this._syncAppMenuIconGeometry();
             this._iconGeometryTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-                try {
-                    this._syncAppMenuIconGeometry();
-                } catch (e) {
-                }
+                this._syncAppMenuIconGeometry();
                 this._iconGeometryTimeoutId = 0;
                 return GLib.SOURCE_REMOVE;
             });
@@ -339,14 +335,6 @@ const MultiMonitorsPanel = GObject.registerClass(
             this.monitorIndex = monitorIndex;
             this._settings = settings;
 
-            this._destroyed = false;
-            // Cleanup MUST run from the `destroy` SIGNAL, not only the destroy()
-            // method. On resume from sleep a monitor can disappear and mutter
-            // destroys this panel from C code without calling our JS destroy()
-            // override. The signal handler guarantees timeouts are cancelled and
-            // signals on Main.panel boxes are disconnected, so queued
-            // _updatePanel() callbacks can't run against disposed actors.
-            this.connect('destroy', () => this._cleanup());
 
             this.set_offscreen_redirect(Clutter.OffscreenRedirect.ALWAYS);
 
@@ -498,18 +486,16 @@ const MultiMonitorsPanel = GObject.registerClass(
                 box.connectObject('destroy', () => {
                     this._primaryPanelBoxes = this._primaryPanelBoxes.filter(actor => actor !== box);
                 }, this);
+                // Clutter renamed actor-added/removed to child-added/removed.
                 for (const signal of signals) {
-                    try {
+                    if (GObject.signal_lookup(signal, box.constructor.$gtype))
                         box.connectObject(signal, scheduleUpdate, this);
-                    } catch (_e) {
-                        // Signal names differ between Shell/Clutter versions.
-                    }
                 }
             }
         }
 
         _schedulePanelRefresh(delays) {
-            if (this._destroyed)
+            if (!this._settings)
                 return;
             for (const timeoutId of this._panelRefreshTimeouts)
                 GLib.source_remove(timeoutId);
@@ -532,20 +518,17 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _cleanup() {
-            if (this._destroyed)
-                return;
-            this._destroyed = true;
 
             // Clean up extension watcher
             if (this._extensionStateChangedId) {
-                cleanupSafely(() => Main.extensionManager.disconnect(this._extensionStateChangedId));
+                Main.extensionManager.disconnect(this._extensionStateChangedId);
                 this._extensionStateChangedId = null;
             }
             // Handlers were connected with connectObject(this); auto-disconnect
             // on destroy covers it, but disconnect explicitly for completeness.
             if (this._primaryPanelBoxes) {
                 for (const box of this._primaryPanelBoxes) {
-                    cleanupSafely(() => box.disconnectObject(this));
+                    box.disconnectObject(this);
                 }
                 this._primaryPanelBoxes = [];
             }
@@ -562,48 +545,48 @@ const MultiMonitorsPanel = GObject.registerClass(
             }
 
             if (this._clickGestureRecognizeId && this._clickGesture) {
-                cleanupSafely(() => this._clickGesture.disconnect(this._clickGestureRecognizeId));
+                this._clickGesture.disconnect(this._clickGestureRecognizeId);
                 this._clickGestureRecognizeId = null;
             }
 
             if (this._workareasChangedId) {
-                cleanupSafely(() => global.display.disconnect(this._workareasChangedId));
+                global.display.disconnect(this._workareasChangedId);
                 this._workareasChangedId = null;
             }
             if (this._showingId) {
-                cleanupSafely(() => Main.overview.disconnect(this._showingId));
+                Main.overview.disconnect(this._showingId);
                 this._showingId = null;
             }
             if (this._hidingId) {
-                cleanupSafely(() => Main.overview.disconnect(this._hidingId));
+                Main.overview.disconnect(this._hidingId);
                 this._hidingId = null;
             }
             if (this._showActivitiesId) {
-                cleanupSafely(() => this._settings.disconnect(this._showActivitiesId));
+                this._settings.disconnect(this._showActivitiesId);
                 this._showActivitiesId = null;
             }
             if (this._showAppMenuId) {
-                cleanupSafely(() => this._settings.disconnect(this._showAppMenuId));
+                this._settings.disconnect(this._showAppMenuId);
                 this._showAppMenuId = null;
             }
             if (this._showDateTimeId) {
-                cleanupSafely(() => this._settings.disconnect(this._showDateTimeId));
+                this._settings.disconnect(this._showDateTimeId);
                 this._showDateTimeId = null;
             }
             if (this._panelColorId) {
-                cleanupSafely(() => this._settings.disconnect(this._panelColorId));
+                this._settings.disconnect(this._panelColorId);
                 this._panelColorId = null;
             }
 
-            cleanupSafely(() => Main.ctrlAltTabManager.removeGroup(this));
+            Main.ctrlAltTabManager.removeGroup(this);
 
             if (this._updatedId) {
-                cleanupSafely(() => Main.sessionMode.disconnect(this._updatedId));
+                Main.sessionMode.disconnect(this._updatedId);
                 this._updatedId = null;
             }
 
             for (const role in this.statusArea) {
-                this._disconnectIndicatorSignals(this.statusArea[role]);
+                this._destroyIndicator(role);
             }
             this.statusArea = {};
             this._settings = null;
@@ -615,8 +598,6 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         destroy() {
-            if (this._destroyed)
-                return;
             this._cleanup();
             super.destroy();
         }
@@ -696,7 +677,7 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         vfunc_allocate(box) {
-            if (this._destroyed)
+            if (!this._settings)
                 return;
             this.set_allocation(box);
 
@@ -774,12 +755,12 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
 
             if (indicator._mmDestroyId) {
-                cleanupSafely(() => indicator.disconnect(indicator._mmDestroyId));
+                indicator.disconnect(indicator._mmDestroyId);
                 indicator._mmDestroyId = 0;
             }
 
             if (indicator._mmMenuSetId) {
-                cleanupSafely(() => indicator.disconnect(indicator._mmMenuSetId));
+                indicator.disconnect(indicator._mmMenuSetId);
                 indicator._mmMenuSetId = 0;
             }
         }
@@ -790,12 +771,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
 
             delete this.statusArea[role];
-            cleanupSafely(() => {
-                if (indicator.menu)
-                    this.menuManager.removeMenu(indicator.menu);
-            });
+            if (indicator.menu)
+                this.menuManager.removeMenu(indicator.menu);
             this._disconnectIndicatorSignals(indicator);
-            cleanupSafely(() => indicator.destroy());
+            indicator.destroy();
         }
 
         _ensureIndicator(role) {
@@ -818,25 +797,14 @@ const MultiMonitorsPanel = GObject.registerClass(
                     const mainIndicator = Main.panel.statusArea[role];
 
                     if (mainIndicator) {
-                        try {
-                            indicator = new MirroredIndicatorButton(this, role);
-                            this.statusArea[role] = indicator;
-                            return indicator;
-                        } catch (e) {
-                            console.error('[Multi Monitors Add-On] Failed to create mirrored indicator for', role, ':', String(e));
-                            return null;
-                        }
+                        indicator = new MirroredIndicatorButton(this, role);
+                        this.statusArea[role] = indicator;
+                        return indicator;
                     }
                     // Otherwise, not supported
                     return null;
                 }
-                try {
-                    indicator = new constructor(this);
-                } catch (e) {
-                    // Don't log the error object directly as it may contain circular references
-                    console.error('[Multi Monitors Add-On] Error creating indicator for', role, ':', String(e));
-                    throw e;
-                }
+                indicator = new constructor(this);
                 this.statusArea[role] = indicator;
             }
             return indicator;
@@ -896,13 +864,9 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _getGrabSprite(event) {
-            try {
-                const backend = global.stage.get_context().get_backend();
-                if (backend && typeof backend.get_sprite === 'function')
-                    return backend.get_sprite(global.stage, event);
-            } catch (e) {
-                console.debug('[Multi Monitor Bar] Failed to get grab sprite: ' + String(e));
-            }
+            const backend = global.stage.get_context().get_backend();
+            if (backend && typeof backend.get_sprite === 'function')
+                return backend.get_sprite(global.stage, event);
 
             return null;
         }
@@ -958,11 +922,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             // signature for this version. Our _beginWindowGrab below assumes the
             // GNOME 50 window-level API and does not match older shells.
             if (Main.panel && typeof Main.panel._tryDragWindow === 'function') {
-                try {
-                    return Main.panel._tryDragWindow.call(this, event);
-                } catch (e) {
-                    console.debug('[Multi Monitor Bar] Main panel _tryDragWindow fallback: ' + String(e));
-                }
+                return Main.panel._tryDragWindow.call(this, event);
             }
 
             if (Main.modalCount > 0)
@@ -1069,7 +1029,7 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _updatePanel() {
-            if (this._destroyed)
+            if (!this._settings)
                 return;
             this._hideIndicators();
 
@@ -1118,20 +1078,16 @@ const MultiMonitorsPanel = GObject.registerClass(
                         continue;
                     }
 
-                    try {
-                        const container = indicator.container || indicator;
+                    const container = indicator.container || indicator;
 
-                        // Match direct ownership and wrapped/containerized indicators.
-                        // Some tray providers insert wrappers around the real container,
-                        // so strict equality misses them and causes skipped mirrors.
-                        if (indicator === child ||
-                            container === child ||
-                            (child.contains && child.contains(container)) ||
-                            (container.contains && container.contains(child))) {
-                            return role;
-                        }
-                    } catch (_error) {
-                        // A tray provider may still expose a disposed indicator.
+                    // Match direct ownership and wrapped/containerized indicators.
+                    // Some tray providers insert wrappers around the real container,
+                    // so strict equality misses them and causes skipped mirrors.
+                    if (indicator === child ||
+                        container === child ||
+                        (child.contains && child.contains(container)) ||
+                        (container.contains && container.contains(child))) {
+                        return role;
                     }
                 }
                 return null;
@@ -1139,8 +1095,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             // Scan each box in main panel to preserve order
             if (mainPanel._leftBox) {
-                let children = [];
-                cleanupSafely(() => { children = mainPanel._leftBox.get_children(); });
+                const children = mainPanel._leftBox.get_children();
                 for (let child of children) {
                     if (!child.visible) {
                         continue;
@@ -1154,8 +1109,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             }
 
             if (mainPanel._centerBox) {
-                let children = [];
-                cleanupSafely(() => { children = mainPanel._centerBox.get_children(); });
+                const children = mainPanel._centerBox.get_children();
                 for (let child of children) {
                     if (!child.visible) {
                         continue;
@@ -1169,8 +1123,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             }
 
             if (mainPanel._rightBox) {
-                let children = [];
-                cleanupSafely(() => { children = mainPanel._rightBox.get_children(); });
+                const children = mainPanel._rightBox.get_children();
                 for (let child of children) {
                     if (!child.visible) {
                         continue;
@@ -1245,7 +1198,7 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _updateBox(elements, box) {
-            if (this._destroyed || !elements || !box) {
+            if (!elements || !box) {
                 return;
             }
 
@@ -1259,20 +1212,16 @@ const MultiMonitorsPanel = GObject.registerClass(
                     continue;
                 }
 
-                try {
-                    let indicator = this._ensureIndicator(role);
-                    if (indicator) {
-                        // Skip indicators that are marked as empty (phantom buttons)
-                        if (indicator._isEmpty) {
-                            // Destroy the empty indicator to clean up
-                            this._destroyIndicator(role);
-                            continue;
-                        }
-                        this._addToPanelBox(role, indicator, i + nChildren, box);
-                    } else {
+                let indicator = this._ensureIndicator(role);
+                if (indicator) {
+                    // Skip indicators that are marked as empty (phantom buttons)
+                    if (indicator._isEmpty) {
+                        // Destroy the empty indicator to clean up
+                        this._destroyIndicator(role);
+                        continue;
                     }
-                } catch (e) {
-                    console.error('[Multi Monitors Add-On] _updateBox: ERROR for role', role, ':', e, e.stack);
+                    this._addToPanelBox(role, indicator, i + nChildren, box);
+                } else {
                 }
             }
         }
@@ -1280,12 +1229,8 @@ const MultiMonitorsPanel = GObject.registerClass(
 
 // Helper methods injected into MultiMonitorsPanel prototype
 MultiMonitorsPanel.prototype._findRoleByPattern = function (pattern) {
-    try {
-        const keys = Object.keys(Main.panel.statusArea || {});
-        return keys.find(k => pattern.test(k)) || null;
-    } catch (_e) {
-        return null;
-    }
+    const keys = Object.keys(Main.panel.statusArea || {});
+    return keys.find(k => pattern.test(k)) || null;
 };
 
 // Ensure the mirrored Quick Settings (system tray) exists and is placed at the far right
@@ -1305,12 +1250,8 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
 
     let indicator = this.statusArea[role];
     if (!indicator) {
-        try {
-            indicator = new MirroredIndicatorButton(this, role);
-            this.statusArea[role] = indicator;
-        } catch (e) {
-            return;
-        }
+        indicator = new MirroredIndicatorButton(this, role);
+        this.statusArea[role] = indicator;
     }
 
     // Move/add to be the last item in the right box

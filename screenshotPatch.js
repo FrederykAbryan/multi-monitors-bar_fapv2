@@ -204,17 +204,13 @@ function _createToolbarClonesForAllMonitors() {
     // 1. Calculate the bounding box using INTERACTIVE elements (max coverage)
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let elem of interactiveElements) {
-        try {
-            const [x, y] = elem.get_transformed_position();
-            const w = elem.get_width();
-            const h = elem.get_height();
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x + w);
-            maxY = Math.max(maxY, y + h);
-        } catch (e) {
-            // ignore
-        }
+        const [x, y] = elem.get_transformed_position();
+        const w = elem.get_width();
+        const h = elem.get_height();
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + w);
+        maxY = Math.max(maxY, y + h);
     }
 
     const toolbarWidth = maxX - minX;
@@ -540,22 +536,20 @@ export function patchScreenshotUI(settings) {
             Main.layoutManager.primaryIndex = targetIdx;
         }
 
+        const ui = Main.screenshotUI;
+        if (ui._areaSelector) {
+            if (typeof ui._areaSelector.reset === 'function')
+                ui._areaSelector.reset();
+            if (ui._areaSelector._selectionRect)
+                ui._areaSelector._selectionRect = null;
+        }
+
+        // Capture can reject; restore the temporary monitor override on failure.
         try {
-            const ui = Main.screenshotUI;
-
-            if (ui._areaSelector) {
-                if (typeof ui._areaSelector.reset === 'function') {
-                    ui._areaSelector.reset();
-                }
-                if (ui._areaSelector._selectionRect) {
-                    ui._areaSelector._selectionRect = null;
-                }
-            }
-
-            const openPromise = _originalOpen(screenshotType, options);
-            await openPromise;
+            await _originalOpen(screenshotType, options);
         } catch (e) {
-            _restorePendingPrimary(Main.screenshotUI);
+            _restorePendingPrimary(ui);
+            throw e;
         }
     };
 

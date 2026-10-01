@@ -7,8 +7,6 @@ const context = vm.createContext({
     GLib: { source_remove: id => removed.push(id) },
     Main: { ctrlAltTabManager: { removeGroup() {} } },
 });
-vm.runInContext(readFileSync(new URL('../actorLifecycle.js', import.meta.url), 'utf8')
-    .replace('export function', 'function'), context);
 function methods(file, className, names) {
     const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8');
     const body = source.slice(source.indexOf('class ' + className));
@@ -19,10 +17,12 @@ function methods(file, className, names) {
         return body.slice(start, end);
     }).join(',') + '})', context);
 }
-const disposed = {
-    disconnect() { throw Error('already disposed'); },
-    disconnectObject() { throw Error('already disposed'); },
-    unbind() { throw Error('already disposed'); },
+const released = [];
+const live = {
+    disconnect(id) { released.push(id); },
+    disconnectObject() {},
+    unbind() {},
+    destroy() { released.push('destroy'); },
     get_first_child() { assert.fail('cleanup must not traverse source children'); },
 };
 const mirror = methods('mirroredIndicatorButton.js', 'MirroredIndicatorButton', [
@@ -30,13 +30,13 @@ const mirror = methods('mirroredIndicatorButton.js', 'MirroredIndicatorButton', 
     '_disconnectIconSyncSource', '_disconnectWorkspaceWindowSignals',
 ]);
 Object.assign(mirror, {
-    _sourceIndicator: disposed, _sourcePresenceChild: disposed,
-    _sourceDestroyId: 10, _clockBinding: disposed, _labelCopyBindings: [disposed],
-    _quickSettingsSource: disposed, _sourceSizeChangedId: 11,
-    _allocationCloneSignals: [{ source: disposed, id: 12 }],
-    _workspacePreviewWindowSignalIds: [{ object: disposed, id: 13 }],
+    _sourceIndicator: live, _sourcePresenceChild: live,
+    _sourceDestroyId: 10, _clockBinding: live, _labelCopyBindings: [live],
+    _quickSettingsSource: live, _sourceSizeChangedId: 11,
+    _allocationCloneSignals: [{ source: live, id: 12 }],
+    _workspacePreviewWindowSignalIds: [{ object: live, id: 13 }],
     _forwardClickTimeoutId: 14, _allocationCloneTimeouts: [15],
-    _genericMenuPendingRestore() { throw Error('menu disposed'); },
+    _genericMenuPendingRestore() { released.push('restore'); },
 });
 mirror._cleanup();
 assert.equal(mirror._sourceIndicator, null);
@@ -51,9 +51,9 @@ const panel = methods('mmpanel.js', 'MultiMonitorsPanel', [
     '_cleanup', '_schedulePanelRefresh', '_disconnectIndicatorSignals', '_destroyIndicator',
 ]);
 Object.assign(panel, {
-    _primaryPanelBoxes: [disposed], _initialCheckTimeouts: [16],
+    _primaryPanelBoxes: [live], _initialCheckTimeouts: [16],
     _panelRefreshTimeouts: [17], statusArea: {
-        tray: { ...disposed, _mmDestroyId: 18, _mmMenuSetId: 19 },
+        tray: { ...live, _mmDestroyId: 18, _mmMenuSetId: 19 },
     },
 });
 panel._cleanup();
@@ -63,9 +63,12 @@ assert.deepEqual(removed, [14, 15, 16, 17]);
 panel._schedulePanelRefresh([50]); // Must not call timeout_add after destruction.
 panel._cleanup();
 assert.deepEqual(removed, [14, 15, 16, 17]);
-panel.statusArea.tray = { ...disposed, destroy() { throw Error('disposed'); } };
+panel.statusArea.tray = { ...live };
 panel._destroyIndicator('tray');
 assert.equal(panel.statusArea.tray, undefined);
+assert.ok(released.indexOf(18) < released.indexOf('destroy'), 'disconnect before destroying owned indicator');
+assert.ok(released.includes(10));
+assert.ok(released.includes(12));
 // Issue #40: repeated refreshes must destroy every retired copy while JS can
 // still run its destroy handlers, and release bindings before destruction.
 class Label {
@@ -162,3 +165,16 @@ assert.equal(Object.hasOwn(failedClock, 'connect'), false);
 assert.equal(Object.hasOwn(failedClock, 'bind_property'), false);
 dateMenu._cleanupClock();
 console.log('Date menu clock cleanup checks passed (upstream, fallback, and failed initialization)');
+
+// Removing a monitor must clean up the panel before its parent disposes children.
+const layoutSource = readFileSync(new URL('../mmlayout.js', import.meta.url), 'utf8');
+const popPanel = layoutSource.match(/\t_popPanel\(\) \{[\s\S]*?\n\t\}/)[0];
+const teardown = [];
+context.getMMPanelArray = () => [{ destroy() { teardown.push('panel'); } }];
+const layout = vm.runInContext('({' + popPanel + '})', context);
+layout.statusIndicatorsController = { transferBack() { teardown.push('transfer'); } };
+layout.mmPanelBox = [{ destroy() { teardown.push('container'); } }];
+layout._popDock = () => teardown.push('dock');
+layout._popPanel();
+assert.deepEqual(teardown, ['transfer', 'panel', 'container', 'dock']);
+console.log('Monitor removal destroys panel before its container');

@@ -283,12 +283,7 @@ export class MultiMonitorsDock {
         if (!this._dash)
             return null;
 
-        try {
-            return this._dash.showAppsButton ?? null;
-        } catch (_e) {
-            this._dash = null;
-            return null;
-        }
+        return this._dash.showAppsButton ?? null;
     }
 
     _connectShowAppsButton() {
@@ -296,23 +291,15 @@ export class MultiMonitorsDock {
         if (this._destroying || !button || this._showAppsButtonId)
             return;
 
-        try {
-            this._showAppsButtonId = button.connect('notify::checked',
-                () => this._onShowAppsButtonToggled());
-        } catch (_e) {
-            this._showAppsButtonId = null;
-        }
+        this._showAppsButtonId = button.connect('notify::checked',
+            () => this._onShowAppsButtonToggled());
     }
 
     _getOverviewControls() {
-        try {
-            return Main.overview?._overview?.controls ??
-                Main.overview?._overview?._controls ??
-                Main.overview?._controls ??
-                null;
-        } catch (_e) {
-            return null;
-        }
+        return Main.overview?._overview?.controls ??
+            Main.overview?._overview?._controls ??
+            Main.overview?._controls ??
+            null;
     }
 
     _getOverviewStateAdjustment() {
@@ -320,15 +307,11 @@ export class MultiMonitorsDock {
     }
 
     _getPrimaryShowAppsButton() {
-        try {
-            const controls = this._getOverviewControls();
-            return controls?.dash?.showAppsButton ??
-                controls?._dash?.showAppsButton ??
-                Main.overview?.dash?.showAppsButton ??
-                null;
-        } catch (_e) {
-            return null;
-        }
+        const controls = this._getOverviewControls();
+        return controls?.dash?.showAppsButton ??
+            controls?._dash?.showAppsButton ??
+            Main.overview?.dash?.showAppsButton ??
+            null;
     }
 
     _connectOverviewStateAdjustment() {
@@ -359,8 +342,6 @@ export class MultiMonitorsDock {
 
             this._ignoreShowAppsButtonToggle = true;
             button.checked = checked;
-        } catch (_e) {
-            this._showAppsButtonId = null;
         } finally {
             this._ignoreShowAppsButtonToggle = false;
         }
@@ -375,12 +356,7 @@ export class MultiMonitorsDock {
             return;
 
         const appGridState = OverviewControls.ControlsState?.APP_GRID ?? 2;
-        try {
-            this._setShowAppsChecked(adjustment.value >= appGridState - 0.5);
-        } catch (_e) {
-            this._stateAdjustment = null;
-            this._stateAdjustmentId = null;
-        }
+        this._setShowAppsChecked(adjustment.value >= appGridState - 0.5);
     }
 
     _onShowAppsButtonToggled() {
@@ -396,12 +372,7 @@ export class MultiMonitorsDock {
             APP_GRID: 2,
         };
         let checked = false;
-        try {
-            checked = button.checked;
-        } catch (_e) {
-            this._showAppsButtonId = null;
-            return;
-        }
+        checked = button.checked;
 
         const targetState = checked ? controlsState.APP_GRID : controlsState.WINDOW_PICKER;
 
@@ -419,52 +390,43 @@ export class MultiMonitorsDock {
 
         const primaryButton = this._getPrimaryShowAppsButton();
         if (primaryButton && primaryButton !== button) {
-            try {
-                if (primaryButton.checked === checked)
-                    return;
-                primaryButton.checked = checked;
+            if (primaryButton.checked === checked)
                 return;
-            } catch (_e) {
-            }
+            primaryButton.checked = checked;
+            return;
         }
 
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment)
             return;
 
-        try {
-            adjustment.remove_transition('value');
-            adjustment.ease(targetState, {
-                duration: OverviewControls.SIDE_CONTROLS_ANIMATION_TIME ?? 250,
-                mode: Clutter.AnimationMode.EASE_OUT_SINE,
-            });
-        } catch (_e) {
-        }
+        adjustment.remove_transition('value');
+        adjustment.ease(targetState, {
+            duration: OverviewControls.SIDE_CONTROLS_ANIMATION_TIME ?? 250,
+            mode: Clutter.AnimationMode.EASE_OUT_SINE,
+        });
     }
 
     _updatePosition() {
         if (this._destroying || !this._bin || !this._dash)
             return;
 
-        try {
-            // Use the Dash's natural height; fall back to 60 px
-            let [, natHeight] = this._dash.get_preferred_height(-1);
-            if (!natHeight || natHeight <= 0)
-                natHeight = 60;
+        // Use the Dash's natural height; fall back to 60 px
+        let [, natHeight] = this._dash.get_preferred_height(-1);
+        if (!natHeight || natHeight <= 0)
+            natHeight = 60;
 
-            this._dash.setMaxSize(this._monitor.width, this._monitor.height);
-            const [, natWidth] = this._dash.get_preferred_width(natHeight);
-            const width = Math.min(this._monitor.width, Math.max(1, natWidth));
-            this._bin.set_size(width, natHeight);
-            this._bin.set_position(
-                this._monitor.x + Math.floor((this._monitor.width - width) / 2),
-                this._monitor.y + this._monitor.height - natHeight
-            );
-            this._edge.set_size(width, 2);
-            this._edge.set_position(this._bin.x,
-                this._monitor.y + this._monitor.height - 2);
-        } catch (_e) {
-        }
+        this._dash.setMaxSize(this._monitor.width, this._monitor.height);
+        const [, natWidth] = this._dash.get_preferred_width(natHeight);
+        const width = Math.min(this._monitor.width, Math.max(1, natWidth));
+        this._bin.set_size(width, natHeight);
+        this._bin.set_position(
+            this._monitor.x + Math.floor((this._monitor.width - width) / 2),
+            this._monitor.y + this._monitor.height - natHeight
+        );
+        this._edge.set_size(width, 2);
+        this._edge.set_position(this._bin.x,
+            this._monitor.y + this._monitor.height - 2);
     }
 
     updateMonitor(monitor) {
@@ -480,10 +442,14 @@ export class MultiMonitorsDock {
     }
 
     destroy() {
-        if (this._destroying)
-            return;
         this._destroying = true;
         this._hideDesktopDock();
+        // `_hideDesktopDock(true)` keeps this source alive while the hide
+        // animation finishes, so destruction must remove it explicitly.
+        if (this._rearmTimeoutId) {
+            GLib.source_remove(this._rearmTimeoutId);
+            this._rearmTimeoutId = 0;
+        }
         if (this._positionIdleId) {
             GLib.source_remove(this._positionIdleId);
             this._positionIdleId = 0;
@@ -526,16 +492,12 @@ export class MultiMonitorsDock {
         if (this._dash && this._widthChangedId)
             this._dash.disconnect(this._widthChangedId);
 
-        try {
-            if (this._inOverview)
-                Main.layoutManager.overviewGroup.remove_child(this._bin);
-            else
-                Main.layoutManager.removeChrome(this._bin);
-        } catch (_e) {}
+        if (this._inOverview)
+            Main.layoutManager.overviewGroup.remove_child(this._bin);
+        else
+            Main.layoutManager.removeChrome(this._bin);
 
-        try {
-            this._bin.destroy();
-        } catch (_e) {}
+        this._bin.destroy();
         this._bin = null;
         this._slide = null;
         this._dash = null;

@@ -128,11 +128,7 @@ class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
 
         const upstreamAllocate = WorkspaceThumbnail.WorkspaceThumbnail.prototype.vfunc_allocate;
         if (upstreamAllocate) {
-            try {
-                upstreamAllocate.call(this, box);
-            } catch (e) {
-                console.debug('[MultiMonitors] Workspace thumbnail upstream allocation failed: ' + e);
-            }
+            upstreamAllocate.call(this, box);
         }
     }
 
@@ -201,8 +197,6 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         this._delegate = this;
         this._monitorIndex = monitorIndex;
         this._extensionSettings = settings;
-        this._destroyed = false;
-
         // Cleanup MUST run from the `destroy` SIGNAL: on a C-side teardown
         // (monitor removed on resume) the destroy() method is bypassed, leaving
         // handlers on Main.overview / Main.layoutManager / global.display live.
@@ -296,10 +290,6 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
     }
 
     _disconnectAll() {
-        if (this._destroyed)
-            return;
-        this._destroyed = true;
-
         this._destroyThumbnails();
         // All handlers were connected with connectObject(..., this).
         this._scrollAdjustment.disconnectObject(this);
@@ -307,11 +297,6 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         this._mutterSettings.disconnectObject(this);
         Main.layoutManager.disconnectObject(this);
         global.display.disconnectObject(this);
-    }
-
-    destroy() {
-        this._disconnectAll();
-        super.destroy();
     }
 
     addThumbnails(start, count) {
@@ -480,7 +465,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._fixGeometry = 0;
             this._visible = false;
             this._destroying = false;
-            this._destroyed = false;
             this._pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
             this._overviewStateAdjustment = null;
             this._overviewStateChangedId = 0;
@@ -601,22 +585,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._appGridScrollView.visible = false;
 
             this._appDisplay = null;
-            try {
-                this._appDisplay = new AppDisplay.AppDisplay();
-                this._appDisplay.visible = false;
-                this._appDisplay.x_expand = true;
-                this._appDisplay.y_expand = true;
-                this._configureNativeAppDisplayLayout();
-            } catch (e) {
-                console.debug('[MultiMonitors] Failed to create native app display: ' + e);
-            }
+            this._appDisplay = new AppDisplay.AppDisplay();
+            this._appDisplay.visible = false;
+            this._appDisplay.x_expand = true;
+            this._appDisplay.y_expand = true;
+            this._configureNativeAppDisplayLayout();
 
             // Populate app grid with installed applications
-            try {
-                this._populateAppGrid();
-            } catch (e) {
-                console.debug('[MultiMonitors] Error populating app grid: ' + e);
-            }
+            this._populateAppGrid();
 
             this._searchController = new St.Widget({ visible: false, x_expand: true, y_expand: true, clip_to_allocation: true });
 
@@ -635,14 +611,11 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (Main.overview.searchController?.connectObject) {
                 // connectObject(..., this) auto-disconnects on destroy, even when
                 // this manager is torn down from C on a monitor change.
-                try {
-                    Main.overview.searchController.connectObject(
-                        'page-changed', this._setVisibility.bind(this), this);
-                } catch (e) { /* signal may not exist */ }
-                try {
-                    Main.overview.searchController.connectObject(
-                        'page-empty', this._onPageEmpty.bind(this), this);
-                } catch (e) { /* signal may not exist */ }
+                const controller = Main.overview.searchController;
+                if (GObject.signal_lookup('page-changed', controller.constructor.$gtype))
+                    controller.connectObject('page-changed', this._setVisibility.bind(this), this);
+                if (GObject.signal_lookup('page-empty', controller.constructor.$gtype))
+                    controller.connectObject('page-empty', this._onPageEmpty.bind(this), this);
             }
             this._connectOverviewStateWatcher();
 
@@ -677,13 +650,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!actor)
                 return '';
 
-            try {
-                if (actor.get_text)
-                    return actor.get_text() ?? '';
-                return actor.text ?? '';
-            } catch (_e) {
-                return '';
-            }
+            if (actor.get_text)
+                return actor.get_text() ?? '';
+            return actor.text ?? '';
         }
 
         _getSearchText(searchText = null) {
@@ -693,69 +662,37 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (this._destroying || !this._searchEntry)
                 return '';
 
-            try {
-                return this._searchEntry.get_text() ?? '';
-            } catch (e) {
-                console.debug('[MultiMonitors] Dropping stale search entry reference: ' + e);
-                this._searchEntry = null;
-                return '';
-            }
+            return this._searchEntry.get_text() ?? '';
         }
 
         _setSearchText(text) {
             if (this._destroying || !this._searchEntry)
                 return;
 
-            try {
-                this._searchEntry.set_text(text);
-            } catch (e) {
-                console.debug('[MultiMonitors] Dropping stale search entry reference: ' + e);
-                this._searchEntry = null;
-            }
+            this._searchEntry.set_text(text);
         }
 
         _focusSearchEntry() {
             if (this._destroying || !this._searchEntry)
                 return;
 
-            try {
-                this._searchEntry.grab_key_focus();
-            } catch (e) {
-                console.debug('[MultiMonitors] Dropping stale search entry reference: ' + e);
-                this._searchEntry = null;
-            }
+            this._searchEntry.grab_key_focus();
         }
 
         _setActorVisible(actor, visible) {
             if (this._destroying || !actor)
                 return false;
 
-            if (!this._isActorUsable(actor)) {
-                this._disconnectAll(false);
-                return false;
-            }
-
-            try {
-                actor.visible = visible;
-                return true;
-            } catch (_e) {
-                this._disconnectAll(false);
-                return false;
-            }
+            actor.visible = visible;
+            return true;
         }
 
         _isActorUsable(actor) {
             if (!actor)
                 return false;
 
-            // Touching a property on a finalized GObject throws in GJS. That is
-            // the only reliable liveness signal for a reference we retained
-            // across a monitor or session change.
-            try {
-                return actor.mapped !== undefined;
-            } catch (_e) {
-                return false;
-            }
+            // Owned actors are released in cleanup; borrowed views on destroy.
+            return true;
         }
 
         _onInstalledAppsChanged() {
@@ -798,13 +735,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
 
             let adjustment = null;
-            try {
-                const controls = Main.overview?._overview?._controls ?? Main.overview?._controls;
-                adjustment = controls?._stateAdjustment;
-            } catch (_e) {
-                this._disconnectAll(false);
-                return;
-            }
+            const controls = Main.overview?._overview?._controls ?? Main.overview?._controls;
+            adjustment = controls?._stateAdjustment;
 
             if (!adjustment || adjustment === this._overviewStateAdjustment)
                 return;
@@ -813,12 +745,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             this._overviewStateAdjustment = adjustment;
             // connectObject(..., this) auto-disconnects on destroy.
-            try {
-                adjustment.connectObject('notify::value',
-                    () => this._syncAppGridState(), this);
-            } catch (_e) {
-                this._disconnectAll(false);
-            }
+            adjustment.connectObject('notify::value',
+                () => this._syncAppGridState(), this);
         }
 
         _isAppGridState() {
@@ -829,12 +757,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             const appGridState = OverviewControls.ControlsState?.APP_GRID ?? 2;
             let value = 0;
-            try {
-                value = this._overviewStateAdjustment.value;
-            } catch (_e) {
-                this._disconnectAll(false);
-                return false;
-            }
+            value = this._overviewStateAdjustment.value;
 
             return value >= appGridState - 0.5;
         }
@@ -863,25 +786,21 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // App icon - use the app's GIcon for proper icon display
             let icon = null;
-            try {
-                const gIcon = app.get_icon();
-                if (gIcon) {
-                    icon = new St.Icon({
-                        gicon: gIcon,
-                        icon_size: 86,
-                        style_class: 'app-icon',
-                    });
-                }
-            } catch (e) {
-                // GIcon may not be available
+            const gIcon = app.get_icon();
+            if (gIcon) {
+                icon = new St.Icon({
+                    gicon: gIcon,
+                    icon_size: 86,
+                    style_class: 'app-icon',
+                });
             }
 
-            // Fallback if GIcon didn't work
-            if (!icon) {
+            // Shell.App.create_icon_texture() is unavailable on GNOME 46+.
+            if (!icon && typeof app.create_icon_texture === 'function') {
                 try {
                     icon = app.create_icon_texture(86);
                 } catch (e) {
-                    // create_icon_texture may fail
+                    console.debug('[MultiMonitors] Could not create app icon texture: ' + e);
                 }
             }
 
@@ -931,11 +850,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Remove highlight from previous focused app
             if (this._focusedApp && this._focusedApp !== app) {
-                try {
-                    this._focusedApp.remove_style_pseudo_class('focus');
-                    this._focusedApp.set_style(baseStyle);
-                } catch (_e) {
-                }
+                this._focusedApp.remove_style_pseudo_class('focus');
+                this._focusedApp.set_style(baseStyle);
             }
 
             // Set new focused app
@@ -943,12 +859,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Add highlight to focused app
             if (this._focusedApp) {
-                try {
-                    this._focusedApp.add_style_pseudo_class('focus');
-                    this._focusedApp.set_style(focusedStyle);
-                } catch (_e) {
-                    this._focusedApp = null;
-                }
+                this._focusedApp.add_style_pseudo_class('focus');
+                this._focusedApp.set_style(focusedStyle);
             }
         }
 
@@ -957,19 +869,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Get visible apps
             let children = [];
-            try {
-                children = this._appGrid.get_children();
-            } catch (_e) {
-                this._appGrid = null;
-                return;
-            }
+            children = this._appGrid.get_children();
 
             const visibleApps = children.filter(child => {
-                try {
-                    return child.visible && child._appInfo;
-                } catch (_e) {
-                    return false;
-                }
+                return child.visible && child._appInfo;
             });
 
             if (visibleApps.length === 0) return;
@@ -994,97 +897,77 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _launchApp(appInfo) {
-            // Launch an app on this monitor
             const targetMonitor = this._monitorIndex;
+            const shellApp = Shell.AppSystem.get_default().lookup_app(appInfo.get_id());
 
-            try {
-                // First try to get the Shell.App from AppSystem
-                const appSystem = Shell.AppSystem.get_default();
-                const appId = appInfo.get_id();
-                const shellApp = appSystem.lookup_app(appId);
+            if (shellApp) {
+                this._launchSignalIds ??= new Set();
+                const windowCreatedId = global.display.connect('window-created', (_display, window) => {
+                    const windowApp = Shell.WindowTracker.get_default().get_window_app(window);
+                    if (windowApp?.get_id() !== shellApp.get_id())
+                        return;
 
-                if (shellApp) {
-                    // Set up a window-created listener to catch the new window
-                    let windowCreatedId = global.display.connect('window-created', (display, window) => {
-                        // Check if this window belongs to our app
-                        const windowApp = Shell.WindowTracker.get_default().get_window_app(window);
-                        if (windowApp && windowApp.get_id() === shellApp.get_id()) {
-                            // Disconnect immediately
-                            global.display.disconnect(windowCreatedId);
-                            windowCreatedId = 0;
+                    global.display.disconnect(windowCreatedId);
+                    this._launchSignalIds.delete(windowCreatedId);
+                    this._scheduleWindowOperation(window, 100,
+                        () => this._moveWindowToMonitor(window, targetMonitor));
+                });
+                this._launchSignalIds.add(windowCreatedId);
 
-                            // Move window to target monitor after it's fully created
-                            const moveTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                                this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== moveTimeoutId);
-                                this._moveWindowToMonitor(window, targetMonitor);
-                                return GLib.SOURCE_REMOVE;
-                            });
-                            this._pendingTimeouts.push(moveTimeoutId);
-                        }
-                    });
-
-                    // Auto-disconnect after 5 seconds to prevent memory leaks
-                    const disconnectTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
-                        this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== disconnectTimeoutId);
-                        if (windowCreatedId) {
-                            global.display.disconnect(windowCreatedId);
-                            windowCreatedId = 0;
-                        }
-                        return GLib.SOURCE_REMOVE;
-                    });
-                    this._pendingTimeouts.push(disconnectTimeoutId);
-
-                    // Launch the app
-                    shellApp.open_new_window(-1);
-                } else if (appInfo.launch) {
-                    // Use Gio.AppInfo.launch()
-                    appInfo.launch([], null);
-                } else if (appInfo.activate) {
-                    // Fallback to activate if available
-                    appInfo.activate();
-                }
-            } catch (e) {
-                console.debug('[MultiMonitors] Error launching app: ' + e);
-                // Last resort - try launch directly
+                const disconnectTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+                    this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== disconnectTimeoutId);
+                    if (this._launchSignalIds.delete(windowCreatedId))
+                        global.display.disconnect(windowCreatedId);
+                    return GLib.SOURCE_REMOVE;
+                });
+                this._pendingTimeouts.push(disconnectTimeoutId);
+                shellApp.open_new_window(-1);
+            } else {
+                // Gio.AppInfo.launch can fail when the executable is unavailable.
                 try {
                     appInfo.launch([], null);
-                } catch (e2) {
-                    console.debug('[MultiMonitors] Fallback launch also failed: ' + e2);
+                } catch (e) {
+                    console.warn('[MultiMonitors] Failed to launch app: ' + e.message);
                 }
             }
 
             Main.overview.hide();
         }
 
+        _scheduleWindowOperation(window, delay, callback) {
+            this._windowOperations ??= new Set();
+            const operation = { window, timeoutId: 0, unmanagedId: 0 };
+            const release = () => {
+                if (operation.timeoutId)
+                    GLib.source_remove(operation.timeoutId);
+                operation.timeoutId = 0;
+                window.disconnect(operation.unmanagedId);
+                this._windowOperations.delete(operation);
+            };
+            operation.unmanagedId = window.connect('unmanaged', release);
+            operation.timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+                operation.timeoutId = 0;
+                release();
+                callback();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._windowOperations.add(operation);
+        }
+
         _moveWindowToMonitor(window, targetMonitor) {
-            // Move a specific window to the target monitor
-            try {
+            if (!Main.layoutManager.monitors[targetMonitor])
+                return;
+
+            window.move_to_monitor(targetMonitor);
+            this._scheduleWindowOperation(window, 50, () => {
                 const monitor = Main.layoutManager.monitors[targetMonitor];
-
-                if (monitor && window) {
-                    console.debug('[MultiMonitors] Moving window to monitor ' + targetMonitor);
-
-                    // Move window to the target monitor
-                    window.move_to_monitor(targetMonitor);
-
-                    // Center the window on the new monitor
-                    const centerTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                        this._pendingTimeouts = this._pendingTimeouts.filter(id => id !== centerTimeoutId);
-                        try {
-                            const rect = window.get_frame_rect();
-                            const newX = monitor.x + Math.floor((monitor.width - rect.width) / 2);
-                            const newY = monitor.y + Math.floor((monitor.height - rect.height) / 2);
-                            window.move_frame(true, newX, newY);
-                        } catch (e) {
-                            // Window may have been destroyed
-                        }
-                        return GLib.SOURCE_REMOVE;
-                    });
-                    this._pendingTimeouts.push(centerTimeoutId);
-                }
-            } catch (e) {
-                console.debug('[MultiMonitors] Error moving window to monitor: ' + e);
-            }
+                if (!monitor)
+                    return;
+                const rect = window.get_frame_rect();
+                const newX = monitor.x + Math.floor((monitor.width - rect.width) / 2);
+                const newY = monitor.y + Math.floor((monitor.height - rect.height) / 2);
+                window.move_frame(true, newX, newY);
+            });
         }
 
         _filterAppGrid(searchText) {
@@ -1095,86 +978,68 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!this._appDisplay)
                 return;
 
-            try {
-                this._configureNativeAppDisplayLayout();
-                this._syncNativePageIndicatorsPosition();
-                if (this._appDisplay._redisplayWorkId)
-                    Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
-                else if (this._appDisplay._redisplay)
-                    this._appDisplay._redisplay();
-            } catch (e) {
-                console.debug('[MultiMonitors] Error refreshing native app display: ' + e);
-                this._appDisplay = null;
-                this._appDisplayVisible = false;
-            }
+            this._configureNativeAppDisplayLayout();
+            this._syncNativePageIndicatorsPosition();
+            if (this._appDisplay._redisplayWorkId)
+                Main.queueDeferredWork(this._appDisplay._redisplayWorkId);
+            else if (this._appDisplay._redisplay)
+                this._appDisplay._redisplay();
         }
 
         _configureNativeAppDisplayLayout() {
             let layoutManager = null;
-            try {
-                if (!this._isActorUsable(this._appDisplay)) {
-                    this._appDisplay = null;
-                    this._appDisplayVisible = false;
-                    return;
-                }
-
-                layoutManager = this._appDisplay?._grid?.layoutManager;
-                if (!layoutManager)
-                    return;
-
-                const portrait = this._isPortraitMonitor();
-                const columns = portrait ? 4 : 8;
-                const rows = portrait ? 5 : 3;
-                const layoutKey = `${columns}x${rows}`;
-
-                if (this._lastAppDisplayLayout === layoutKey &&
-                    layoutManager.columnsPerPage === columns &&
-                    layoutManager.rowsPerPage === rows)
-                    return;
-
-                layoutManager.columnsPerPage = columns;
-                layoutManager.rowsPerPage = rows;
-                this._lastAppDisplayLayout = layoutKey;
-
-                this._appDisplay._grid.queue_relayout();
-            } catch (e) {
-                console.debug('[MultiMonitors] Dropping stale app display reference: ' + e);
+            if (!this._isActorUsable(this._appDisplay)) {
                 this._appDisplay = null;
                 this._appDisplayVisible = false;
+                return;
             }
+
+            layoutManager = this._appDisplay?._grid?.layoutManager;
+            if (!layoutManager)
+                return;
+
+            const portrait = this._isPortraitMonitor();
+            const columns = portrait ? 4 : 8;
+            const rows = portrait ? 5 : 3;
+            const layoutKey = `${columns}x${rows}`;
+
+            if (this._lastAppDisplayLayout === layoutKey &&
+                layoutManager.columnsPerPage === columns &&
+                layoutManager.rowsPerPage === rows)
+                return;
+
+            layoutManager.columnsPerPage = columns;
+            layoutManager.rowsPerPage = rows;
+            this._lastAppDisplayLayout = layoutKey;
+
+            this._appDisplay._grid.queue_relayout();
         }
 
         _syncNativePageIndicatorsPosition() {
-            try {
-                if (!this._isActorUsable(this._appDisplay)) {
-                    this._appDisplay = null;
-                    this._appDisplayVisible = false;
-                    return;
-                }
-
-                const indicators = this._appDisplay?._pageIndicators;
-                const monitor = Main.layoutManager.monitors[this._monitorIndex];
-                if (!indicators || !monitor)
-                    return;
-                if (!this._isActorUsable(indicators)) {
-                    this._appDisplay = null;
-                    this._appDisplayVisible = false;
-                    return;
-                }
-
-                const portrait = this._isPortraitMonitor();
-                const lift = portrait
-                    ? Math.max(180, Math.min(Math.round(monitor.height * 0.14), 320))
-                    : Math.max(90, Math.min(Math.round(monitor.height * 0.09), 160));
-
-                indicators.translation_y = -lift;
-                indicators.visible = true;
-                indicators.opacity = 255;
-            } catch (e) {
-                console.debug('[MultiMonitors] Dropping stale native page indicator reference: ' + e);
+            if (!this._isActorUsable(this._appDisplay)) {
                 this._appDisplay = null;
                 this._appDisplayVisible = false;
+                return;
             }
+
+            const indicators = this._appDisplay?._pageIndicators;
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+            if (!indicators || !monitor)
+                return;
+            if (!this._isActorUsable(indicators)) {
+                this._appDisplay = null;
+                this._appDisplayVisible = false;
+                return;
+            }
+
+            const portrait = this._isPortraitMonitor();
+            const lift = portrait
+                ? Math.max(180, Math.min(Math.round(monitor.height * 0.14), 320))
+                : Math.max(90, Math.min(Math.round(monitor.height * 0.09), 160));
+
+            indicators.translation_y = -lift;
+            indicators.visible = true;
+            indicators.opacity = 255;
         }
 
         _isPortraitMonitor() {
@@ -1221,71 +1086,61 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!this._workspacesViews)
                 return;
 
-            try {
-                if (!this._isActorUsable(this._workspacesViews)) {
-                    this._workspacesViews = null;
-                    this._lastWorkspaceTransformKey = null;
-                    return;
-                }
-
-                const fullGeometry = this._getFullWorkspaceGeometry();
-                if (!fullGeometry)
-                    return;
-
-                this._workspacesViews.set_pivot_point(0, 0);
-
-                if (!compact) {
-                    if (this._lastWorkspaceTransformKey === 'full')
-                        return;
-
-                    this._resetWorkspacesViewTransform();
-                    this._lastWorkspaceTransformKey = 'full';
-                    return;
-                }
-
-                const compactGeometry = this._getAppGridWorkspacePreviewGeometry();
-                if (!compactGeometry)
-                    return;
-
-                const scale = compactGeometry.width / fullGeometry.width;
-                const transformKey = [
-                    Math.round(compactGeometry.x),
-                    Math.round(compactGeometry.y),
-                    Math.round(scale * 1000),
-                ].join(':');
-                if (this._lastWorkspaceTransformKey === transformKey)
-                    return;
-
-                this._workspacesViews.translation_x = compactGeometry.x - fullGeometry.x;
-                this._workspacesViews.translation_y = compactGeometry.y - fullGeometry.y;
-                this._workspacesViews.scale_x = scale;
-                this._workspacesViews.scale_y = scale;
-                this._lastWorkspaceTransformKey = transformKey;
-            } catch (_e) {
+            if (!this._isActorUsable(this._workspacesViews)) {
                 this._workspacesViews = null;
                 this._lastWorkspaceTransformKey = null;
+                return;
             }
+
+            const fullGeometry = this._getFullWorkspaceGeometry();
+            if (!fullGeometry)
+                return;
+
+            this._workspacesViews.set_pivot_point(0, 0);
+
+            if (!compact) {
+                if (this._lastWorkspaceTransformKey === 'full')
+                    return;
+
+                this._resetWorkspacesViewTransform();
+                this._lastWorkspaceTransformKey = 'full';
+                return;
+            }
+
+            const compactGeometry = this._getAppGridWorkspacePreviewGeometry();
+            if (!compactGeometry)
+                return;
+
+            const scale = compactGeometry.width / fullGeometry.width;
+            const transformKey = [
+                Math.round(compactGeometry.x),
+                Math.round(compactGeometry.y),
+                Math.round(scale * 1000),
+            ].join(':');
+            if (this._lastWorkspaceTransformKey === transformKey)
+                return;
+
+            this._workspacesViews.translation_x = compactGeometry.x - fullGeometry.x;
+            this._workspacesViews.translation_y = compactGeometry.y - fullGeometry.y;
+            this._workspacesViews.scale_x = scale;
+            this._workspacesViews.scale_y = scale;
+            this._lastWorkspaceTransformKey = transformKey;
         }
 
         _resetWorkspacesViewTransform() {
             if (!this._workspacesViews)
                 return;
 
-            try {
-                if (!this._isActorUsable(this._workspacesViews)) {
-                    this._workspacesViews = null;
-                    this._lastWorkspaceTransformKey = null;
-                    return;
-                }
-
-                this._workspacesViews.translation_x = 0;
-                this._workspacesViews.translation_y = 0;
-                this._workspacesViews.scale_x = 1;
-                this._workspacesViews.scale_y = 1;
-            } catch (_e) {
+            if (!this._isActorUsable(this._workspacesViews)) {
                 this._workspacesViews = null;
                 this._lastWorkspaceTransformKey = null;
+                return;
             }
+
+            this._workspacesViews.translation_x = 0;
+            this._workspacesViews.translation_y = 0;
+            this._workspacesViews.scale_x = 1;
+            this._workspacesViews.scale_y = 1;
         }
 
         async _syncAppGridState(searchText = null) {
@@ -1328,12 +1183,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._resetWorkspacesViewTransform();
                 this._lastWorkspaceTransformKey = null;
                 if (this._visible && this._workspacesViews) {
-                    try {
-                        this._workspacesViews.visible = true;
-                        this._workspacesViews.opacity = 255;
-                    } catch (_e) {
-                        this._workspacesViews = null;
-                    }
+                    this._workspacesViews.visible = true;
+                    this._workspacesViews.opacity = 255;
                 }
 
                 if (this._thumbnailsBox) {
@@ -1349,12 +1200,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
 
             let children = [];
-            try {
-                children = this._appGrid.get_children();
-            } catch (_e) {
-                this._appGrid = null;
-                return;
-            }
+            children = this._appGrid.get_children();
 
             const maxVisibleApps = 6; // Maximum apps to show when searching
             let matchingIds = [];
@@ -1364,8 +1210,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._setFocusedApp(null);
                 for (const child of children)
                     child.visible = false;
+                this._appSearchProvider ??= new AppDisplay.AppSearchProvider();
+                // The asynchronous search provider can reject a request.
                 try {
-                    this._appSearchProvider ??= new AppDisplay.AppSearchProvider();
                     matchingIds = await this._appSearchProvider.getInitialResultSet(
                         normalizedSearch.split(/\s+/), null);
                 } catch (e) {
@@ -1391,28 +1238,25 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             let firstVisibleApp = null;
 
             for (const child of children) {
-                try {
-                    if (!child._appInfo) {
-                        child.visible = showApps && !hasText && !useNativeAppDisplay;
-                        continue;
-                    }
+                if (!child._appInfo) {
+                    child.visible = showApps && !hasText && !useNativeAppDisplay;
+                    continue;
+                }
 
-                    if (!hasText) {
-                        child.visible = showApps && !useNativeAppDisplay;
-                    } else {
-                        // Show only first 6 matching apps horizontally
-                        const matches = matchingIds.includes(child._appInfo.get_id());
-                        if (matches && visibleCount < maxVisibleApps) {
-                            child.visible = true;
-                            if (!firstVisibleApp) {
-                                firstVisibleApp = child;
-                            }
-                            visibleCount++;
-                        } else {
-                            child.visible = false;
+                if (!hasText) {
+                    child.visible = showApps && !useNativeAppDisplay;
+                } else {
+                    // Show only first 6 matching apps horizontally
+                    const matches = matchingIds.includes(child._appInfo.get_id());
+                    if (matches && visibleCount < maxVisibleApps) {
+                        child.visible = true;
+                        if (!firstVisibleApp) {
+                            firstVisibleApp = child;
                         }
+                        visibleCount++;
+                    } else {
+                        child.visible = false;
                     }
-                } catch (_e) {
                 }
             }
 
@@ -1462,16 +1306,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 }
 
                 if (this._workspacesViews) {
-                    try {
-                        this._workspacesViews.visible = !hasText;
-                        this._workspacesViews.opacity = hasText ? 0 : 255;
-                        this._syncWorkspacesViewGeometry(showApps && !hasText);
-                        console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
-                    } catch (e) {
-                        console.debug('[MultiMonitors] Dropping stale workspacesView reference: ' + e);
-                        this._workspacesViews = null;
-                        this._lastWorkspaceTransformKey = null;
-                    }
+                    this._workspacesViews.visible = !hasText;
+                    this._workspacesViews.opacity = hasText ? 0 : 255;
+                    this._syncWorkspacesViewGeometry(showApps && !hasText);
+                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
                 }
 
                 // Also hide our own thumbnails box when searching or showing apps.
@@ -1492,26 +1330,22 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // Helper to find workspaces view if not found on initial show()
             let workspacesDisplay = null;
 
-            try {
-                if (Main.overview.searchController && Main.overview.searchController._workspacesDisplay) {
-                    workspacesDisplay = Main.overview.searchController._workspacesDisplay;
-                }
-                else if (Main.overview._overview && Main.overview._overview._controls && Main.overview._overview._controls._workspacesDisplay) {
-                    workspacesDisplay = Main.overview._overview._controls._workspacesDisplay;
-                }
-                else if (Main.overview._controls && Main.overview._controls._workspacesDisplay) {
-                    workspacesDisplay = Main.overview._controls._workspacesDisplay;
-                }
+            if (Main.overview.searchController && Main.overview.searchController._workspacesDisplay) {
+                workspacesDisplay = Main.overview.searchController._workspacesDisplay;
+            }
+            else if (Main.overview._overview && Main.overview._overview._controls && Main.overview._overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._overview._controls._workspacesDisplay;
+            }
+            else if (Main.overview._controls && Main.overview._controls._workspacesDisplay) {
+                workspacesDisplay = Main.overview._controls._workspacesDisplay;
+            }
 
-                if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
-                    this._setWorkspacesViews(workspacesDisplay._workspacesViews[this._monitorIndex]);
-                    console.debug('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
-                } else if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
-                    this._setWorkspacesViews(workspacesDisplay._primaryWorkspacesView);
-                    console.debug('[MultiMonitors] Lazy discovery: Found primary workspacesView');
-                }
-            } catch (_e) {
-                this._disconnectAll(false);
+            if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
+                this._setWorkspacesViews(workspacesDisplay._workspacesViews[this._monitorIndex]);
+                console.debug('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
+            } else if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
+                this._setWorkspacesViews(workspacesDisplay._primaryWorkspacesView);
+                console.debug('[MultiMonitors] Lazy discovery: Found primary workspacesView');
             }
         }
 
@@ -1538,15 +1372,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!view)
                 return;
 
-            try {
-                view.connectObject('destroy', () => {
-                    this._workspacesViews = null;
-                    this._lastWorkspaceTransformKey = null;
-                }, this);
-            } catch (_e) {
-                // If we cannot even connect, the reference is not trustworthy.
+            view.connectObject('destroy', () => {
                 this._workspacesViews = null;
-            }
+                this._lastWorkspaceTransformKey = null;
+            }, this);
         }
 
         show() {
@@ -1602,22 +1431,24 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._firstVisibleApp = null;
         }
 
-        _disconnectAll(resetTransforms = true) {
-            if (this._destroyed)
-                return;
-            this._destroyed = true;
+        _disconnectAll() {
             this._destroying = true;
 
             // Remove all pending timeouts per EGO guidelines
             for (let timeoutId of this._pendingTimeouts) {
                 if (timeoutId) {
-                    try {
-                        GLib.source_remove(timeoutId);
-                    } catch (_e) {
-                    }
+                    GLib.source_remove(timeoutId);
                 }
             }
             this._pendingTimeouts = [];
+            for (const id of this._launchSignalIds ?? [])
+                global.display.disconnect(id);
+            this._launchSignalIds = null;
+            for (const operation of this._windowOperations ?? []) {
+                GLib.source_remove(operation.timeoutId);
+                operation.window.disconnect(operation.unmanagedId);
+            }
+            this._windowOperations = null;
 
             // All handlers were connected with connectObject(..., this), so a
             // single disconnectObject(this) per source removes them.
@@ -1626,8 +1457,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             Shell.AppSystem.get_default().disconnectObject(this);
             this._overviewStateAdjustment?.disconnectObject(this);
             this._overviewStateAdjustment = null;
-            if (resetTransforms)
-                this._resetWorkspacesViewTransform();
+            this._resetWorkspacesViewTransform();
             // Drop the borrowed workspacesView's `destroy` handler. connectObject
             // auto-cleans when this actor is finalized, but this covers the paths
             // where _disconnectAll runs without our own destruction.
@@ -1637,11 +1467,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._focusedApp = null;
             this._appSearchProvider = null;
             this._searchEntry = null;
-        }
-
-        destroy() {
-            this._disconnectAll();
-            super.destroy();
         }
 
         _monitorsChanged() {
