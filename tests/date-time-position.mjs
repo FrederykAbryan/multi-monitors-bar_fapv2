@@ -55,6 +55,8 @@ const context = vm.createContext({
 });
 const manager = vm.runInContext(`({
 ${method('_showDateTime', '_showAppMenu')},
+${method('_getMainCenterRank', '_getCenterInsertIndex')},
+${method('_getCenterInsertIndex', '_addToPanelBox')},
 ${method('_addToPanelBox', '_updatePanel')},
 ${method('_updatePanel', '_cloneAllMainPanelIndicators')}
 })`, context);
@@ -130,3 +132,26 @@ assert.deepEqual(right.get_children(), [network, tray, clock],
 enabled = false;
 manager._showDateTime();
 assert.equal(clock.get_parent(), null, 'hiding the clock removes it from the panel');
+
+// Center items keep the main panel's order around the clock
+const mainCenter = new Actor();
+const mainClock = new Actor();
+const mainWeather = new Actor();
+mainCenter.add_child(mainClock);
+mainCenter.add_child(mainWeather);
+Object.assign(context.Main.panel, { _centerBox: mainCenter });
+Object.assign(context.Main.panel.statusArea, { dateMenu: mainClock, weather: mainWeather });
+const weather = new Actor();
+enabled = true;
+position = 'center';
+manager._showDateTime();
+manager._addToPanelBox('weather', weather, 0, center);
+assert.deepEqual(centerBin.get_children(), [clock, weather],
+    'an item right of the main clock stays right of the mirrored clock');
+
+enabled = false;
+manager._showDateTime();
+enabled = true;
+manager._showDateTime();
+assert.deepEqual(centerBin.get_children(), [clock, weather],
+    'a re-added clock goes back before the item that follows it on the main panel');
