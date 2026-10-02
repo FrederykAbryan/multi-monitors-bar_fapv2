@@ -41,6 +41,7 @@ const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
 
 const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
+const DATE_TIME_POSITION_ID = 'date-time-position';
 
 export let mmPanel = [];
 export let mmOverview = null;
@@ -71,6 +72,8 @@ export default class MultiMonitorsExtension extends Extension {
 		this._dtdSettings = null;
 		this._savedDockMultiMonitor = null;
 		this._mainPanelEnsureIndicator = null;
+		this._mainDateMenuPlacement = null;
+		this._mainDateTimePositionId = null;
 		this._loginManager = null;
 	}
 
@@ -142,6 +145,63 @@ export default class MultiMonitorsExtension extends Extension {
 			state.actor.clip_to_allocation = state.clipToAllocation;
 		}
 		this._mainPanelClipState = null;
+	}
+
+	_moveMainDateMenu(box, index) {
+		const container = this._mainDateMenuPlacement?.container;
+		if (!container || !box)
+			return;
+
+		const parent = container.get_parent();
+		if (parent === box && parent.get_children().indexOf(container) < index)
+			index--;
+		if (parent === box && parent.get_children().indexOf(container) === index)
+			return;
+		if (parent)
+			parent.remove_child(container);
+		box.insert_child_at_index(container, index);
+	}
+
+	_applyMainDateTimePosition() {
+		const panel = Main.panel;
+		const container = panel?.statusArea?.dateMenu?.container;
+		if (!container)
+			return;
+
+		if (!this._mainDateMenuPlacement || this._mainDateMenuPlacement.container !== container) {
+			const parent = container.get_parent();
+			if (!parent)
+				return;
+			this._mainDateMenuPlacement = {
+				container,
+				parent,
+				index: parent.get_children().indexOf(container),
+			};
+		}
+
+		const position = this._settings.get_string(DATE_TIME_POSITION_ID);
+		if (position === 'left') {
+			this._moveMainDateMenu(panel._leftBox, panel._leftBox.get_n_children());
+		} else if (position === 'right-before-tray' || position === 'right-after-tray') {
+			const box = panel._rightBox;
+			const tray = panel.statusArea.quickSettings;
+			const trayContainer = tray?.container || tray;
+			const trayIndex = box.get_children().indexOf(trayContainer);
+			const index = position === 'right-before-tray' && trayIndex >= 0
+				? trayIndex : box.get_n_children();
+			this._moveMainDateMenu(box, index);
+		} else {
+			const { parent, index } = this._mainDateMenuPlacement;
+			this._moveMainDateMenu(parent, index);
+		}
+	}
+
+	_restoreMainDateTimePosition() {
+		if (!this._mainDateMenuPlacement)
+			return;
+		const { parent, index } = this._mainDateMenuPlacement;
+		this._moveMainDateMenu(parent, index);
+		this._mainDateMenuPlacement = null;
 	}
 
 	_showThumbnailsSlider() {
@@ -274,6 +334,9 @@ export default class MultiMonitorsExtension extends Extension {
 		this._settings = this.getSettings();
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
 		this._applyMainPanelClipping();
+		this._mainDateTimePositionId = this._settings.connect('changed::' + DATE_TIME_POSITION_ID,
+			this._applyMainDateTimePosition.bind(this));
+		this._applyMainDateTimePosition();
 
 		this._switchOffThumbnailsMuId = this._mu_settings.connect('changed::' + WORKSPACES_ONLY_ON_PRIMARY_ID,
 			this._switchOffThumbnails.bind(this));
@@ -401,6 +464,11 @@ export default class MultiMonitorsExtension extends Extension {
 			this._settings.disconnect(this._thumbnailsSliderPositionId);
 			this._thumbnailsSliderPositionId = null;
 		}
+		if (this._mainDateTimePositionId) {
+			this._settings.disconnect(this._mainDateTimePositionId);
+			this._mainDateTimePositionId = null;
+		}
+		this._restoreMainDateTimePosition();
 
 		this._restoreMainPanelClipping();
 

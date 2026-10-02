@@ -89,6 +89,7 @@ gnome-extensions prefs multi-monitors-bar@frederykabryan
 | Show Activities Button | `show-activities` | `true` |
 | Show AppMenu Button | `show-app-menu` | `true` |
 | Show DateTime Menu | `show-date-time` | `true` |
+| Date and Time Position (all monitors) | `date-time-position` | `center` |
 | Thumbnails Slider Position | `thumbnails-slider-position` | `auto` |
 | Enable Blur my Shell | `enable-blur-my-shell` | `true` |
 | Hot Corners | `enable-hot-corners` | (system default) |

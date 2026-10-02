@@ -45,6 +45,7 @@ export const setMMPanelArrayRef = Constants.setMMPanelArrayRef;
 export const SHOW_ACTIVITIES_ID = Constants.SHOW_ACTIVITIES_ID;
 export const SHOW_APP_MENU_ID = Constants.SHOW_APP_MENU_ID;
 export const SHOW_DATE_TIME_ID = Constants.SHOW_DATE_TIME_ID;
+export const DATE_TIME_POSITION_ID = 'date-time-position';
 export const AVAILABLE_INDICATORS_ID = Constants.AVAILABLE_INDICATORS_ID;
 export const TRANSFER_INDICATORS_ID = Constants.TRANSFER_INDICATORS_ID;
 export const EXCLUDE_INDICATORS_ID = Constants.EXCLUDE_INDICATORS_ID;
@@ -424,6 +425,8 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             this._showDateTimeId = this._settings.connect('changed::' + SHOW_DATE_TIME_ID,
                 this._showDateTime.bind(this));
+            this._dateTimePositionId = this._settings.connect('changed::' + DATE_TIME_POSITION_ID,
+                this._showDateTime.bind(this));
             this._showDateTime();
 
             // Watch for late-loading extensions (like Apps and Places)
@@ -514,7 +517,6 @@ const MultiMonitorsPanel = GObject.registerClass(
         vfunc_map() {
             super.vfunc_map();
             this._updatePanel();
-            this._showDateTime();
         }
 
         _cleanup() {
@@ -572,6 +574,10 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (this._showDateTimeId) {
                 this._settings.disconnect(this._showDateTimeId);
                 this._showDateTimeId = null;
+            }
+            if (this._dateTimePositionId) {
+                this._settings.disconnect(this._dateTimePositionId);
+                this._dateTimePositionId = null;
             }
             if (this._panelColorId) {
                 this._settings.disconnect(this._panelColorId);
@@ -637,18 +643,46 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _showDateTime() {
-            let name = 'dateMenu';
+            const name = 'dateMenu';
             if (this._settings.get_boolean(SHOW_DATE_TIME_ID)) {
-                if (!this.statusArea[name]) {
-                    let indicator = this._ensureIndicator(name);
-                    if (indicator) {
-                        let box = this._centerBox;
-                        this._addToPanelBox(name, indicator, 0, box);
+                const indicator = this._ensureIndicator(name);
+                if (!indicator)
+                    return;
+
+                const position = this._settings.get_string(DATE_TIME_POSITION_ID);
+                let box = this._centerBox;
+                let index = 0;
+                if (position === 'left') {
+                    box = this._leftBox;
+                    index = box.get_n_children();
+                } else if (position === 'right-before-tray' || position === 'right-after-tray') {
+                    box = this._rightBox;
+                    index = box.get_n_children();
+                    if (position === 'right-before-tray') {
+                        const tray = this.statusArea.quickSettings;
+                        const trayContainer = tray?.container || tray;
+                        const trayIndex = box.get_children().indexOf(trayContainer);
+                        if (trayIndex >= 0)
+                            index = trayIndex;
                     }
                 }
-                if (this.statusArea[name]) {
-                    this.statusArea[name].visible = true;
+                const container = indicator.container || indicator;
+                if (box === this._centerBox && container.get_parent() === this._centerBin) {
+                    container.show();
+                    indicator.visible = true;
+                    return;
                 }
+                if (box !== this._centerBox && container.get_parent() === box &&
+                    box.get_children().indexOf(container) < index)
+                    index--;
+                if (box !== this._centerBox && container.get_parent() === box &&
+                    box.get_children().indexOf(container) === index) {
+                    container.show();
+                    indicator.visible = true;
+                    return;
+                }
+                this._addToPanelBox(name, indicator, index, box);
+                indicator.visible = true;
             } else {
                 this._destroyIndicator(name);
             }
@@ -1039,6 +1073,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             // Ensure system tray is rightmost
             this._ensureQuickSettingsRightmost();
+
         }
 
         _cloneAllMainPanelIndicators() {
@@ -1070,6 +1105,9 @@ const MultiMonitorsPanel = GObject.registerClass(
             // Helper function to find role for a child actor
             const findRoleForChild = (child) => {
                 for (let role in mainPanel.statusArea) {
+                    // The date menu has its own visibility and placement setting.
+                    if (role === 'dateMenu')
+                        continue;
                     const indicator = mainPanel.statusArea[role];
                     if (!indicator) continue;
 
@@ -1147,6 +1185,8 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             // Now mirror them in order
             const desiredRoles = new Set([...leftIndicators, ...centerIndicators, ...rightIndicators]);
+            if (this._settings.get_boolean(SHOW_DATE_TIME_ID))
+                desiredRoles.add('dateMenu');
             this._removeStaleIndicators(desiredRoles);
 
             this._updateBox(leftIndicators, this._leftBox);
@@ -1245,6 +1285,7 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
             if (cont.get_parent()) cont.get_parent().remove_child(cont);
         }
         this._destroyIndicator(role);
+        this._showDateTime();
         return;
     }
 
@@ -1259,6 +1300,7 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
     const parent = container.get_parent();
     if (parent) parent.remove_child(container);
     this._addToPanelBox(role, indicator, this._rightBox.get_n_children(), this._rightBox);
+    this._showDateTime();
 };
 
 export { StatusIndicatorsController, MultiMonitorsAppMenuButton, MultiMonitorsActivitiesButton, MultiMonitorsPanel };

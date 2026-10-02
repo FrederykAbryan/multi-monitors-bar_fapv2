@@ -32,6 +32,19 @@
       <description>Change visibility of DateTime-Button on additional monitors.</description>
     </key>
 
+    <key name="date-time-position" type="s">
+      <choices>
+        <choice value='center' />
+        <choice value='left' />
+        <choice value='right-before-tray' />
+        <choice value='right-after-tray' />
+      </choices>
+      <default>'center'</default>
+      <summary>Position of the DateTime-Button on all monitors.</summary>
+      <description>Place the button on every monitor in the center, on the left,
+        or on the right before or after Quick Settings.</description>
+    </key>
+
     <key name="thumbnails-slider-position" type="s">
       <choices>
         <choice value='none' />
@@ -110,7 +123,7 @@
     </key>
 
     <key name="reveal-dock-on-hover" type="b">
-      <default>true</default>
+      <default>false</default>
       <summary>Reveal the dock when hovering over the bottom edge.</summary>
       <description>Reveal the dock on the primary monitor by hovering over the
         bottom edge beneath it, including when only one display is connected.

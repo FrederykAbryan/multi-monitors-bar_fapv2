@@ -27,6 +27,7 @@ const SHOW_PANEL_ID = 'show-panel';
 const SHOW_ACTIVITIES_ID = 'show-activities';
 const SHOW_APP_MENU_ID = 'show-app-menu';
 const SHOW_DATE_TIME_ID = 'show-date-time';
+const DATE_TIME_POSITION_ID = 'date-time-position';
 const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 const ENABLE_HOT_CORNERS = 'enable-hot-corners';
 const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
@@ -56,6 +57,14 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._addBooleanSwitch(_('Show Activities-Button on additional monitors.'), SHOW_ACTIVITIES_ID);
         this._addBooleanSwitch(_('Show AppMenu-Button on additional monitors.'), SHOW_APP_MENU_ID);
         this._addBooleanSwitch(_('Show DateTime-Button on additional monitors.'), SHOW_DATE_TIME_ID);
+        const dateTimePositionRow = this._addComboBoxSwitch(
+            _('Date and time position (all monitors)'), DATE_TIME_POSITION_ID, {
+                center: _('Center (default)'),
+                left: _('Left side'),
+                'right-before-tray': _('Right side, before system tray'),
+                'right-after-tray': _('Right side, after system tray'),
+            });
+        dateTimePositionRow.margin_start = 34;
         this._addComboBoxSwitch(_('Show Thumbnails-Slider on additional monitors.'), THUMBNAILS_SLIDER_POSITION_ID, {
             none: _('No'),
             right: _('On the right'),
@@ -78,7 +87,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
     }
 
     _addComboBoxSwitch(label, schema_id, options) {
-        this._addSettingsComboBoxSwitch(label, this._settings, schema_id, options)
+        return this._addSettingsComboBoxSwitch(label, this._settings, schema_id, options);
     }
 
     _addSettingsComboBoxSwitch(label, settings, schema_id, options) {
@@ -100,6 +109,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this.add(gHBox);
 
         settings.bind(schema_id, gCBox, 'active-id', Gio.SettingsBindFlags.DEFAULT);
+        return gHBox;
     }
 
     _addBooleanSwitch(label, schema_id) {
