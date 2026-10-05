@@ -1509,6 +1509,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     GLib.source_remove(this._iconSyncId);
                     this._iconSyncId = null;
                 }
+                this._iconSyncSignature = null;
             });
         }
 
@@ -1855,16 +1856,58 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._iconSyncId = null;
             }
 
-            // Full rebuild every 5 seconds to catch added/removed icons
+            // Poll every 5 seconds to catch added/removed icons, but only
+            // rebuild when the source tree actually changed. An unconditional
+            // rebuild destroys and recreates every mirrored icon, which shows
+            // up as a periodic flicker on the secondary panels.
             this._iconSyncId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
                 if (!this._iconContainer || !this._iconSource) {
                     this._iconSyncId = null;
+                    this._iconSyncSignature = null;
                     return GLib.SOURCE_REMOVE;
                 }
 
-                this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                const signature = this._mirrorSourceSignature(this._iconSource);
+                if (signature !== this._iconSyncSignature) {
+                    this._iconSyncSignature = signature;
+                    this._copyIconsFromSource(this._iconContainer, this._iconSource);
+                }
+
                 return GLib.SOURCE_CONTINUE;
             });
+        }
+
+        // Structural fingerprint of the mirrored source: icon names/gicons,
+        // icon sizes, label texts, visibility and per-level child counts.
+        // Cheap enough to run on every poll and stable while nothing changes.
+        _mirrorSourceSignature(actor) {
+            const parts = [];
+
+            const walk = node => {
+                if (!node)
+                    return;
+
+                if (node.visible === false) {
+                    parts.push('h');
+                    return;
+                }
+
+                if (node instanceof St.Icon) {
+                    const id = node.icon_name || (node.gicon ? node.gicon.to_string() : '') || '';
+                    parts.push(`i:${id}:${node.icon_size || 0}`);
+                } else if (node instanceof St.Label) {
+                    parts.push(`l:${node.text || ''}`);
+                }
+
+                const children = node.get_children ? node.get_children() : [];
+                parts.push(`(${children.length}`);
+                for (const child of children)
+                    walk(child);
+                parts.push(')');
+            };
+
+            walk(actor);
+            return parts.join('|');
         }
 
         _createFillClone(parent, source) {
@@ -3099,6 +3142,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 GLib.source_remove(this._iconSyncId);
                 this._iconSyncId = null;
             }
+            this._iconSyncSignature = null;
 
             if (this._arcMenuTimeoutId) {
                 GLib.source_remove(this._arcMenuTimeoutId);
