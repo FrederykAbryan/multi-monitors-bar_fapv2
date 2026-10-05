@@ -24,6 +24,7 @@ An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/mult
 | **DateTime menu** | Mirrored clock & calendar |
 | **Workspace thumbnails** | Slider on the left, right, or auto |
 | **Mirrored indicators** | Any status-area indicator (Vitals, GSConnect, etc.) can be transferred to secondary panels |
+| **Per-monitor icon selection** | Choose panel icons independently for the main monitor and each extended monitor |
 | **Indicator exclusion list** | Prevent specific indicators from being transferred (e.g. Fildem) |
 | **Screenshot tools on all monitors** | Clone the screenshot toolbar to every screen, or follow the cursor |
 | **Blur my Shell integration** | Automatically register secondary panels for blur effects |
@@ -82,6 +83,18 @@ gnome-extensions prefs multi-monitors-bar@frederykabryan
 ```
 
 ### Preference Switches
+
+Open **Panel icons by monitor** in the extension preferences. Each
+connected display gets its own checklist: **Main monitor**, **Extended 1**,
+**Extended 2**, and so on. Check or uncheck an icon to change that panel
+immediately. Choices are saved across restarts, and the list updates when
+monitors or extensions change. Extended panels require **Show Panel** to be
+enabled. Only extensions with panel indicators appear in these lists.
+
+Hiding an icon on the main monitor still lets you display it on extended
+monitors. Per-monitor choices override the existing Activities, AppMenu, and
+DateTime switches for that monitor. Enable the extension to see the connected
+monitors and available panel icons in preferences.
 
 | Setting | Key | Default |
 |---|---|---|

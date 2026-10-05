@@ -36,6 +36,7 @@ import * as MMDock from './mmdock.js';
 import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
 import * as ScreenshotPatch from './screenshotPatch.js';
+import { MonitorIndicatorsController } from './monitorIndicatorsDialog.js';
 
 const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
@@ -465,9 +466,12 @@ export default class MultiMonitorsExtension extends Extension {
 
 		// Patch screenshot UI to open on cursor's monitor (or all monitors based on setting)
 		ScreenshotPatch.patchScreenshotUI(this._settings);
+		this._monitorIndicators = new MonitorIndicatorsController(this._settings, () => mmPanel);
 	}
 
 	disable() {
+		this._monitorIndicators?.destroy();
+		this._monitorIndicators = null;
 		this._destroyPrimaryDock();
 		// Unpatch screenshot UI
 		ScreenshotPatch.unpatchScreenshotUI();

@@ -23,10 +23,10 @@ import GLib from 'gi://GLib';
 import Adw from 'gi://Adw';
 import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+import { MonitorIndicatorPreferences } from './monitorIndicatorPrefs.js';
+
 const SHOW_PANEL_ID = 'show-panel';
-const SHOW_ACTIVITIES_ID = 'show-activities';
 const SHOW_APP_MENU_ID = 'show-app-menu';
-const SHOW_DATE_TIME_ID = 'show-date-time';
 const DATE_TIME_POSITION_ID = 'date-time-position';
 const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 const ENABLE_HOT_CORNERS = 'enable-hot-corners';
@@ -54,17 +54,14 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._monitors = this._display.get_monitors()
 
         this._addBooleanSwitch(_('Show Panel on additional monitors.'), SHOW_PANEL_ID);
-        this._addBooleanSwitch(_('Show Activities-Button on additional monitors.'), SHOW_ACTIVITIES_ID);
         this._addBooleanSwitch(_('Show AppMenu-Button on additional monitors.'), SHOW_APP_MENU_ID);
-        this._addBooleanSwitch(_('Show DateTime-Button on additional monitors.'), SHOW_DATE_TIME_ID);
-        const dateTimePositionRow = this._addComboBoxSwitch(
+        this._addComboBoxSwitch(
             _('Date and time position (all monitors)'), DATE_TIME_POSITION_ID, {
                 center: _('Center (default)'),
                 left: _('Left side'),
                 'right-before-tray': _('Right side, before system tray'),
                 'right-after-tray': _('Right side, after system tray'),
             });
-        dateTimePositionRow.margin_start = 34;
         this._addComboBoxSwitch(_('Show Thumbnails-Slider on additional monitors.'), THUMBNAILS_SLIDER_POSITION_ID, {
             none: _('No'),
             right: _('On the right'),
@@ -198,5 +195,11 @@ export default class MultiMonitorsExtensionPreferences extends ExtensionPreferen
         group.add(widget);
         page.add(group);
         window.add(page);
+        const monitorPreferences = new MonitorIndicatorPreferences(settings);
+        window.add(monitorPreferences.page);
+        window.connect('close-request', () => {
+            monitorPreferences.destroy();
+            return false;
+        });
     }
 }

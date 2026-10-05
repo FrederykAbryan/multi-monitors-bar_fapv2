@@ -8,6 +8,19 @@
       <description>Add or remove Multi Monitors indicator from Top Panel.</description>
     </key>
 
+    <key name="monitor-indicator-catalog" type="s">
+      <default>'{}'</default>
+      <summary>Connected monitors and available panel icons.</summary>
+      <description>Internal JSON snapshot published by the running extension for preferences.</description>
+    </key>
+
+    <key name="monitor-indicator-visibility" type="s">
+      <default>'{}'</default>
+      <summary>Panel icon visibility for each monitor.</summary>
+      <description>JSON visibility overrides by monitor connector and indicator role.
+        The main monitor uses the main key. Missing values follow the existing panel settings.</description>
+    </key>
+
     <key name="show-panel" type="b">
       <default>true</default>
       <summary>Show Panel on additional monitors.</summary>

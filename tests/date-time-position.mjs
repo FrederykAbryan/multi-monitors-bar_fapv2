@@ -85,6 +85,7 @@ Object.assign(manager, {
     _rightBox: right,
     statusArea: { quickSettings: tray },
     menuManager: { addMenu() {} },
+    _roleIsEnabled(_role, fallback = true) { return fallback; },
     _ensureIndicator() { return clock; },
     _destroyIndicator(role) {
         const indicator = this.statusArea[role];

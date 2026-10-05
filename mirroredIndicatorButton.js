@@ -16,6 +16,7 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 */
 
 import { retainAstraSourceHeight } from './astraSourceGeometry.js';
+import { sourceIsVisible } from './monitorIndicatorPolicy.js';
 import St from 'gi://St';
 import Atk from 'gi://Atk';
 import Clutter from 'gi://Clutter';
@@ -197,7 +198,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
 
                 // Additional check: if the source indicator or its child is not visible, skip
-                if (!this._sourceIndicator.visible) {
+                if (!sourceIsVisible(this._sourceIndicator)) {
                     this._markEmpty();
                     return;
                 }
@@ -268,7 +269,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return;
 
             const sourceChild = this._sourceIndicator.get_first_child();
-            const hasContent = this._sourceIndicator.visible &&
+            const hasContent = sourceIsVisible(this._sourceIndicator) &&
                 sourceChild &&
                 this._hasVisibleRenderableSourceContent(sourceChild);
 

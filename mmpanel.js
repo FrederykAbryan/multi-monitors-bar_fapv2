@@ -37,6 +37,9 @@ import * as MMCalendar from './mmcalendar.js';
 import * as Constants from './mmPanelConstants.js';
 import { StatusIndicatorsController } from './statusIndicatorsController.js';
 import { MirroredIndicatorButton } from './mirroredIndicatorButton.js';
+import {
+    CONTROL_ROLE, EXCLUDED_MIRROR_ROLES, indicatorIsEnabled, monitorKey, sourceIsVisible,
+} from './monitorIndicatorPolicy.js';
 
 MMCalendar.setMainRef(Main);
 
@@ -618,7 +621,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
             }
 
-            if (this._settings.get_boolean(SHOW_ACTIVITIES_ID)) {
+            if (this._roleIsEnabled(name, this._settings.get_boolean(SHOW_ACTIVITIES_ID))) {
                 if (!this.statusArea[name]) {
                     let indicator = this._ensureIndicator(name);
                     if (indicator) {
@@ -644,7 +647,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
         _showDateTime() {
             const name = 'dateMenu';
-            if (this._settings.get_boolean(SHOW_DATE_TIME_ID)) {
+            if (this._roleIsEnabled(name, this._settings.get_boolean(SHOW_DATE_TIME_ID))) {
                 const indicator = this._ensureIndicator(name);
                 if (!indicator)
                     return;
@@ -690,7 +693,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
         _showAppMenu() {
             let name = 'appMenu';
-            if (this._settings.get_boolean(SHOW_APP_MENU_ID)) {
+            if (this._roleIsEnabled(name, this._settings.get_boolean(SHOW_APP_MENU_ID))) {
                 if (!this.statusArea[name]) {
                     let indicator = new MultiMonitorsAppMenuButton(this);
                     this.statusArea[name] = indicator;
@@ -811,6 +814,12 @@ const MultiMonitorsPanel = GObject.registerClass(
             indicator.destroy();
         }
 
+        _roleIsEnabled(role, fallback = true) {
+            return indicatorIsEnabled(this._settings,
+                monitorKey(global.display, this.monitorIndex, Main.layoutManager.primaryIndex),
+                role, fallback);
+        }
+
         _ensureIndicator(role) {
 
             // CRITICAL FIX: Never create activities indicator on primary monitor
@@ -825,6 +834,12 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return indicator;
             }
             else {
+                if (role === CONTROL_ROLE) {
+                    indicator = Main.panel.statusArea[role]?.createMirrorButton();
+                    if (indicator)
+                        this.statusArea[role] = indicator;
+                    return indicator;
+                }
                 let constructor = MULTI_MONITOR_PANEL_ITEM_IMPLEMENTATIONS[role];
                 if (!constructor) {
                     // For indicators not implemented here, mirror ANY indicator from main panel
@@ -1084,18 +1099,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             }
 
             // Indicators that should NOT be mirrored (system/accessibility indicators and GNOME 46 phantom indicators)
-            const excludedIndicators = [
-                'a11y',              // Accessibility menu
-                'dwellClick',        // Dwell click accessibility
-                'screencast',        // Screen recording indicator
-                'screenRecording',   // Screen recording indicator (alternative name)
-                'remoteAccess',      // Remote desktop indicator
-                'screenSharing',     // Screen sharing indicator
-                'keyboard',          // Keyboard layout (only needed on primary)
-                'power',             // Power indicator (only needed on primary)
-                'unsafeModeIndicator', // GNOME 46 unsafe mode (often empty)
-                'backgroundApps',    // GNOME 46 background apps indicator (often empty)
-            ];
+            const excludedIndicators = EXCLUDED_MIRROR_ROLES;
 
             // Get all indicators from main panel's three boxes
             const leftIndicators = [];
@@ -1112,7 +1116,9 @@ const MultiMonitorsPanel = GObject.registerClass(
                     if (!indicator) continue;
 
                     // Skip excluded indicators
-                    if (excludedIndicators.includes(role)) {
+                    const fallback = role === 'activities' ? this._settings.get_boolean(SHOW_ACTIVITIES_ID)
+                        : role === 'appMenu' ? this._settings.get_boolean(SHOW_APP_MENU_ID) : true;
+                    if (excludedIndicators.includes(role) || !this._roleIsEnabled(role, fallback)) {
                         continue;
                     }
 
@@ -1135,7 +1141,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (mainPanel._leftBox) {
                 const children = mainPanel._leftBox.get_children();
                 for (let child of children) {
-                    if (!child.visible) {
+                    if (!sourceIsVisible(child)) {
                         continue;
                     }
 
@@ -1149,7 +1155,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (mainPanel._centerBox) {
                 const children = mainPanel._centerBox.get_children();
                 for (let child of children) {
-                    if (!child.visible) {
+                    if (!sourceIsVisible(child)) {
                         continue;
                     }
 
@@ -1163,7 +1169,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (mainPanel._rightBox) {
                 const children = mainPanel._rightBox.get_children();
                 for (let child of children) {
-                    if (!child.visible) {
+                    if (!sourceIsVisible(child)) {
                         continue;
                     }
 
@@ -1185,7 +1191,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             // Now mirror them in order
             const desiredRoles = new Set([...leftIndicators, ...centerIndicators, ...rightIndicators]);
-            if (this._settings.get_boolean(SHOW_DATE_TIME_ID))
+            if (this._roleIsEnabled('dateMenu', this._settings.get_boolean(SHOW_DATE_TIME_ID)))
                 desiredRoles.add('dateMenu');
             this._removeStaleIndicators(desiredRoles);
 
@@ -1277,7 +1283,7 @@ MultiMonitorsPanel.prototype._findRoleByPattern = function (pattern) {
 MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
     const role = 'quickSettings';
     const mainQS = Main.panel.statusArea[role];
-    if (!mainQS) {
+    if (!mainQS || !this._roleIsEnabled(role)) {
         // No quick settings on main panel; remove mirror if any
         if (this.statusArea[role]) {
             const ind = this.statusArea[role];
