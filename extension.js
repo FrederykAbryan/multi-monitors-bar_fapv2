@@ -20,7 +20,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { ANIMATION_TIME } from 'resource:///org/gnome/shell/ui/overview.js';
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { Extension, InjectionManager } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelModule from 'resource:///org/gnome/shell/ui/panel.js';
 import * as LoginManager from 'resource:///org/gnome/shell/misc/loginManager.js';
 
@@ -68,6 +68,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._resumeFromSleepId = null;
 		this._resumeSessionModeUpdatedId = null;
 		this._mainPanelClipState = null;
+		this._mainPanelInjectionManager = null;
 		this._showDockId = null;
 		this._dtdSettings = null;
 		this._savedDockMultiMonitor = null;
@@ -145,6 +146,60 @@ export default class MultiMonitorsExtension extends Extension {
 			state.actor.clip_to_allocation = state.clipToAllocation;
 		}
 		this._mainPanelClipState = null;
+	}
+
+	_applyMainPanelLayout() {
+		this._mainPanelInjectionManager = new InjectionManager();
+		const extension = this;
+		this._mainPanelInjectionManager.overrideMethod(PanelModule.Panel.prototype,
+			'vfunc_allocate', originalMethod => function (box) {
+				originalMethod.call(this, box);
+				if (this === Main.panel)
+					extension._allocateMainPanel(this, box);
+			});
+		Main.panel.queue_relayout();
+	}
+
+	_allocateMainPanel(panel, box) {
+		const width = Math.max(0, box.x2 - box.x1);
+		const height = Math.max(0, box.y2 - box.y1);
+		const [, rightNaturalWidth] = panel._rightBox.get_preferred_width(-1);
+		const rightWidth = Math.min(rightNaturalWidth, width);
+		const rightAllocation = panel._rightBox.get_allocation_box();
+		if (rightAllocation.get_width() >= rightWidth)
+			return;
+
+		// Shell caps each side at half the panel, even when the clock has
+		// moved into the status area. Let that area grow inward as icons arrive.
+		const [, leftNaturalWidth] = panel._leftBox.get_preferred_width(-1);
+		const [centerMinWidth, centerNaturalWidth] = panel._centerBox.get_preferred_width(-1);
+		const remainingWidth = width - rightWidth;
+		const leftWidth = Math.min(leftNaturalWidth,
+			Math.max(0, remainingWidth - centerMinWidth));
+		const centerWidth = Math.min(centerNaturalWidth, remainingWidth - leftWidth);
+		const rtl = panel.get_text_direction() === Clutter.TextDirection.RTL;
+		const centerAllocation = panel._centerBox.get_allocation_box();
+		const originalCenterStart = rtl ? width - centerAllocation.x2 : centerAllocation.x1;
+		const centerStart = Math.max(leftWidth,
+			Math.min(originalCenterStart, remainingWidth - centerWidth));
+
+		const allocate = (actor, start, end) => {
+			const childBox = new Clutter.ActorBox();
+			childBox.x1 = rtl ? width - end : start;
+			childBox.x2 = rtl ? width - start : end;
+			childBox.y1 = 0;
+			childBox.y2 = height;
+			actor.allocate(childBox);
+		};
+		allocate(panel._leftBox, 0, leftWidth);
+		allocate(panel._centerBox, centerStart, centerStart + centerWidth);
+		allocate(panel._rightBox, remainingWidth, width);
+	}
+
+	_restoreMainPanelLayout() {
+		this._mainPanelInjectionManager?.clear();
+		this._mainPanelInjectionManager = null;
+		Main.panel.queue_relayout();
 	}
 
 	_moveMainDateMenu(box, index) {
@@ -334,6 +389,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._settings = this.getSettings();
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
 		this._applyMainPanelClipping();
+		this._applyMainPanelLayout();
 		this._mainDateTimePositionId = this._settings.connect('changed::' + DATE_TIME_POSITION_ID,
 			this._applyMainDateTimePosition.bind(this));
 		this._applyMainDateTimePosition();
@@ -469,6 +525,7 @@ export default class MultiMonitorsExtension extends Extension {
 			this._mainDateTimePositionId = null;
 		}
 		this._restoreMainDateTimePosition();
+		this._restoreMainPanelLayout();
 
 		this._restoreMainPanelClipping();
 
