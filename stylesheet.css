@@ -34,6 +34,40 @@
     border-radius: 9px 0 0 9px;
 }
 
+/* Keep dock feedback on the rounded icon container. GNOME 50 uses
+   overview-tile in place of app-well-app; theme focus shadows may be important. */
+#dash.multimonitor-dock .app-well-app,
+#dash.multimonitor-dock .overview-tile,
+#dash.multimonitor-dock .grid-search-result,
+#dash.multimonitor-dock .show-apps {
+    background-color: transparent !important;
+    background-image: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+}
+
+#dash.multimonitor-dock .overview-icon {
+    border-radius: 1.5em;
+}
+
+.multimonitor-dock .app-well-app:hover .overview-icon,
+.multimonitor-dock .app-well-app:focus .overview-icon,
+.multimonitor-dock .overview-tile:hover .overview-icon,
+.multimonitor-dock .overview-tile:focus .overview-icon,
+.multimonitor-dock .grid-search-result:hover .overview-icon,
+.multimonitor-dock .grid-search-result:focus .overview-icon,
+.multimonitor-dock .show-apps:hover .overview-icon,
+.multimonitor-dock .show-apps:focus .overview-icon {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.multimonitor-dock .app-well-app:active .overview-icon,
+.multimonitor-dock .overview-tile:active .overview-icon,
+.multimonitor-dock .grid-search-result:active .overview-icon,
+.multimonitor-dock .show-apps:active .overview-icon {
+    background-color: rgba(255, 255, 255, 0.28);
+}
+
 /* Mirrored indicators should inherit styling from their cloned source.
    The Clutter.Clone automatically scales content, ensuring proper font sizes. */
 
