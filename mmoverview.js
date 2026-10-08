@@ -987,14 +987,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _configureNativeAppDisplayLayout() {
-            let layoutManager = null;
             if (!this._isActorUsable(this._appDisplay)) {
                 this._appDisplay = null;
                 this._appDisplayVisible = false;
                 return;
             }
 
-            layoutManager = this._appDisplay?._grid?.layoutManager;
+            const grid = this._appDisplay._grid;
+            const layoutManager = grid?.layoutManager;
             if (!layoutManager)
                 return;
 
@@ -1008,11 +1008,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 layoutManager.rowsPerPage === rows)
                 return;
 
-            layoutManager.columnsPerPage = columns;
-            layoutManager.rowsPerPage = rows;
+            // IconGrid chooses a mode again during allocation. Configure its
+            // modes too, otherwise it overwrites these dimensions and caches
+            // a different mode (depending on theme padding and monitor size).
+            // Reset the cached index when rotating: both modes use index 0.
+            grid.setGridModes([{ columns, rows }]);
+            grid._setGridMode(-1);
+            grid._setGridMode(0);
             this._lastAppDisplayLayout = layoutKey;
-
-            this._appDisplay._grid.queue_relayout();
         }
 
         _syncNativePageIndicatorsPosition() {
