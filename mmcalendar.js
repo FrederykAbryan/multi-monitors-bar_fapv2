@@ -51,7 +51,7 @@ const MultiMonitorsTodayButton = GObject.registerClass(
                 can_focus: true,
             });
 
-            let hbox = new St.BoxLayout({ vertical: true });
+            let hbox = new St.BoxLayout({ ...Common.verticalBoxProps() });
             this.add_child(hbox);
 
             this._dayLabel = new St.Label({
@@ -128,7 +128,7 @@ const MultiMonitorsPlaceholder = GObject.registerClass(
         _init() {
             super._init({
                 style_class: 'message-list-placeholder',
-                vertical: true,
+                ...Common.verticalBoxProps(),
             });
             this._date = new Date();
 
@@ -151,7 +151,7 @@ var MultiMonitorsEventsSection = (() => {
                 x_expand: true,
                 child: new St.BoxLayout({
                     style_class: 'events-box',
-                    vertical: true,
+                    ...Common.verticalBoxProps(),
                     x_expand: true,
                 }),
             });
@@ -169,7 +169,7 @@ var MultiMonitorsEventsSection = (() => {
 
             this._eventsList = new St.BoxLayout({
                 style_class: 'events-list',
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 x_expand: true,
             });
             this.child.add_child(this._eventsList);
@@ -287,7 +287,7 @@ var MultiMonitorsCalendarMessageList = (() => {
             this.add_child(this._placeholder);
 
             let box = new St.BoxLayout({
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 x_expand: true, y_expand: true
             });
             this.add_child(box);
@@ -341,7 +341,7 @@ var MultiMonitorsCalendarMessageList = (() => {
 
             this._sectionList = new St.BoxLayout({
                 style_class: 'message-list-sections',
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 x_expand: true,
                 y_expand: true,
                 y_align: Clutter.ActorAlign.START
@@ -700,7 +700,7 @@ var MultiMonitorsDateMenuButton = (() => {
             vbox.add_child(this._displaysSection);
 
             let displaysBox = new St.BoxLayout({
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 x_expand: true,
                 style_class: 'datemenu-displays-box'
             });

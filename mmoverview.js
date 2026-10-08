@@ -559,7 +559,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             });
 
             this._appGridContainer = new St.BoxLayout({
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 x_expand: true,
                 style: 'spacing: 10px;',
                 x_align: Clutter.ActorAlign.CENTER,
@@ -622,7 +622,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._group = new St.BoxLayout({
                 name: 'mm-overview-group-' + index,
                 x_expand: true, y_expand: true,
-                vertical: true,
+                ...Common.verticalBoxProps(),
                 style: 'padding: 30px;' // Add some padding so it doesn't touch edges
             });
             this.add_child(this._group);
@@ -766,7 +766,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             const button = new St.Button({
                 style_class: 'app-well-app',
                 reactive: true,
-                button_mask: St.ButtonMask.ONE,
+                button_mask: (St.ButtonMask.PRIMARY ?? St.ButtonMask.ONE),
                 can_focus: true,
                 x_expand: false,
                 y_expand: false,
@@ -777,7 +777,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             button._appInfo = app;
 
             const box = new St.BoxLayout({
-                vertical: true, // Vertical layout for grid icon style
+                ...Common.verticalBoxProps(), // Vertical layout for grid icon style
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 style: 'spacing: 8px;',
@@ -1565,7 +1565,7 @@ export const MultiMonitorsOverviewActor = GObject.registerClass(
                 /* Translators: This is the main view to select
                     activities. See also note for "Activities" string. */
                 accessible_name: _("MMOverview@" + index),
-                vertical: true,
+                ...Common.verticalBoxProps(),
             });
 
             this.add_constraint(new LayoutManager.MonitorConstraint({ index: this._monitorIndex }));

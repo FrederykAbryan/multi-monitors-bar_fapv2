@@ -26,6 +26,7 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
+import { shellVersion } from './common.js';
 
 const MMWorkspacePreviewLayout = GObject.registerClass(
     class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
@@ -2236,7 +2237,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const originalSourceActor = menu.sourceActor;
             const originalBoxPointer = menu.box?._sourceActor;
             const primeSourceActor = originalSourceActor || this._sourceIndicator;
-            const noAnimation = BoxPointer.PopupAnimation?.NONE ?? 0;
+            const noAnimation = shellVersion >= 51 ? { animate: false } : (BoxPointer.PopupAnimation?.NONE ?? 0);
 
             for (const actor of [menu.box, menu._boxPointer]) {
                 if (!actor)

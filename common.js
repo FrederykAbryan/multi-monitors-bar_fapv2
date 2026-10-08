@@ -15,10 +15,19 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, visit https://www.gnu.org/licenses/.
 */
 
+import Clutter from 'gi://Clutter';
+
 import * as Utils from './utils.js';
 
 // Shell version for feature detection - centralized here and exported for other modules
 export const shellVersion = Utils.SHELL_VERSION;
+
+// St.BoxLayout:vertical was deprecated in GNOME 48 and removed in GNOME 51.
+export function verticalBoxProps() {
+    return shellVersion >= 48
+        ? { orientation: Clutter.Orientation.VERTICAL }
+        : { vertical: true };
+}
 
 export function patchAddActorMethod(prototype) {
     if (!prototype.add_actor) {

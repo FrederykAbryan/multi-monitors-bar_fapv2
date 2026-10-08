@@ -21,6 +21,7 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 
+import * as Common from './common.js';
 import * as MMPanel from './mmpanel.js';
 import * as MMDock from './mmdock.js';
 
@@ -60,7 +61,7 @@ export class MultiMonitorsPanelBox {
 
 		this.panelBox = new St.BoxLayout({
 			name: 'panelBox',
-			vertical: true,
+			...Common.verticalBoxProps(),
 			clip_to_allocation: true,
 			visible: true
 		});
