@@ -59,7 +59,7 @@ class Settings extends Actor {
     constructor() {
         super();
         this.values = {'monitor-indicator-catalog': '{}', 'monitor-indicator-visibility': '{}', 'show-date-time': true,
-            'show-app-menu': true, 'show-activities': true};
+            'show-app-menu': true, 'show-activities': true, 'show-app-indicators': true};
     }
     get_string(key) { return this.values[key]; }
     get_boolean(key) { return this.values[key]; }
@@ -199,6 +199,7 @@ const method = (name, next) => {
 context.SHOW_ACTIVITIES_ID = 'show-activities';
 context.SHOW_APP_MENU_ID = 'show-app-menu';
 context.SHOW_DATE_TIME_ID = 'show-date-time';
+context.SHOW_APP_INDICATORS_ID = 'show-app-indicators';
 const panel = vm.runInContext(`({
     ${method('_roleIsEnabled', '_ensureIndicator')},
     ${method('_cloneAllMainPanelIndicators', '_isArcMenuRole')}
