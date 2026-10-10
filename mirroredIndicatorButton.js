@@ -285,7 +285,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return false;
 
             if (actor instanceof St.Icon)
-                return !!actor.gicon || !!actor.icon_name;
+                return !!actor.gicon || !!actor.icon_name || !!actor.content;
 
             if (actor instanceof St.Label)
                 return !!actor.text && actor.text.trim().length > 0;
