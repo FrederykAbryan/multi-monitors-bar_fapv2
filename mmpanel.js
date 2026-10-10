@@ -371,11 +371,13 @@ const MultiMonitorsPanel = GObject.registerClass(
             });
             this.add_child(this._centerBox);
 
-            // Wrapper inside center box to center its single child (dateMenu)
-            this._centerBin = new St.Widget({
-                layout_manager: new Clutter.BinLayout(),
+            // Horizontal row inside center box so multiple center items
+            // (e.g. dateMenu + weather) sit side by side instead of stacking
+            this._centerBin = new St.BoxLayout({
                 x_expand: true,
                 y_expand: true,  // Allow full height for dateMenu hover
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.FILL,
             });
             this._centerBox.add_child(this._centerBin);
 
@@ -1016,6 +1018,33 @@ const MultiMonitorsPanel = GObject.registerClass(
             return this._tryDragWindow(event);
         }
 
+        _getMainCenterRank(role) {
+            // Index of the role's actor in the main panel's center box, or -1
+            const mainBox = Main.panel?._centerBox;
+            const mainIndicator = Main.panel?.statusArea?.[role];
+            if (!mainBox || !mainIndicator)
+                return -1;
+            const mainContainer = mainIndicator.container || mainIndicator;
+            return mainBox.get_children().findIndex(child =>
+                child === mainContainer || (child.contains && child.contains(mainContainer)));
+        }
+
+        _getCenterInsertIndex(role, position) {
+            // Keep center items in the main panel's center order. The dateMenu
+            // is placed separately, so list positions alone are not enough.
+            const children = this._centerBin.get_children();
+            const rank = this._getMainCenterRank(role);
+            if (rank < 0)
+                return Math.max(0, Math.min(position, children.length));
+            let index = 0;
+            for (const child of children) {
+                const childRank = child._mmRole ? this._getMainCenterRank(child._mmRole) : -1;
+                if (childRank >= 0 && childRank < rank)
+                    index++;
+            }
+            return index;
+        }
+
         _addToPanelBox(role, indicator, position, box) {
 
             // Exactly mimic the main Panel._addToPanelBox behavior
@@ -1055,8 +1084,6 @@ const MultiMonitorsPanel = GObject.registerClass(
 
             // If targeting center box, place the item in the center wrapper and center it
             if (box === this._centerBox && this._centerBin) {
-                // Remove any existing children from centerBin first
-                this._centerBin.remove_all_children();
                 container.x_align = Clutter.ActorAlign.CENTER;
                 // Use FILL for dateMenu so hover takes full panel height
                 if (role === 'dateMenu') {
@@ -1065,7 +1092,9 @@ const MultiMonitorsPanel = GObject.registerClass(
                 } else {
                     container.y_align = Clutter.ActorAlign.CENTER;
                 }
-                this._centerBin.add_child(container);
+                container._mmRole = role;
+                this._centerBin.insert_child_at_index(container,
+                    this._getCenterInsertIndex(role, position));
             } else {
                 // Add to box at position
                 box.insert_child_at_index(container, position);
@@ -1266,7 +1295,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                         this._destroyIndicator(role);
                         continue;
                     }
-                    this._addToPanelBox(role, indicator, i + nChildren, box);
+                    const position = box === this._centerBox ? i : i + nChildren;
+                    this._addToPanelBox(role, indicator, position, box);
                 } else {
                 }
             }
