@@ -53,6 +53,7 @@ export const AVAILABLE_INDICATORS_ID = Constants.AVAILABLE_INDICATORS_ID;
 export const TRANSFER_INDICATORS_ID = Constants.TRANSFER_INDICATORS_ID;
 export const EXCLUDE_INDICATORS_ID = Constants.EXCLUDE_INDICATORS_ID;
 export const PANEL_COLOR_ID = 'panel-color';
+export const SHOW_APP_INDICATORS_ID = 'show-app-indicators';
 
 
 const MultiMonitorsAppMenuButton = GObject.registerClass(
@@ -432,6 +433,9 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._showDateTime.bind(this));
             this._showDateTime();
 
+            this._showAppIndicatorsId = this._settings.connect('changed::' + SHOW_APP_INDICATORS_ID,
+                () => this._updatePanel());
+
             // Watch for late-loading extensions (like Apps and Places)
             this._startExtensionWatcher();
 
@@ -581,6 +585,10 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (this._dateTimePositionId) {
                 this._settings.disconnect(this._dateTimePositionId);
                 this._dateTimePositionId = null;
+            }
+            if (this._showAppIndicatorsId) {
+                this._settings.disconnect(this._showAppIndicatorsId);
+                this._showAppIndicatorsId = null;
             }
             if (this._panelColorId) {
                 this._settings.disconnect(this._panelColorId);
@@ -1187,6 +1195,17 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._removeRole(leftIndicators, 'activities');
                 this._removeRole(centerIndicators, 'activities');
                 this._removeRole(rightIndicators, 'activities');
+            }
+
+            // Hide AppIndicator/tray icons (AppIndicator extension roles) if disabled
+            if (!this._settings.get_boolean(SHOW_APP_INDICATORS_ID)) {
+                const isAppIndicator = role => role.startsWith('appindicator');
+                for (const list of [leftIndicators, centerIndicators, rightIndicators]) {
+                    for (let i = list.length - 1; i >= 0; i--) {
+                        if (isAppIndicator(list[i]))
+                            list.splice(i, 1);
+                    }
+                }
             }
 
             // Now mirror them in order
