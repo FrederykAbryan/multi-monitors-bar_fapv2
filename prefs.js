@@ -34,7 +34,6 @@ const ENABLE_HOT_CORNERS = 'enable-hot-corners';
 const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
 const FORCE_WORKSPACES_ON_ALL_DISPLAYS_ID = 'force-workspaces-on-all-displays';
 const SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID = 'show-overview-on-extended-monitors';
-const PANEL_COLOR_ID = 'panel-color';
 const SHOW_DOCK_ON_EXTENDED_MONITORS_ID = 'show-dock-on-extended-monitors';
 
 
@@ -77,8 +76,6 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._addBooleanSwitch(_('Show App Grid and Search on extended monitors.'), SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID);
         this._addBooleanSwitch(_('Show dock on extended monitors.'), SHOW_DOCK_ON_EXTENDED_MONITORS_ID);
         this._addBooleanSwitch(_('Reveal dock on bottom-edge hover.'), 'reveal-dock-on-hover');
-
-        this._addColorPicker(_('Panel color on additional monitors.'), PANEL_COLOR_ID);
     }
 
     add(child) {
@@ -128,58 +125,6 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this.add(gHBox);
 
         settings.bind(schema_id, gSwitch, 'active', Gio.SettingsBindFlags.DEFAULT);
-    }
-
-    _addColorPicker(label, schema_id) {
-        let gHBox = new Gtk.Box({
-            orientation: Gtk.Orientation.HORIZONTAL,
-            margin_top: 10, margin_end: 10, margin_bottom: 10, margin_start: 10,
-            spacing: 20, hexpand: true
-        });
-        let gLabel = new Gtk.Label({ label: _(label), halign: Gtk.Align.START, hexpand: true });
-        gHBox.append(gLabel);
-
-        let colorBtn = new Gtk.ColorButton({
-            halign: Gtk.Align.END,
-            use_alpha: true,
-            title: _(label)
-        });
-
-        // Load saved color
-        let savedColor = this._settings.get_string(schema_id);
-        if (savedColor && savedColor !== '') {
-            let rgba = new Gdk.RGBA();
-            rgba.parse(savedColor);
-            colorBtn.set_rgba(rgba);
-        } else {
-            // Default: transparent (use system theme)
-            let rgba = new Gdk.RGBA();
-            rgba.parse('rgba(0,0,0,0)');
-            colorBtn.set_rgba(rgba);
-        }
-
-        colorBtn.connect('color-set', () => {
-            let rgba = colorBtn.get_rgba();
-            this._settings.set_string(schema_id, rgba.to_string());
-        });
-
-        gHBox.append(colorBtn);
-
-        // Reset button to clear custom color
-        let resetBtn = new Gtk.Button({
-            icon_name: 'edit-clear-symbolic',
-            tooltip_text: _('Reset to default theme color'),
-            halign: Gtk.Align.END
-        });
-        resetBtn.connect('clicked', () => {
-            this._settings.set_string(schema_id, '');
-            let rgba = new Gdk.RGBA();
-            rgba.parse('rgba(0,0,0,0)');
-            colorBtn.set_rgba(rgba);
-        });
-        gHBox.append(resetBtn);
-
-        this.add(gHBox);
     }
 }
 

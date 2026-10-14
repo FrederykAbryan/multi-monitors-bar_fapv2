@@ -132,6 +132,14 @@
         theme color.</description>
     </key>
 
+    <key name="monitor-panel-layout" type="s">
+      <default>'{}'</default>
+      <summary>Panel position and color for each additional monitor.</summary>
+      <description>JSON object keyed by monitor connector. Each entry may set "position"
+        ('top', 'bottom', 'left' or 'right') and "color" (an RGBA string). Missing values
+        use the top edge and the shared panel-color.</description>
+    </key>
+
     <key name="show-dock-on-extended-monitors" type="b">
       <default>false</default>
       <summary>Show dock on extended monitors.</summary>

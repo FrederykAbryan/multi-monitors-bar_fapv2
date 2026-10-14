@@ -26,7 +26,13 @@ import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
-import { shellVersion } from './common.js';
+import { setBoxVertical, shellVersion } from './common.js';
+
+// The Workspace Indicator stylesheet fixes .status-label at 8em, wider than
+// a side bar, so side bars use a class of their own for the name.
+function workspaceNameClass(vertical) {
+    return vertical ? 'mm-workspace-name' : 'status-label';
+}
 
 const MMWorkspacePreviewLayout = GObject.registerClass(
     class MMWorkspacePreviewLayout extends Clutter.LayoutManager {
@@ -166,17 +172,35 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             const nWorkspaces = this._workspaceManager.n_workspaces;
             const activeIndex = this._workspaceManager.get_active_workspace_index();
+            const vertical = this._workspaceVertical ?? !!this._panel?._vertical;
 
             for (let i = 0; i < nWorkspaces; i++) {
                 const isActive = (i === activeIndex);
                 const dot = new St.Widget({
                     style_class: isActive ? 'workspace-dot active' : 'workspace-dot',
-                    width: isActive ? 34 : 7,
-                    height: isActive ? 8 : 7,
-                    style: `border-radius: 6px; background-color: rgba(255, 255, 255, ${isActive ? '1' : '0.5'}); margin: 0 2px;`,
+                    width: vertical ? 44 : (isActive ? 34 : 7),
+                    height: vertical ? (isActive ? 12 : 8) : (isActive ? 8 : 7),
+                    style: `border-radius: ${vertical ? 4 : 6}px; background-color: rgba(255, 255, 255, ${isActive ? '1' : '0.5'}); margin: ${vertical ? '2px 0' : '0 2px'};`,
                     y_align: Clutter.ActorAlign.CENTER,
                 });
                 this._workspaceDotsBox.add_child(dot);
+            }
+        }
+
+        _syncPanelOrientation(vertical) {
+            if (this._workspaceVertical === vertical)
+                return;
+            this._workspaceVertical = vertical;
+            if (this._role === 'activities')
+                this._updateWorkspaceDots();
+            if (this._workspaceNameIcon)
+                this._workspaceNameIcon.visible = !vertical;
+            this._workspaceNameLabel?.set_style_class_name(workspaceNameClass(vertical));
+            if (this._workspacePreviewBox) {
+                // A side bar needs one full-height thumbnail per workspace.
+                this.set_height(vertical ? -1 : 30);
+                setBoxVertical(this._workspacePreviewBox, vertical);
+                this._updateWorkspacePreviewMirror();
             }
         }
 
@@ -462,21 +486,26 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const statusBox = new St.BoxLayout();
 
             const label = new St.Label({
-                style_class: 'status-label',
+                style_class: workspaceNameClass(!!this._panel?._vertical),
                 y_align: Clutter.ActorAlign.CENTER,
                 text: sourceMenu.activeName,
             });
             statusBox.add_child(label);
 
-            statusBox.add_child(new St.Icon({
+            // A side bar stacks the box, so the dropdown arrow would sit under
+            // the name, thickening the pill; hide it there.
+            const icon = new St.Icon({
                 icon_name: 'pan-down-symbolic',
                 style_class: 'system-status-icon',
-            }));
+                visible: !this._panel?._vertical,
+            });
+            statusBox.add_child(icon);
 
             wrapper.add_child(statusBox);
             this.add_child(wrapper);
 
             this._workspaceNameLabel = label;
+            this._workspaceNameIcon = icon;
             this._workspaceNameStatusBox = statusBox;
 
             this._workspaceNameLabelChangedId = sourceMenu.connect(
@@ -557,6 +586,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._workspaceNameLabelChangedId = 0;
             }
             this._workspaceNameLabel = null;
+            this._workspaceNameIcon = null;
             this._workspaceNameStatusBox = null;
 
             if (this._workspacePreviewUpdateId) {
@@ -601,7 +631,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _createWorkspacePreviewMirror() {
-            this.set_height(30);
+            this.set_height(this._panel?._vertical ? -1 : 30);
 
             this._workspacePreviewBox = new St.BoxLayout({
                 style_class: 'workspaces-box',
@@ -609,6 +639,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 y_align: Clutter.ActorAlign.FILL,
                 x_expand: false,
             });
+            // Stack thumbnails on a side bar; a row would be shrunk to fit.
+            setBoxVertical(this._workspacePreviewBox,
+                this._workspaceVertical ?? !!this._panel?._vertical);
 
             this.add_child(this._workspacePreviewBox);
             this._connectWorkspacePreviewSignals();
@@ -693,13 +726,14 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _createWorkspacePreviewThumbnail(index, active) {
+            const vertical = this._workspaceVertical ?? !!this._panel?._vertical;
             const thumbnail = new St.Button({
                 reactive: false,
                 y_expand: true,
                 y_align: Clutter.ActorAlign.FILL,
                 x_expand: false,
             });
-            thumbnail.set_size(62, 30);
+            thumbnail.set_size(vertical ? 54 : 62, vertical ? 42 : 30);
             thumbnail._mmWorkspaceIndex = index;
 
             const box = new St.BoxLayout({
@@ -720,7 +754,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 x_align: Clutter.ActorAlign.FILL,
                 y_align: Clutter.ActorAlign.FILL,
             });
-            previewLayer.set_size(52, 18);
+            previewLayer.set_size(vertical ? 44 : 52, vertical ? 28 : 18);
 
             const preview = new St.Bin({
                 style_class: active ? 'workspace active' : 'workspace',
@@ -729,7 +763,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 y_align: Clutter.ActorAlign.FILL,
                 x_expand: false,
             });
-            preview.set_size(52, 18);
+            preview.set_size(vertical ? 44 : 52, vertical ? 28 : 18);
 
             box.add_child(preview);
             this._populateWorkspacePreviewLayer(previewLayer, index, active);
@@ -3268,6 +3302,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 this._workspaceNameLabelChangedId = 0;
             }
             this._workspaceNameLabel = null;
+            this._workspaceNameIcon = null;
             this._workspaceNameStatusBox = null;
 
             if (this._workspaceMenuRestoreId) {

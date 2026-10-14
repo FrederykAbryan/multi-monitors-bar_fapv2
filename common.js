@@ -29,6 +29,13 @@ export function verticalBoxProps() {
         : { vertical: true };
 }
 
+export function setBoxVertical(box, vertical) {
+    if ('orientation' in box)
+        box.orientation = vertical ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL;
+    else
+        box.vertical = vertical;
+}
+
 export function patchAddActorMethod(prototype) {
     if (!prototype.add_actor) {
         if (prototype.add_child) {

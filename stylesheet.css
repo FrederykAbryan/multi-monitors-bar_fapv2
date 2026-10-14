@@ -5,6 +5,110 @@
     padding-bottom: 0px !important;
 }
 
+/* Left/right bars: tighter buttons so icons and the clock fit the column */
+.multimonitor-panel-vertical .panel-button {
+    -natural-hpadding: 4px;
+    -minimum-hpadding: 2px;
+    padding: 6px 4px;
+    min-height: 32px;
+}
+
+.multimonitor-panel-vertical .mm-vertical-remap {
+    padding: 0;
+}
+
+.multimonitor-panel-vertical .mm-vertical-remap-items {
+    spacing: 10px;
+}
+
+/* Breathing room between stacked indicators (extensions, tray, etc.) */
+.multimonitor-panel-vertical #panelLeft,
+.multimonitor-panel-vertical #panelCenter,
+.multimonitor-panel-vertical #panelRight {
+    spacing: 8px;
+}
+
+.multimonitor-panel-vertical .clock {
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+}
+
+/* Keep workspace names and previews legible in the narrow side column.
+   No side padding: anything wider than the bar gets scaled down. */
+.multimonitor-panel-vertical .mm-workspace-indicator {
+    -natural-hpadding: 0;
+    -minimum-hpadding: 0;
+    padding: 8px 0;
+    min-width: 0;
+    min-height: 0;
+    color: #ffffff;
+}
+
+/* Swapped in for .status-label on side bars, whose fixed 8em width from
+   the Workspace Indicator stylesheet would force the name to be shrunk. */
+.multimonitor-panel-vertical .mm-workspace-indicator .mm-workspace-name {
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+    padding: 0;
+}
+
+.multimonitor-panel-vertical .mm-workspace-indicator .panel-status-menu-box {
+    spacing: 6px;
+    padding: 0;
+}
+
+.multimonitor-panel-vertical .mm-workspace-indicator .workspaces-box {
+    spacing: 6px;
+}
+
+.multimonitor-panel-vertical .mm-workspace-indicator .workspace {
+    width: 44px;
+    height: 28px;
+    min-height: 28px;
+    border-color: rgba(255, 255, 255, 0.5);
+    background-color: #505050;
+}
+
+.multimonitor-panel-vertical .mm-workspace-indicator .workspace.active {
+    border: 2px solid #ffffff;
+    background-color: #707070;
+}
+
+.multimonitor-panel-vertical .workspace-dots {
+    spacing: 6px;
+    padding: 6px 0;
+}
+
+.multimonitor-panel-vertical #mmPanelActivities,
+.multimonitor-panel-vertical .mm-activities {
+    -natural-hpadding: 4px;
+    -minimum-hpadding: 2px;
+    padding: 6px 4px;
+}
+
+.multimonitor-panel-vertical .workspace-dot {
+    background-color: rgba(255, 255, 255, 0.6);
+    border-radius: 4px;
+}
+
+.multimonitor-panel-vertical .workspace-dot.active {
+    background-color: #ffffff;
+}
+
+.multimonitor-panel-vertical .mm-quick-settings-box,
+.multimonitor-panel-vertical .mm-quick-settings-clip,
+.multimonitor-panel-vertical .mm-quick-settings-normal,
+.multimonitor-panel-vertical .mm-quick-settings-overview {
+    padding: 0;
+}
+
+.multimonitor-panel-vertical .mm-quick-settings-stack {
+    spacing: 12px;
+    padding: 6px 0;
+}
+
 .helloworld-label {
     font-size: 72px;
     font-weight: bold;

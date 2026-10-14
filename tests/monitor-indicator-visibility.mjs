@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import * as policy from '../monitorIndicatorPolicy.js';
+import * as panelPolicy from '../monitorPanelPolicy.js';
 
 class Actor {
     constructor(params = {}) { this._init(params); }
@@ -17,9 +18,20 @@ class Actor {
         return id;
     }
     disconnect(id) { assert.ok(this.handlers.delete(id), 'disconnect a live handler'); }
-    emit(signal) {
+    connectObject(...args) {
+        const owner = args.pop();
+        for (let i = 0; i < args.length; i += 2) {
+            const id = this.connect(args[i], args[i + 1]);
+            this.handlers.get(id).owner = owner;
+        }
+    }
+    disconnectObject(owner) {
+        for (const [id, handler] of this.handlers)
+            if (handler.owner === owner) this.handlers.delete(id);
+    }
+    emit(signal, ...args) {
         for (const {signal: name, callback} of [...this.handlers.values()])
-            if (name === signal) callback(this);
+            if (name === signal) callback(this, ...args);
     }
     get visible() { return this._visible; }
     set visible(value) {
@@ -55,11 +67,28 @@ class PreferencesWidget extends Actor {
     remove(child) { this.children = this.children.filter(value => value !== child); }
     add_suffix(child) { this.add_child(child); }
 }
+class ComboRow extends PreferencesWidget {
+    get selected() { return this._selected; }
+    set selected(value) {
+        if (this._selected === value) return;
+        this._selected = value;
+        this.emit('notify::selected');
+    }
+}
+class ColorButton extends Actor {
+    set_rgba(rgba) { this.rgba = rgba; }
+    get_rgba() { return this.rgba; }
+}
+class RGBA {
+    parse(value) { this.value = value; return true; }
+    to_string() { return this.value; }
+}
 class Settings extends Actor {
     constructor() {
         super();
         this.values = {'monitor-indicator-catalog': '{}', 'monitor-indicator-visibility': '{}', 'show-date-time': true,
-            'show-app-menu': true, 'show-activities': true, 'show-app-indicators': true};
+            'show-app-menu': true, 'show-activities': true, 'show-app-indicators': true,
+            'monitor-panel-layout': '{}', 'panel-color': ''};
     }
     get_string(key) { return this.values[key]; }
     get_boolean(key) { return this.values[key]; }
@@ -92,11 +121,13 @@ const mainPanel = {
 const panels = [{refreshes: 0, _updatePanel() { this.refreshes++; }}];
 const context = vm.createContext({
     ...policy,
+    ...panelPolicy,
     _: text => text,
     Main: {panel: mainPanel, layoutManager: layout, extensionManager: new Actor()},
     global: {display: {get_monitor_plug_name: index => connectors[index], get_current_monitor: () => 1}},
-    Adw: {PreferencesPage: PreferencesWidget, PreferencesGroup: PreferencesWidget, ActionRow: PreferencesWidget},
-    Gtk: {CheckButton: Checkbox, Align: {CENTER: 0}},
+    Adw: {PreferencesPage: PreferencesWidget, PreferencesGroup: PreferencesWidget, ActionRow: PreferencesWidget, ComboRow},
+    Gdk: {RGBA},
+    Gtk: {CheckButton: Checkbox, ColorButton, Button: Actor, StringList: {new: items => items}, Align: {CENTER: 0}},
     GObject: {registerClass: value => value, signal_lookup: () => true},
     GLib: {PRIORITY_DEFAULT: 0, SOURCE_REMOVE: false,
         timeout_add(_priority, _delay, callback) { pending.set(++timer, callback); return timer; },
@@ -122,6 +153,34 @@ const check = (index, role) => preferences._checks.find(row =>
     row.monitor.key === policy.monitorKey(context.global.display, index, layout.primaryIndex) && row.role === role).checkbox;
 assert.equal(check(1, 'clipboard').active, true);
 assert.ok(!preferences._checks.some(row => row.role === policy.CONTROL_ROLE));
+
+// Each extended monitor gets its own bar position and color; the main one only a color.
+assert.equal(preferences._layoutRows.length, 3, 'every monitor gets a bar color row');
+const layoutRow = index => preferences._layoutRows.find(row =>
+    row.monitor.key === policy.monitorKey(context.global.display, index, layout.primaryIndex));
+assert.equal(layoutRow(0).positionRow.selected, 0, 'bars default to the top edge');
+layoutRow(0).positionRow.selected = panelPolicy.PANEL_POSITIONS.indexOf('left');
+layoutRow(2).positionRow.selected = panelPolicy.PANEL_POSITIONS.indexOf('bottom');
+assert.equal(panelPolicy.panelPosition(settings, 'connector:HDMI-1'), 'left');
+assert.equal(panelPolicy.panelPosition(settings, 'connector:DP-2'), 'bottom', 'positions are independent');
+settings.set_string('panel-color', 'rgb(1,2,3)');
+assert.equal(layoutRow(0).colorButton.rgba.value, 'rgb(1,2,3)', 'shared color shows until overridden');
+assert.equal(layoutRow(0).resetButton.sensitive, false);
+layoutRow(0).colorButton.rgba = Object.assign(new RGBA(), {value: 'rgb(9,9,9)'});
+layoutRow(0).colorButton.emit('color-set');
+assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(9,9,9)');
+assert.equal(panelPolicy.panelColor(settings, 'connector:DP-2'), 'rgb(1,2,3)', 'colors are independent');
+assert.equal(layoutRow(0).resetButton.sensitive, true);
+layoutRow(0).resetButton.emit('clicked');
+assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(1,2,3)', 'reset returns to the shared color');
+assert.equal(layoutRow(1).positionRow, null, 'the main bar keeps its position');
+assert.equal(panelPolicy.panelColor(settings, 'main'), '', 'the shared color skips the main bar');
+layoutRow(1).colorButton.rgba = Object.assign(new RGBA(), {value: 'rgb(4,5,6)'});
+layoutRow(1).colorButton.emit('color-set');
+assert.equal(panelPolicy.panelColor(settings, 'main'), 'rgb(4,5,6)');
+assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(1,2,3)', 'main color stays on the main bar');
+layoutRow(1).resetButton.emit('clicked');
+assert.equal(panelPolicy.panelColor(settings, 'main'), '', 'reset returns the main bar to the theme');
 
 check(1, 'clipboard').click();
 assert.equal(sources.clipboard.visible, false, 'uncheck main immediately hides the source');
@@ -234,6 +293,32 @@ panel._showDateTime = () => {};
 panel._ensureQuickSettingsRightmost();
 assert.equal(panel.removedRole, 'quickSettings', 'tray placement respects the per-monitor checkbox');
 policy.primaryVisibility.delete(sources.clipboard);
+
+const watcherPanel = vm.runInContext(`({
+    ${method('_connectPrimaryPanelBoxWatchers', '_schedulePanelRefresh')}
+})`, context);
+watcherPanel._primaryPanelBoxes = [];
+watcherPanel.refreshes = 0;
+watcherPanel._schedulePanelRefresh = () => watcherPanel.refreshes++;
+const hiddenMenu = new Actor({visible: false});
+const wrapper = new Actor();
+wrapper.add_child(hiddenMenu);
+mainPanel._leftBox.add_child(wrapper);
+watcherPanel._connectPrimaryPanelBoxWatchers();
+hiddenMenu.visible = true;
+assert.equal(watcherPanel.refreshes, 1, 'revealing a wrapped menu refreshes the extended panel');
+const lateMenu = new Actor({visible: false});
+wrapper.add_child(lateMenu);
+wrapper.emit('child-added', lateMenu);
+lateMenu.visible = true;
+assert.equal(watcherPanel.refreshes, 3, 'new nested menus are watched for later activation');
+wrapper.children = wrapper.children.filter(child => child !== lateMenu);
+wrapper.emit('child-removed', lateMenu);
+const refreshes = watcherPanel.refreshes;
+lateMenu.visible = false;
+assert.equal(watcherPanel.refreshes, refreshes, 'removed menus stop refreshing the panel');
+assert.equal(lateMenu.handlers.size, 0, 'removed menus release their watchers');
+
 settings.values[policy.VISIBILITY_KEY] = 'invalid JSON';
 assert.equal(policy.indicatorIsEnabled(settings, 'main', 'clipboard'), true, 'invalid settings fall back safely');
 settings.values[policy.VISIBILITY_KEY] = 'null';

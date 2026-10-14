@@ -24,6 +24,10 @@ import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Common from './common.js';
 import * as MMPanel from './mmpanel.js';
 import * as MMDock from './mmdock.js';
+import { monitorKey } from './monitorIndicatorPolicy.js';
+import {
+	VERTICAL_THICKNESS_SCALE, isVerticalPosition, panelGeometry, panelPosition,
+} from './monitorPanelPolicy.js';
 
 export const SHOW_PANEL_ID = 'show-panel';
 export const SHOW_DOCK_ID = 'show-dock-on-extended-monitors';
@@ -48,12 +52,14 @@ function getMMPanelArray() {
 }
 
 export class MultiMonitorsPanelBox {
-	constructor(monitor) {
+	constructor(monitor, position = 'top') {
 		this._monitor = {
 			x: monitor.x,
 			y: monitor.y,
 			width: monitor.width,
+			height: monitor.height,
 		};
+		this._position = position;
 		this._allocationChangedId = null;
 		this._geometryIdleId = 0;
 		this._geometryFightCount = 0;
@@ -66,12 +72,13 @@ export class MultiMonitorsPanelBox {
 			visible: true
 		});
 		Main.layoutManager.addChrome(this.panelBox, { affectsStruts: true, trackFullscreen: true });
-		this.panelBox.set_position(monitor.x, monitor.y);
 
 		// Capture a stable panel height that won't fluctuate during overview or
 		// fullscreen transitions on the main monitor.
 		this._stableHeight = this._getStablePanelHeight();
-		this.panelBox.set_size(monitor.width, this._stableHeight);
+		const geometry = this._targetGeometry();
+		this.panelBox.set_position(geometry.x, geometry.y);
+		this.panelBox.set_size(geometry.width, geometry.height);
 		this._allocationChangedId = this.panelBox.connect('notify::allocation',
 			this._onAllocationChanged.bind(this));
 
@@ -120,11 +127,32 @@ export class MultiMonitorsPanelBox {
 		this.panelBox.destroy();
 	}
 
+	get position() {
+		return this._position;
+	}
+
+	setPosition(position) {
+		if (this._position === position)
+			return;
+		this._position = position;
+		this._geometryFightCount = 0;
+		this._geometryGiveUp = false;
+		this._applyMonitorGeometry();
+	}
+
+	_targetGeometry() {
+		const thickness = isVerticalPosition(this._position)
+			? Math.round(this._stableHeight * VERTICAL_THICKNESS_SCALE)
+			: this._stableHeight;
+		return panelGeometry(this._monitor, this._position, thickness);
+	}
+
 	updatePanel(monitor) {
 		this._monitor = {
 			x: monitor.x,
 			y: monitor.y,
 			width: monitor.width,
+			height: monitor.height,
 		};
 		// Re-check the stable height (only updates if we get a valid new value)
 		const newHeight = this._getStablePanelHeight();
@@ -157,11 +185,12 @@ export class MultiMonitorsPanelBox {
 	}
 
 	_geometryNeedsUpdate() {
+		const geometry = this._targetGeometry();
 		return (
-			Math.round(this.panelBox.x) !== this._monitor.x ||
-			Math.round(this.panelBox.y) !== this._monitor.y ||
-			Math.round(this.panelBox.width) !== this._monitor.width ||
-			Math.round(this.panelBox.height) !== this._stableHeight
+			Math.round(this.panelBox.x) !== geometry.x ||
+			Math.round(this.panelBox.y) !== geometry.y ||
+			Math.round(this.panelBox.width) !== geometry.width ||
+			Math.round(this.panelBox.height) !== geometry.height
 		);
 	}
 
@@ -177,17 +206,18 @@ export class MultiMonitorsPanelBox {
 		// If something else keeps overriding our geometry on every pass,
 		// stop fighting — better a misaligned panel than a frozen shell.
 		// updatePanel() (monitor change, settings) will reset the counter.
+		const geometry = this._targetGeometry();
 		this._geometryFightCount += 1;
 		if (this._geometryFightCount > 5) {
 			this._geometryGiveUp = true;
 			log('[MultiMonitors] Giving up geometry enforcement after repeated fights ' +
 				'(panelBox=' + Math.round(this.panelBox.width) + 'x' + Math.round(this.panelBox.height) +
-				' wanted=' + this._monitor.width + 'x' + this._stableHeight + ')');
+				' wanted=' + geometry.width + 'x' + geometry.height + ')');
 			return;
 		}
 
-		this.panelBox.set_position(this._monitor.x, this._monitor.y);
-		this.panelBox.set_size(this._monitor.width, this._stableHeight);
+		this.panelBox.set_position(geometry.x, geometry.y);
+		this.panelBox.set_size(geometry.width, geometry.height);
 	}
 }
 
@@ -614,7 +644,8 @@ export class MultiMonitorsLayoutManager {
 			return;
 		}
 
-		let mmPanelBox = new MultiMonitorsPanelBox(monitor);
+		const key = monitorKey(global.display, i, Main.layoutManager.primaryIndex);
+		let mmPanelBox = new MultiMonitorsPanelBox(monitor, panelPosition(this._settings, key));
 		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox, this._settings);
 
 		this._pushDock(monitor);

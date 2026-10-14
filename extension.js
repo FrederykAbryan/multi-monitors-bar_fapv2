@@ -37,6 +37,7 @@ import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
 import * as ScreenshotPatch from './screenshotPatch.js';
 import { MonitorIndicatorsController } from './monitorIndicatorsDialog.js';
+import { PANEL_LAYOUT_KEY, panelColor } from './monitorPanelPolicy.js';
 
 const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
@@ -147,6 +148,22 @@ export default class MultiMonitorsExtension extends Extension {
 			state.actor.clip_to_allocation = state.clipToAllocation;
 		}
 		this._mainPanelClipState = null;
+	}
+
+	_applyMainPanelColor() {
+		if (this._mainPanelStyle === undefined)
+			this._mainPanelStyle = Main.panel.get_style();
+		const color = panelColor(this._settings, 'main');
+		Main.panel.set_style(color
+			? `${this._mainPanelStyle ?? ''} background-color: ${color} !important;`
+			: this._mainPanelStyle);
+	}
+
+	_restoreMainPanelColor() {
+		if (this._mainPanelStyle === undefined)
+			return;
+		Main.panel.set_style(this._mainPanelStyle);
+		this._mainPanelStyle = undefined;
 	}
 
 	_applyMainPanelLayout() {
@@ -394,6 +411,9 @@ export default class MultiMonitorsExtension extends Extension {
 		this._mainDateTimePositionId = this._settings.connect('changed::' + DATE_TIME_POSITION_ID,
 			this._applyMainDateTimePosition.bind(this));
 		this._applyMainDateTimePosition();
+		this._settings.connectObject('changed::' + PANEL_LAYOUT_KEY,
+			this._applyMainPanelColor.bind(this), this);
+		this._applyMainPanelColor();
 
 		this._switchOffThumbnailsMuId = this._mu_settings.connect('changed::' + WORKSPACES_ONLY_ON_PRIMARY_ID,
 			this._switchOffThumbnails.bind(this));
@@ -529,6 +549,8 @@ export default class MultiMonitorsExtension extends Extension {
 			this._mainDateTimePositionId = null;
 		}
 		this._restoreMainDateTimePosition();
+		this._settings.disconnectObject(this);
+		this._restoreMainPanelColor();
 		this._restoreMainPanelLayout();
 
 		this._restoreMainPanelClipping();

@@ -51,7 +51,7 @@ const panel = methods('mmpanel.js', 'MultiMonitorsPanel', [
     '_cleanup', '_schedulePanelRefresh', '_disconnectIndicatorSignals', '_destroyIndicator',
 ]);
 Object.assign(panel, {
-    _primaryPanelBoxes: [live], _initialCheckTimeouts: [16],
+    _settings: live, _primaryPanelBoxes: [live], _initialCheckTimeouts: [16],
     _panelRefreshTimeouts: [17], statusArea: {
         tray: { ...live, _mmDestroyId: 18, _mmMenuSetId: 19 },
     },
