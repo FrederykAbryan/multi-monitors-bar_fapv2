@@ -223,6 +223,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _markEmpty() {
             this._isEmpty = true;
             this.visible = false;
+            if (this.container)
+                this.container.visible = false;
             this.reactive = false;
             this.can_focus = false;
             this.track_hover = false;
@@ -275,6 +277,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             this._isEmpty = !hasContent;
             this.visible = !!hasContent;
+            if (this.container)
+                this.container.visible = !!hasContent;
             this.reactive = !!hasContent;
             this.can_focus = !!hasContent;
             this.track_hover = !!hasContent;
@@ -867,6 +871,9 @@ export const MirroredIndicatorButton = GObject.registerClass(
             const height = Math.round(alloc.get_height());
             if (width > 0 && height > 0)
                 return [width, height];
+
+            if (typeof actor.get_stage === 'function' && !actor.get_stage())
+                return [0, 0];
 
             const [, natWidth] = actor.get_preferred_width(-1);
             const [, natHeight] = actor.get_preferred_height(-1);
@@ -1777,6 +1784,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
         _syncStaticCopyContainerSize(container, source) {
             const syncSize = () => {
                 if (this._isClipboardIndicator()) {
+                    if (!container.get_stage?.())
+                        return;
                     const [minWidth, natWidth] = container.get_preferred_width(-1);
                     const [, natHeight] = container.get_preferred_height(-1);
                     const width = Math.round(natWidth || minWidth);
@@ -1792,6 +1801,8 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 // allocation width makes the icon look off-center on secondary
                 // panels, so use the copied icon's natural size instead.
                 if (source instanceof St.Icon) {
+                    if (!container.get_stage?.())
+                        return;
                     const [minWidth, natWidth] = container.get_preferred_width(-1);
                     const [, natHeight] = container.get_preferred_height(-1);
                     const width = Math.round(natWidth || minWidth);
@@ -1807,7 +1818,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     container.set_size(width, height);
             };
 
-            syncSize();
+            // Measuring off-stage logs "st_widget_get_theme_node called on the
+            // widget [...] which is not in the stage"; wait for the first map.
+            if (container.get_stage?.()) {
+                syncSize();
+            } else {
+                container.connectObject('notify::mapped', () => {
+                    if (!container.mapped)
+                        return;
+                    container.disconnectObject(this);
+                    syncSize();
+                }, this);
+            }
 
             const allocationId = source.connect('notify::allocation', syncSize);
             if (!this._allocationCloneSignals)

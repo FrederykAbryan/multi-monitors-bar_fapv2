@@ -117,6 +117,51 @@ refresh._disconnectLabelCopyBindings();
 container.destroy_all_children();
 console.log('Actor lifecycle regression checks passed (including 20 label refreshes)');
 
+// Issue #60: static icon copies are built inside MirroredIndicatorButton._init
+// before the button is added to a panel box on the stage. Measuring preferred
+// size while off-stage triggers "st_widget_get_theme_node called on the widget
+// [...] which is not in the stage". Defer measurement until mapped on stage.
+const staticSize = methods('mirroredIndicatorButton.js', 'MirroredIndicatorButton', [
+    '_syncStaticCopyContainerSize', '_getActorAllocationSize',
+]);
+let onStage = false;
+let mappedHandler = null;
+let allocHandler = null;
+const sizedContainer = {
+    mapped: false,
+    size: null,
+    get_stage() { return onStage ? {} : null; },
+    get_preferred_width() {
+        assert.ok(onStage, 'must not measure preferred width while off-stage');
+        return [20, 24];
+    },
+    get_preferred_height() {
+        assert.ok(onStage, 'must not measure preferred height while off-stage');
+        return [18, 20];
+    },
+    set_size(w, h) { this.size = [w, h]; },
+    connectObject(sig, cb, owner) {
+        assert.equal(owner, staticSize, 'mapped handler must be owned by the button');
+        if (sig === 'notify::mapped')
+            mappedHandler = cb;
+    },
+    disconnectObject(owner) {
+        assert.equal(owner, staticSize);
+        mappedHandler = null;
+    },
+};
+const iconSource = new context.St.Icon();
+iconSource.connect = (_sig, cb) => { allocHandler = cb; return 42; };
+staticSize._isClipboardIndicator = () => false;
+staticSize._allocationCloneSignals = [];
+staticSize._syncStaticCopyContainerSize(sizedContainer, iconSource);
+assert.equal(sizedContainer.size, null, 'off-stage container waits for stage attachment');
+onStage = true;
+sizedContainer.mapped = true;
+mappedHandler();
+assert.deepEqual(sizedContainer.size, [24, 20], 'size synced once mapped on stage');
+assert.equal(mappedHandler, null, 'mapped handler disconnects after the first sync');
+
 const dateMenu = methods('mmcalendar.js', 'MultiMonitorsDateMenuButton', [
     '_mmTrackClockConnections', '_cleanupClock',
 ]);

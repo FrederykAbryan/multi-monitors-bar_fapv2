@@ -998,6 +998,11 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!layoutManager)
                 return;
 
+            // Ubuntu backports gnome-shell MR 4122, which drops grid modes and
+            // fits the grid to its allocation. Leave the layout to the shell.
+            if (typeof grid.setGridModes !== 'function')
+                return;
+
             const portrait = this._isPortraitMonitor();
             const columns = portrait ? 4 : 8;
             const rows = portrait ? 5 : 3;
