@@ -1005,8 +1005,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (typeof grid.setGridModes !== 'function')
                 return;
 
+            // Eight columns only fit full-size icons on wide monitors; on
+            // smaller ones IconGrid shrinks the icons to fit them all.
             const portrait = this._isPortraitMonitor();
-            const columns = portrait ? 4 : 8;
+            const columns = portrait ? 4 : (this._isNarrowMonitor() ? 6 : 8);
             const rows = portrait ? 5 : 3;
             const layoutKey = `${columns}x${rows}`;
 
@@ -1057,6 +1059,11 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             return !!monitor && monitor.height > monitor.width;
         }
 
+        _isNarrowMonitor() {
+            const monitor = Main.layoutManager.monitors[this._monitorIndex];
+            return !!monitor && monitor.width < 1600;
+        }
+
         _getAppGridWorkspacePreviewGeometry() {
             const monitor = Main.layoutManager.monitors[this._monitorIndex];
             if (!monitor)
@@ -1065,7 +1072,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             const portrait = this._isPortraitMonitor();
             const width = portrait
                 ? Math.max(240, Math.min(Math.round(monitor.width * 0.25), 320))
-                : Math.max(560, Math.min(Math.round(monitor.width * 0.34), 700));
+                : Math.max(320, Math.min(Math.round(monitor.width * 0.34), 700));
             const height = Math.round(width * 0.28);
             const yOffset = portrait
                 ? Math.max(24, Math.round(monitor.height * 0.018))
@@ -1083,12 +1090,12 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (!this._appDisplay || !this._contentArea?.has_allocation())
                 return;
 
-            // A grid with fixed modes keeps its own page padding. Ubuntu's
-            // fit-to-allocation grid (MR 4122) spreads icons over the whole
-            // box instead, so keep it below the workspace preview strip.
+            // The workspace previews are drawn over the top of the content
+            // area. Like the primary overview, start the grid below them so
+            // icons are neither hidden nor sized for space they cannot use.
             let inset = 0;
             const preview = this._getAppGridWorkspacePreviewGeometry();
-            if (preview && typeof this._appDisplay._grid?.setGridModes !== 'function') {
+            if (preview) {
                 const [, contentY] = this._contentArea.get_transformed_position();
                 inset = Math.max(0, Math.round(preview.y + preview.height + 24 - contentY));
             }

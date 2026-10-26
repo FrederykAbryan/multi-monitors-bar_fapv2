@@ -44,10 +44,12 @@ const grid = {
     },
 };
 let portrait = false;
+let narrow = false;
 Object.assign(manager, {
     _appDisplay: { _grid: grid },
     _isActorUsable: actor => !!actor,
     _isPortraitMonitor: () => portrait,
+    _isNarrowMonitor: () => narrow,
 });
 const dimensions = () => [grid.layoutManager.columnsPerPage, grid.layoutManager.rowsPerPage];
 
@@ -70,6 +72,15 @@ assert.deepEqual(dimensions(), [4, 5]);
 portrait = false;
 manager._configureNativeAppDisplayLayout();
 grid.allocate(1920, 1080);
+assert.deepEqual(dimensions(), [8, 3]);
+
+// Smaller landscape monitors use six columns so icons keep their size.
+narrow = true;
+manager._configureNativeAppDisplayLayout();
+grid.allocate(1280, 800, 48);
+assert.deepEqual(dimensions(), [6, 3]);
+narrow = false;
+manager._configureNativeAppDisplayLayout();
 assert.deepEqual(dimensions(), [8, 3]);
 
 manager._isActorUsable = () => false;
