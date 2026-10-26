@@ -605,6 +605,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._contentArea.add_child(this._appGridScrollView);
             if (this._appDisplay)
                 this._contentArea.add_child(this._appDisplay);
+            this._contentArea.connectObject('notify::allocation',
+                () => this._syncNativeAppDisplayInset(), this);
 
 
             // 'page-changed' and 'page-empty' signals exist in GNOME < 46
@@ -987,14 +989,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _configureNativeAppDisplayLayout() {
-            let layoutManager = null;
             if (!this._isActorUsable(this._appDisplay)) {
                 this._appDisplay = null;
                 this._appDisplayVisible = false;
                 return;
             }
 
-            layoutManager = this._appDisplay?._grid?.layoutManager;
+            const grid = this._appDisplay._grid;
+            const layoutManager = grid?.layoutManager;
             if (!layoutManager)
                 return;
 
@@ -1013,11 +1015,14 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 layoutManager.rowsPerPage === rows)
                 return;
 
-            layoutManager.columnsPerPage = columns;
-            layoutManager.rowsPerPage = rows;
+            // IconGrid chooses a mode again during allocation. Configure its
+            // modes too, otherwise it overwrites these dimensions and caches
+            // a different mode (depending on theme padding and monitor size).
+            // Reset the cached index when rotating: both modes use index 0.
+            grid.setGridModes([{ columns, rows }]);
+            grid._setGridMode(-1);
+            grid._setGridMode(0);
             this._lastAppDisplayLayout = layoutKey;
-
-            this._appDisplay._grid.queue_relayout();
         }
 
         _syncNativePageIndicatorsPosition() {
@@ -1072,6 +1077,24 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 width,
                 height,
             };
+        }
+
+        _syncNativeAppDisplayInset() {
+            if (!this._appDisplay || !this._contentArea?.has_allocation())
+                return;
+
+            // A grid with fixed modes keeps its own page padding. Ubuntu's
+            // fit-to-allocation grid (MR 4122) spreads icons over the whole
+            // box instead, so keep it below the workspace preview strip.
+            let inset = 0;
+            const preview = this._getAppGridWorkspacePreviewGeometry();
+            if (preview && typeof this._appDisplay._grid?.setGridModes !== 'function') {
+                const [, contentY] = this._contentArea.get_transformed_position();
+                inset = Math.max(0, Math.round(preview.y + preview.height + 24 - contentY));
+            }
+
+            if (this._appDisplay.margin_top !== inset)
+                this._appDisplay.margin_top = inset;
         }
 
         _getFullWorkspaceGeometry() {
@@ -1290,6 +1313,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                         this._syncNativePageIndicatorsPosition();
                         if (this._destroying)
                             return;
+                        this._syncNativeAppDisplayInset();
                         this._setActorVisible(this._appDisplay, nextAppDisplayVisible);
                         if (this._destroying)
                             return;
