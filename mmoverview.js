@@ -1100,7 +1100,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         _getAppGridWorkspacesBox() {
             const monitor = Main.layoutManager.monitors[this._monitorIndex];
             const workArea = Main.layoutManager.getWorkAreaForMonitor(this._monitorIndex);
-            if (!monitor || !workArea || !this._contentArea?.has_allocation())
+            // Not has_allocation(): it is false while a relayout is queued,
+            // which showing the app grid does, and the content area's own
+            // box does not change afterwards to notify us again.
+            if (!monitor || !workArea || !this._contentArea?.get_stage())
                 return null;
 
             // Same as the primary's ControlsManagerLayout in the app-grid
