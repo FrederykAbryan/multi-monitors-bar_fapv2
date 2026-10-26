@@ -46,6 +46,13 @@ export const setMMPanelArrayRef = Constants.setMMPanelArrayRef;
 
 export const THUMBNAILS_SLIDER_POSITION_ID = 'thumbnails-slider-position';
 
+// Private layout constants of overviewControls.js and workspacesView.js,
+// used to give the secondary app grid the same layout as the primary one.
+const SMALL_WORKSPACE_RATIO = OverviewControls.SMALL_WORKSPACE_RATIO ?? 0.15;
+const VERTICAL_SPACING_RATIO = 0.02;
+const SECONDARY_WORKSPACE_SCALE = 0.80;
+const WORKSPACE_MIN_SPACING = 24;
+
 class MultiMonitorsWorkspaceThumbnailClass extends St.Widget {
     _init(metaWorkspace, monitorIndex) {
         super._init({
@@ -605,8 +612,20 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._contentArea.add_child(this._appGridScrollView);
             if (this._appDisplay)
                 this._contentArea.add_child(this._appDisplay);
-            this._contentArea.connectObject('notify::allocation',
-                () => this._syncNativeAppDisplayInset(), this);
+            // The app-grid layout follows the search entry, which is only
+            // placed once the content area is allocated.
+            this._contentArea.connectObject('notify::allocation', () => {
+                this._syncNativeAppDisplayInset();
+                if (this._appDisplayVisible)
+                    this._syncWorkspacesViewGeometry(true);
+            }, this);
+            // Ubuntu's grid picks its icon size when allocated (see
+            // _configureNativeAppDisplayLayout); follow the primary's choice.
+            const primaryGridLayout = this._getPrimaryAppGridLayout();
+            if (primaryGridLayout && typeof this._appDisplay?._grid?.setGridModes !== 'function') {
+                primaryGridLayout.connectObject('notify::icon-size',
+                    () => this._configureNativeAppDisplayLayout(), this);
+            }
 
 
             // 'page-changed' and 'page-empty' signals exist in GNOME < 46
@@ -1001,9 +1020,19 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
 
             // Ubuntu backports gnome-shell MR 4122, which drops grid modes and
-            // fits the grid to its allocation. Leave the layout to the shell.
-            if (typeof grid.setGridModes !== 'function')
+            // fits the grid to its allocation. Leave columns and rows to the
+            // shell, but use the primary grid's icon size so both monitors
+            // match: on its own this grid can settle on much smaller icons.
+            if (typeof grid.setGridModes !== 'function') {
+                const iconSize = this._getPrimaryAppGridLayout()?.iconSize ?? -1;
+                if (iconSize > 0 && layoutManager.fixedIconSize !== iconSize) {
+                    layoutManager.fixedIconSize = iconSize;
+                    // adaptToSize() only recomputes when the page size changes.
+                    layoutManager._pageWidth = -1;
+                    grid.queue_relayout();
+                }
                 return;
+            }
 
             // Eight columns only fit full-size icons on wide monitors; on
             // smaller ones IconGrid shrinks the icons to fit them all.
@@ -1064,26 +1093,39 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             return !!monitor && monitor.width < 1600;
         }
 
-        _getAppGridWorkspacePreviewGeometry() {
+        _getPrimaryAppGridLayout() {
+            return Main.overview._overview?._controls?._appDisplay?._grid?.layout_manager ?? null;
+        }
+
+        _getAppGridWorkspacesBox() {
             const monitor = Main.layoutManager.monitors[this._monitorIndex];
-            if (!monitor)
+            const workArea = Main.layoutManager.getWorkAreaForMonitor(this._monitorIndex);
+            if (!monitor || !workArea || !this._contentArea?.has_allocation())
                 return null;
 
-            const portrait = this._isPortraitMonitor();
-            const width = portrait
-                ? Math.max(240, Math.min(Math.round(monitor.width * 0.25), 320))
-                : Math.max(320, Math.min(Math.round(monitor.width * 0.34), 700));
-            const height = Math.round(width * 0.28);
-            const yOffset = portrait
-                ? Math.max(24, Math.round(monitor.height * 0.018))
-                : Math.max(88, Math.round(monitor.height * 0.075));
+            // Same as the primary's ControlsManagerLayout in the app-grid
+            // state: below the search entry, a strip SMALL_WORKSPACE_RATIO of
+            // the overview height, followed by the app grid.
+            const overviewHeight = monitor.y + monitor.height - workArea.y;
+            const spacing = Math.round(overviewHeight * VERTICAL_SPACING_RATIO);
+            const [, contentY] = this._contentArea.get_transformed_position();
 
             return {
-                x: monitor.x + Math.round((monitor.width - width) / 2),
-                y: monitor.y + yOffset,
-                width,
-                height,
+                x: monitor.x,
+                y: Math.round(contentY) + spacing,
+                width: monitor.width,
+                height: Math.round(overviewHeight * SMALL_WORKSPACE_RATIO),
+                spacing,
             };
+        }
+
+        _getFitAllWorkspaceHeight(width, height, nWorkspaces, aspectRatio) {
+            // WorkspacesView._getFirstFitAllWorkspaceBox(): workspaces side by
+            // side, with spacing around each, limited by the box height.
+            const { scaleFactor } = St.ThemeContext.get_for_stage(global.stage);
+            const spacing = WORKSPACE_MIN_SPACING * scaleFactor;
+            const workspaceWidth = (width - spacing * (nWorkspaces + 1)) / nWorkspaces;
+            return Math.min(workspaceWidth * aspectRatio, height);
         }
 
         _syncNativeAppDisplayInset() {
@@ -1094,11 +1136,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             // area. Like the primary overview, start the grid below them so
             // icons are neither hidden nor sized for space they cannot use.
             let inset = 0;
-            const preview = this._getAppGridWorkspacePreviewGeometry();
-            if (preview) {
-                const [, contentY] = this._contentArea.get_transformed_position();
-                inset = Math.max(0, Math.round(preview.y + preview.height + 24 - contentY));
-            }
+            const box = this._getAppGridWorkspacesBox();
+            if (box)
+                inset = box.spacing + box.height + box.spacing;
 
             if (this._appDisplay.margin_top !== inset)
                 this._appDisplay.margin_top = inset;
@@ -1142,21 +1182,41 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return;
             }
 
-            const compactGeometry = this._getAppGridWorkspacePreviewGeometry();
-            if (!compactGeometry)
+            const box = this._getAppGridWorkspacesBox();
+            if (!box)
                 return;
 
-            const scale = compactGeometry.width / fullGeometry.width;
+            // The borrowed SecondaryMonitorDisplay lays out the app-grid state
+            // itself: workspaces side by side, centered in the middle
+            // SECONDARY_WORKSPACE_SCALE of its height. Scale it so they get
+            // the size they would have in the primary's strip, and center
+            // them on that strip.
+            const aspectRatio = fullGeometry.height / fullGeometry.width;
+            const nWorkspaces = global.workspace_manager.n_workspaces;
+            const nShown = this._workspacesViews._workspacesView?._workspaces?.length ?? 1;
+            const targetHeight = this._getFitAllWorkspaceHeight(
+                box.width, box.height, nWorkspaces, aspectRatio);
+            const drawnHeight = this._getFitAllWorkspaceHeight(
+                fullGeometry.width, fullGeometry.height * SECONDARY_WORKSPACE_SCALE,
+                Math.max(1, nShown), aspectRatio);
+            if (targetHeight <= 0 || drawnHeight <= 0)
+                return;
+
+            const scale = targetHeight / drawnHeight;
+            const translationX = Math.round(box.x + box.width / 2 -
+                fullGeometry.x - scale * fullGeometry.width / 2);
+            const translationY = Math.round(box.y + box.height / 2 -
+                fullGeometry.y - scale * fullGeometry.height / 2);
             const transformKey = [
-                Math.round(compactGeometry.x),
-                Math.round(compactGeometry.y),
+                translationX,
+                translationY,
                 Math.round(scale * 1000),
             ].join(':');
             if (this._lastWorkspaceTransformKey === transformKey)
                 return;
 
-            this._workspacesViews.translation_x = compactGeometry.x - fullGeometry.x;
-            this._workspacesViews.translation_y = compactGeometry.y - fullGeometry.y;
+            this._workspacesViews.translation_x = translationX;
+            this._workspacesViews.translation_y = translationY;
             this._workspacesViews.scale_x = scale;
             this._workspacesViews.scale_y = scale;
             this._lastWorkspaceTransformKey = transformKey;
