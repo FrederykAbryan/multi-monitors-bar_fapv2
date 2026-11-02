@@ -68,11 +68,12 @@ const centerBin = new Actor('centerBin');
 const right = new Actor('right');
 center.add_child(centerBin);
 const items = {};
-for (const role of ['other', 'workspaces', 'weather', 'network', 'quickSettings', 'stale'])
+for (const role of ['other', 'workspaces', 'weather', 'network', 'vpn', 'quickSettings', 'stale'])
     items[role] = new Actor(role);
 // An item managed outside the refresh, before the mirrored ones
 left.add_child(items.other);
 
+let rightRoles = ['network', 'phantom', 'vpn', 'vpn'];
 Object.assign(panel, {
     monitorIndex: 1,
     _settings: {},
@@ -83,16 +84,31 @@ Object.assign(panel, {
     statusArea: { stale: items.stale },
     menuManager: { addMenu() {} },
     _ensureIndicator(role) {
+        // A mirror of a source with nothing to show is created empty, then
+        // destroyed by _updateBox, so it is recreated on every refresh.
+        if (role === 'phantom') {
+            const phantom = new Actor('phantom');
+            phantom._isEmpty = true;
+            this.statusArea[role] = phantom;
+            return phantom;
+        }
         if (!this.statusArea[role])
             this.statusArea[role] = items[role];
         this.statusArea[role].show();
         this._shownInRefresh?.add(this.statusArea[role]);
         return this.statusArea[role];
     },
+    _destroyIndicator(role) {
+        const indicator = this.statusArea[role];
+        indicator?.get_parent()?.remove_child(indicator);
+        delete this.statusArea[role];
+    },
     _cloneAllMainPanelIndicators() {
         this._updateBox(['workspaces'], this._leftBox);
         this._updateBox(['weather'], this._centerBox);
-        this._updateBox(['network'], this._rightBox);
+        // Right side: an empty mirror, and a role listed twice (two main panel
+        // children can resolve to the same role, e.g. inside the tray).
+        this._updateBox(rightRoles, this._rightBox);
     },
     _ensureQuickSettingsRightmost() {
         this.statusArea.quickSettings ??= items.quickSettings;
@@ -103,7 +119,7 @@ Object.assign(panel, {
 panel._updatePanel();
 assert.deepEqual(left.get_children(), [items.other, items.workspaces]);
 assert.deepEqual(centerBin.get_children(), [items.weather]);
-assert.deepEqual(right.get_children(), [items.network, items.quickSettings]);
+assert.deepEqual(right.get_children(), [items.network, items.vpn, items.quickSettings]);
 assert.equal(items.stale.visible, false, 'a refresh still hides indicators it does not show');
 
 // Refreshes run on many routine changes in the main panel. Once everything is
@@ -115,13 +131,20 @@ panel._updatePanel();
 panel._updatePanel();
 assert.equal(moves, 0, 'repeated refreshes leave placed items where they are');
 assert.equal(hides, 2, 'repeated refreshes only hide the unused indicator');
-for (const role of ['other', 'workspaces', 'weather', 'network', 'quickSettings'])
+for (const role of ['other', 'workspaces', 'weather', 'network', 'vpn', 'quickSettings'])
     assert.equal(items[role].visible, true, `${role} stays visible`);
 
 // A real change is still applied.
 right.remove_child(items.quickSettings);
 right.insert_child_at_index(items.quickSettings, 0);
 panel._updatePanel();
-assert.deepEqual(right.get_children(), [items.network, items.quickSettings], 'misplaced tray moves back');
+assert.deepEqual(right.get_children(), [items.network, items.vpn, items.quickSettings], 'misplaced tray moves back');
+
+// A new order on the main panel is mirrored, moving only what is needed.
+rightRoles = ['vpn', 'phantom', 'network'];
+moves = 0;
+panel._updatePanel();
+assert.deepEqual(right.get_children(), [items.vpn, items.network, items.quickSettings], 'reordered items follow the main panel');
+assert.equal(moves, 1, 'only the out-of-order item moves');
 
 console.log('Panel refresh stability checks passed');
