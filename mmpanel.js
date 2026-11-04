@@ -1580,40 +1580,24 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
             }
 
-            // Already in the box in this order: nothing to move. Other items
-            // (the tray, a side-placed clock) may sit between or after them.
-            if (box !== this._centerBox) {
-                const isPrimary = this.monitorIndex === Main.layoutManager.primaryIndex;
-                const placed = [];
-                let complete = true;
-                for (const role of elements) {
-                    if (role === 'activities' && isPrimary)
-                        continue;
-                    const indicator = this.statusArea[role];
-                    if (!indicator || indicator._isEmpty) {
-                        complete = false;
-                        break;
-                    }
-                    placed.push(indicator.container || indicator);
-                }
-                const inBox = box.get_children().filter(child => placed.includes(child));
-                if (complete && placed.length > 0 && inBox.length === placed.length &&
-                    inBox.every((child, i) => child === placed[i])) {
-                    for (const container of placed) {
-                        container.show();
-                        this._shownInRefresh?.add(container);
-                    }
-                    return;
-                }
-            }
-
+            const isPrimary = this.monitorIndex === Main.layoutManager.primaryIndex;
+            const seen = new Set();
             let nChildren = box.get_n_children();
+            // Left/right boxes: keep each item after the previous one and only
+            // move items that are out of order. Moving an item resets its hover
+            // state (flicker) and closes its menu, and refreshes run often.
+            let previous = null;
 
             for (let i = 0; i < elements.length; i++) {
                 let role = elements[i];
 
+                // Two main panel children can resolve to the same role.
+                if (seen.has(role))
+                    continue;
+                seen.add(role);
+
                 // Skip activities button on primary monitor - it already has one
-                if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
+                if (role === 'activities' && isPrimary) {
                     continue;
                 }
 
@@ -1625,9 +1609,24 @@ const MultiMonitorsPanel = GObject.registerClass(
                         this._destroyIndicator(role);
                         continue;
                     }
-                    const position = box === this._centerBox ? i : i + nChildren;
+                    if (box === this._centerBox) {
+                        this._addToPanelBox(role, indicator, i, box);
+                        continue;
+                    }
+
+                    const container = indicator.container || indicator;
+                    const children = box.get_children();
+                    const index = container.get_parent() === box ? children.indexOf(container) : -1;
+                    const previousIndex = previous ? children.indexOf(previous) : -1;
+                    let position;
+                    if (index >= 0 && index > previousIndex)
+                        position = index; // already in order: stays put
+                    else if (previous)
+                        position = index >= 0 ? previousIndex : previousIndex + 1; // right after previous
+                    else
+                        position = nChildren;
                     this._addToPanelBox(role, indicator, position, box);
-                } else {
+                    previous = container;
                 }
             }
         }
