@@ -1651,16 +1651,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (widgets.length > 0) {
                 for (const widget of widgets) {
                     if (widget instanceof St.Icon) {
-                        const iconCopy = new St.Icon({
-                            gicon: widget.gicon,
-                            icon_name: widget.icon_name,
-                            icon_size: this._getSourceIconSize(widget),
-                            style_class: widget.get_style_class_name() || 'system-status-icon',
-                            x_align: Clutter.ActorAlign.CENTER,
-                            y_align: Clutter.ActorAlign.CENTER,
-                            x_expand: false,
-                            y_expand: false,
-                        });
+                        const iconCopy = this._createDisplayWidgetCopy(widget);
                         container.add_child(iconCopy);
                     } else if (widget instanceof St.Label) {
                         // Skip labels for ArcMenu and Clipboard indicators
@@ -1693,9 +1684,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _createDisplayWidgetCopy(widget) {
             if (widget instanceof St.Icon) {
-                return new St.Icon({
-                    gicon: widget.gicon,
-                    icon_name: widget.icon_name,
+                const iconCopy = new St.Icon({
                     icon_size: this._getSourceIconSize(widget),
                     style_class: widget.get_style_class_name() || 'system-status-icon',
                     x_align: Clutter.ActorAlign.CENTER,
@@ -1703,6 +1692,18 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     x_expand: false,
                     y_expand: false,
                 });
+
+                // Follow the source's gicon live. Tray providers (AppIndicator
+                // pixmaps from Electron apps, issue #59) swap in GIcons that
+                // cannot be serialized, so the poll signature never sees the
+                // change and a one-shot copy would stay stuck. Bind gicon only:
+                // icon-name is derived from it, and binding a null icon-name
+                // would clear the copy's gicon. Released together with the
+                // label bindings on rebuild/cleanup.
+                (this._labelCopyBindings ??= []).push(widget.bind_property(
+                    'gicon', iconCopy, 'gicon', GObject.BindingFlags.SYNC_CREATE));
+
+                return iconCopy;
             }
 
             if (widget instanceof St.Label) {
@@ -1951,7 +1952,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
 
                 if (node instanceof St.Icon) {
-                    const id = node.icon_name || (node.gicon ? node.gicon.to_string() : '') || '';
+                    const id = node.icon_name || this._gIconSignatureId(node.gicon);
                     parts.push(`i:${id}:${node.icon_size || 0}`);
                 } else if (node instanceof St.Label) {
                     parts.push(`l:${node.text || ''}`);
@@ -1966,6 +1967,26 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             walk(actor);
             return parts.join('|');
+        }
+
+        _gIconSignatureId(gicon) {
+            if (!gicon)
+                return '';
+
+            const serialized = gicon.to_string();
+            if (serialized)
+                return serialized;
+
+            // Pixmap-backed GIcons (GdkPixbuf, BytesIcon) have no string form;
+            // fall back to object identity so replacing one changes the signature.
+            this._gIconIds ??= new WeakMap();
+            let id = this._gIconIds.get(gicon);
+            if (!id) {
+                this._gIconIdCounter = (this._gIconIdCounter ?? 0) + 1;
+                id = `obj${this._gIconIdCounter}`;
+                this._gIconIds.set(gicon, id);
+            }
+            return id;
         }
 
         _createFillClone(parent, source) {
