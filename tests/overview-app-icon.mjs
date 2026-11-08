@@ -32,6 +32,7 @@ class Label extends Actor {
 const context = vm.createContext({
     St: { Button: Actor, BoxLayout: Actor, Icon: Actor, Label, ButtonMask: { ONE: 1 } },
     Clutter: { ActorAlign: { CENTER: 1 } },
+    Common: { verticalBoxProps: () => ({ orientation: 1 }) },
     console: { debug() {} },
 });
 const manager = vm.runInContext(`({${source.slice(start, end)}})`, context);
