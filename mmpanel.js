@@ -1037,12 +1037,14 @@ const MultiMonitorsPanel = GObject.registerClass(
             this._centerBox.clip_to_allocation = true;
         }
 
-        _hideIndicators() {
+        _hideIndicators(keep = null) {
             for (let role in this.statusArea) {
                 let indicator = this.statusArea[role];
                 if (!indicator)
                     continue;
                 const container = indicator.container || indicator;
+                if (keep?.has(container))
+                    continue;
                 if (container?.hide)
                     container.hide();
             }
@@ -1091,6 +1093,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             let indicator = this.statusArea[role];
             if (indicator) {
                 indicator.container.show();
+                this._shownInRefresh?.add(indicator.container);
                 // CRITICAL FIX: Return the existing indicator instead of null!
                 return indicator;
             }
@@ -1288,10 +1291,10 @@ const MultiMonitorsPanel = GObject.registerClass(
                 child === mainContainer || (child.contains && child.contains(mainContainer)));
         }
 
-        _getCenterInsertIndex(role, position) {
+        _getCenterInsertIndex(role, position, exclude = null) {
             // Keep center items in the main panel's center order. The dateMenu
             // is placed separately, so list positions alone are not enough.
-            const children = this._centerBin.get_children();
+            const children = this._centerBin.get_children().filter(child => child !== exclude);
             const rank = this._getMainCenterRank(role);
             if (rank < 0)
                 return Math.max(0, Math.min(position, children.length));
@@ -1333,16 +1336,36 @@ const MultiMonitorsPanel = GObject.registerClass(
                 });
             }
 
-            // Critical: Remove from existing parent BEFORE adding (like main Panel)
+            // Moving an item resets its hover state and closes its menu, so
+            // leave it alone when it is already where it belongs.
+            const centered = box === this._centerBox && !!this._centerBin;
+            const target = centered ? this._centerBin : box;
             const parent = container.get_parent();
+            if (parent === target) {
+                const index = centered
+                    ? this._getCenterInsertIndex(role, position, container)
+                    : Math.max(0, Math.min(position, target.get_n_children() - 1));
+                if (target.get_children().indexOf(container) === index) {
+                    container.show();
+                    this._shownInRefresh?.add(container);
+                    if (indicator.menu)
+                        this.menuManager.addMenu(indicator.menu);
+                    if (role === 'dateMenu')
+                        this._syncClockLayout();
+                    return;
+                }
+            }
+
+            // Critical: Remove from existing parent BEFORE adding (like main Panel)
             if (parent)
                 parent.remove_child(container);
 
             // Show container BEFORE adding (like main Panel)
             container.show();
+            this._shownInRefresh?.add(container);
 
             // If targeting center box, place the item in the center wrapper and center it
-            if (box === this._centerBox && this._centerBin) {
+            if (centered) {
                 container.x_align = Clutter.ActorAlign.CENTER;
                 // Use FILL for dateMenu so hover takes full panel height
                 if (role === 'dateMenu') {
@@ -1371,14 +1394,21 @@ const MultiMonitorsPanel = GObject.registerClass(
         _updatePanel() {
             if (!this._settings)
                 return;
-            this._hideIndicators();
+            // Hide only what this refresh does not show again. Hiding everything
+            // first made every item flicker and closed its open menu.
+            const shown = new Set();
+            this._shownInRefresh = shown;
+            try {
+                // Clone ALL indicators from main panel instead of just the default ones
+                this._cloneAllMainPanelIndicators();
 
-            // Clone ALL indicators from main panel instead of just the default ones
-            this._cloneAllMainPanelIndicators();
 
-
-            // Ensure system tray is rightmost
-            this._ensureQuickSettingsRightmost();
+                // Ensure system tray is rightmost
+                this._ensureQuickSettingsRightmost();
+            } finally {
+                this._shownInRefresh = null;
+            }
+            this._hideIndicators(shown);
 
         }
 
@@ -1550,13 +1580,24 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return;
             }
 
+            const isPrimary = this.monitorIndex === Main.layoutManager.primaryIndex;
+            const seen = new Set();
             let nChildren = box.get_n_children();
+            // Left/right boxes: keep each item after the previous one and only
+            // move items that are out of order. Moving an item resets its hover
+            // state (flicker) and closes its menu, and refreshes run often.
+            let previous = null;
 
             for (let i = 0; i < elements.length; i++) {
                 let role = elements[i];
 
+                // Two main panel children can resolve to the same role.
+                if (seen.has(role))
+                    continue;
+                seen.add(role);
+
                 // Skip activities button on primary monitor - it already has one
-                if (role === 'activities' && this.monitorIndex === Main.layoutManager.primaryIndex) {
+                if (role === 'activities' && isPrimary) {
                     continue;
                 }
 
@@ -1568,9 +1609,24 @@ const MultiMonitorsPanel = GObject.registerClass(
                         this._destroyIndicator(role);
                         continue;
                     }
-                    const position = box === this._centerBox ? i : i + nChildren;
+                    if (box === this._centerBox) {
+                        this._addToPanelBox(role, indicator, i, box);
+                        continue;
+                    }
+
+                    const container = indicator.container || indicator;
+                    const children = box.get_children();
+                    const index = container.get_parent() === box ? children.indexOf(container) : -1;
+                    const previousIndex = previous ? children.indexOf(previous) : -1;
+                    let position;
+                    if (index >= 0 && index > previousIndex)
+                        position = index; // already in order: stays put
+                    else if (previous)
+                        position = index >= 0 ? previousIndex : previousIndex + 1; // right after previous
+                    else
+                        position = nChildren;
                     this._addToPanelBox(role, indicator, position, box);
-                } else {
+                    previous = container;
                 }
             }
         }
@@ -1604,10 +1660,7 @@ MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {
         this.statusArea[role] = indicator;
     }
 
-    // Move/add to be the last item in the right box
-    const container = indicator.container ? indicator.container : indicator;
-    const parent = container.get_parent();
-    if (parent) parent.remove_child(container);
+    // Move/add to be the last item in the right box (left alone if it already is)
     this._addToPanelBox(role, indicator, this._rightBox.get_n_children(), this._rightBox);
     this._showDateTime();
 };
