@@ -44,10 +44,12 @@ const grid = {
     },
 };
 let portrait = false;
+let narrow = false;
 Object.assign(manager, {
     _appDisplay: { _grid: grid },
     _isActorUsable: actor => !!actor,
     _isPortraitMonitor: () => portrait,
+    _isNarrowMonitor: () => narrow,
 });
 const dimensions = () => [grid.layoutManager.columnsPerPage, grid.layoutManager.rowsPerPage];
 
@@ -72,9 +74,55 @@ manager._configureNativeAppDisplayLayout();
 grid.allocate(1920, 1080);
 assert.deepEqual(dimensions(), [8, 3]);
 
+// Smaller landscape monitors use six columns so icons keep their size.
+narrow = true;
+manager._configureNativeAppDisplayLayout();
+grid.allocate(1280, 800, 48);
+assert.deepEqual(dimensions(), [6, 3]);
+narrow = false;
+manager._configureNativeAppDisplayLayout();
+assert.deepEqual(dimensions(), [8, 3]);
+
 manager._isActorUsable = () => false;
 manager._appDisplayVisible = true;
 manager._configureNativeAppDisplayLayout();
 assert.equal(manager._appDisplay, null);
 assert.equal(manager._appDisplayVisible, false);
+
+// Issue #60: Ubuntu's IconGrid (gnome-shell MR 4122 backport) has no
+// setGridModes/_setGridMode and fits the grid itself. Leave columns and rows
+// untouched, but take the icon size from the primary grid.
+const ubuntuLayoutManager = { columnsPerPage: 10, rowsPerPage: 4, fixedIconSize: -1, _pageWidth: 1800 };
+const ubuntuGrid = {
+    layoutManager: ubuntuLayoutManager,
+    relayouts: 0,
+    queue_relayout() { this.relayouts++; },
+};
+const primaryLayout = { iconSize: 64 };
+Object.assign(manager, {
+    _appDisplay: { _grid: ubuntuGrid },
+    _isActorUsable: actor => !!actor,
+    _lastAppDisplayLayout: null,
+    _getPrimaryAppGridLayout: () => primaryLayout,
+});
+for (portrait of [false, true]) {
+    assert.doesNotThrow(() => manager._configureNativeAppDisplayLayout());
+    assert.deepEqual([ubuntuLayoutManager.columnsPerPage, ubuntuLayoutManager.rowsPerPage], [10, 4]);
+}
+assert.equal(ubuntuLayoutManager.fixedIconSize, 64);
+assert.equal(ubuntuLayoutManager._pageWidth, -1, 'the grid must refit with the new icon size');
+assert.equal(ubuntuGrid.relayouts, 1, 'an unchanged icon size should not queue more work');
+assert.equal(ubuntuLayoutManager._fixedCols, undefined);
+
+primaryLayout.iconSize = 48;
+manager._configureNativeAppDisplayLayout();
+assert.equal(ubuntuLayoutManager.fixedIconSize, 48);
+assert.equal(ubuntuGrid.relayouts, 2);
+
+// Without a primary grid, keep the shell's own choice.
+manager._getPrimaryAppGridLayout = () => null;
+manager._configureNativeAppDisplayLayout();
+assert.equal(ubuntuLayoutManager.fixedIconSize, 48);
+assert.equal(ubuntuGrid.relayouts, 2);
+
 console.log('Overview app-grid layout regression checks passed');
