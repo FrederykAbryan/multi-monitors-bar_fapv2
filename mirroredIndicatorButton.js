@@ -108,6 +108,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._role = role;
             this._panel = panel;
 
+            // Clean up from the destroy signal, not a destroy() override:
+            // when the parent panel is torn down, Clutter destroys this
+            // button without calling the JS override, which left source
+            // handlers pointing at a disposed object.
+            this.connect('destroy', () => this._cleanup());
+
             if (role === 'activities') {
                 this._initActivitiesButton();
             } else {
@@ -209,12 +215,11 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this._isEmpty = false;
 
             if (this._sourceIndicator) {
-                this._sourceDestroyId = this._sourceIndicator.connect('destroy', () => {
-                    this._sourceDestroyId = 0;
-                    // Tear down while the source still exists, before its children
-                    // and clones are disposed by Clutter.
-                    this.destroy();
-                });
+                // Tear down while the source still exists, before its children
+                // and clones are disposed by Clutter. Tied to this button so
+                // it is disconnected however the button gets destroyed.
+                this._sourceIndicator.connectObject('destroy',
+                    () => this.destroy(), this);
                 // Check if the source indicator has any visible content
                 const sourceChild = this._sourceIndicator.get_first_child();
                 if (!sourceChild) {
@@ -1693,15 +1698,26 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     y_expand: false,
                 });
 
-                // Follow the source's gicon live. Tray providers (AppIndicator
+                // Follow the source icon live. Tray providers (AppIndicator
                 // pixmaps from Electron apps, issue #59) swap in GIcons that
-                // cannot be serialized, so the poll signature never sees the
-                // change and a one-shot copy would stay stuck. Bind gicon only:
-                // icon-name is derived from it, and binding a null icon-name
-                // would clear the copy's gicon. Released together with the
-                // label bindings on rebuild/cleanup.
-                (this._labelCopyBindings ??= []).push(widget.bind_property(
-                    'gicon', iconCopy, 'gicon', GObject.BindingFlags.SYNC_CREATE));
+                // cannot be serialized, so the poll signature alone can miss
+                // the change and a one-shot copy would stay stuck. Never
+                // overwrite a GIcon with icon_name: a null icon-name would
+                // clear the copy's gicon. Handlers go away with the copy.
+                const syncIcon = () => {
+                    if (widget.gicon)
+                        iconCopy.gicon = widget.gicon;
+                    else
+                        iconCopy.icon_name = widget.icon_name;
+                    iconCopy.icon_size = this._getSourceIconSize(widget);
+                };
+                syncIcon();
+                widget.connectObject(
+                    'notify::gicon', syncIcon,
+                    'notify::icon-name', syncIcon,
+                    'notify::icon-size', syncIcon,
+                    iconCopy);
+                this._refreshUnmappedAppIndicatorIcon(widget, iconCopy);
 
                 return iconCopy;
             }
@@ -1714,6 +1730,30 @@ export const MirroredIndicatorButton = GObject.registerClass(
             }
 
             return null;
+        }
+
+        _refreshUnmappedAppIndicatorIcon(sourceIcon, iconCopy) {
+            // AppIndicator's icon actor ignores icon changes while it is
+            // unmapped, which it is whenever a fullscreen window hides the
+            // primary panel (issue #59). Mirrors on other monitors are still
+            // visible, so refresh the source ourselves; its new gicon then
+            // reaches the copy through the notify handlers. This relies on
+            // AppIndicator internals, so do nothing if they are not there.
+            const indicator = sourceIcon._indicator;
+            if (typeof indicator?.connectObject !== 'function' ||
+                typeof sourceIcon._updateIcon !== 'function')
+                return;
+
+            const refresh = () => {
+                if (sourceIcon.is_mapped() || !sourceIcon._indicator)
+                    return;
+                Promise.resolve(sourceIcon._updateIcon()).catch(e =>
+                    console.debug(`multi-monitors-bar: AppIndicator refresh failed: ${e}`));
+            };
+            indicator.connectObject(
+                'icon', refresh,
+                'overlay-icon', refresh,
+                iconCopy);
         }
 
         _createLabelCopy(sourceLabel) {
@@ -3416,18 +3456,10 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 }
             }
 
-            if (this._sourceDestroyId)
-                this._sourceIndicator?.disconnect(this._sourceDestroyId);
-            this._sourceDestroyId = 0;
             this._quickSettingsSource = null;
             this._quickSettingsClone = null;
             this._sourceIndicator = null;
             this._panel = null;
             this._workspaceManager = null;
-        }
-
-        destroy() {
-            this._cleanup();
-            super.destroy();
         }
     });
