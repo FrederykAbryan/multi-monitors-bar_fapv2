@@ -109,7 +109,6 @@ const flush = () => {
 };
 const settings = new Settings();
 const monitors = [{width: 1920, height: 1080}, {width: 2560, height: 1440}, {width: 1920, height: 1080}];
-let connectors = ['HDMI-1', 'DP-1', 'DP-2'];
 const layout = new Actor({monitors, primaryIndex: 1});
 const sources = {dateMenu: new Actor(), quickSettings: new Actor(), clipboard: new Actor()};
 const empty = new Actor({visible: false});
@@ -124,7 +123,7 @@ const context = vm.createContext({
     ...panelPolicy,
     _: text => text,
     Main: {panel: mainPanel, layoutManager: layout, extensionManager: new Actor()},
-    global: {display: {get_monitor_plug_name: index => connectors[index], get_current_monitor: () => 1}},
+    global: {display: {get_current_monitor: () => 1}},
     Adw: {PreferencesPage: PreferencesWidget, PreferencesGroup: PreferencesWidget, ActionRow: PreferencesWidget, ComboRow},
     Gdk: {RGBA},
     Gtk: {CheckButton: Checkbox, ColorButton, Button: Actor, StringList: {new: items => items}, Align: {CENTER: 0}},
@@ -150,35 +149,35 @@ assert.match(preferences.page.children[0].title, /^Main monitor/,
 assert.match(preferences.page.children[1].title, /^Extended 1/);
 assert.match(preferences.page.children[2].title, /^Extended 2/);
 const check = (index, role) => preferences._checks.find(row =>
-    row.monitor.key === policy.monitorKey(context.global.display, index, layout.primaryIndex) && row.role === role).checkbox;
+    row.monitor.key === policy.monitorKey(index, layout.primaryIndex) && row.role === role).checkbox;
 assert.equal(check(1, 'clipboard').active, true);
 assert.ok(!preferences._checks.some(row => row.role === policy.CONTROL_ROLE));
 
 // Each extended monitor gets its own bar position and color; the main one only a color.
 assert.equal(preferences._layoutRows.length, 3, 'every monitor gets a bar color row');
 const layoutRow = index => preferences._layoutRows.find(row =>
-    row.monitor.key === policy.monitorKey(context.global.display, index, layout.primaryIndex));
+    row.monitor.key === policy.monitorKey(index, layout.primaryIndex));
 assert.equal(layoutRow(0).positionRow.selected, 0, 'bars default to the top edge');
 layoutRow(0).positionRow.selected = panelPolicy.PANEL_POSITIONS.indexOf('left');
 layoutRow(2).positionRow.selected = panelPolicy.PANEL_POSITIONS.indexOf('bottom');
-assert.equal(panelPolicy.panelPosition(settings, 'connector:HDMI-1'), 'left');
-assert.equal(panelPolicy.panelPosition(settings, 'connector:DP-2'), 'bottom', 'positions are independent');
+assert.equal(panelPolicy.panelPosition(settings, 'monitor:0'), 'left');
+assert.equal(panelPolicy.panelPosition(settings, 'monitor:2'), 'bottom', 'positions are independent');
 settings.set_string('panel-color', 'rgb(1,2,3)');
 assert.equal(layoutRow(0).colorButton.rgba.value, 'rgb(1,2,3)', 'shared color shows until overridden');
 assert.equal(layoutRow(0).resetButton.sensitive, false);
 layoutRow(0).colorButton.rgba = Object.assign(new RGBA(), {value: 'rgb(9,9,9)'});
 layoutRow(0).colorButton.emit('color-set');
-assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(9,9,9)');
-assert.equal(panelPolicy.panelColor(settings, 'connector:DP-2'), 'rgb(1,2,3)', 'colors are independent');
+assert.equal(panelPolicy.panelColor(settings, 'monitor:0'), 'rgb(9,9,9)');
+assert.equal(panelPolicy.panelColor(settings, 'monitor:2'), 'rgb(1,2,3)', 'colors are independent');
 assert.equal(layoutRow(0).resetButton.sensitive, true);
 layoutRow(0).resetButton.emit('clicked');
-assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(1,2,3)', 'reset returns to the shared color');
+assert.equal(panelPolicy.panelColor(settings, 'monitor:0'), 'rgb(1,2,3)', 'reset returns to the shared color');
 assert.equal(layoutRow(1).positionRow, null, 'the main bar keeps its position');
 assert.equal(panelPolicy.panelColor(settings, 'main'), '', 'the shared color skips the main bar');
 layoutRow(1).colorButton.rgba = Object.assign(new RGBA(), {value: 'rgb(4,5,6)'});
 layoutRow(1).colorButton.emit('color-set');
 assert.equal(panelPolicy.panelColor(settings, 'main'), 'rgb(4,5,6)');
-assert.equal(panelPolicy.panelColor(settings, 'connector:HDMI-1'), 'rgb(1,2,3)', 'main color stays on the main bar');
+assert.equal(panelPolicy.panelColor(settings, 'monitor:0'), 'rgb(1,2,3)', 'main color stays on the main bar');
 layoutRow(1).resetButton.emit('clicked');
 assert.equal(panelPolicy.panelColor(settings, 'main'), '', 'reset returns the main bar to the theme');
 
@@ -207,14 +206,12 @@ assert.equal(controller.enabled(0, 'dateMenu'), true, 'per-monitor choice overri
 
 layout.monitors = [monitors[1], monitors[2]];
 layout.primaryIndex = 0;
-connectors = ['DP-1', 'DP-2'];
 layout.emit('monitors-changed');
 flush();
 assert.equal(preferences.page.children.length, 2, 'disconnect removes the extra section');
-assert.equal(controller.enabled(1, 'clipboard'), false, 'connector choice survives monitor index changes');
+assert.equal(controller.enabled(1, 'clipboard'), true, 'choices are keyed by monitor index');
 assert.equal(sources.clipboard.visible, false, 'main choice follows the primary monitor');
 layout.monitors = [monitors[1]];
-connectors = ['DP-1'];
 layout.emit('monitors-changed');
 flush();
 assert.equal(preferences.page.children.length, 1, 'single monitor only has a main section');
@@ -265,7 +262,6 @@ const panel = vm.runInContext(`({
 })`, context);
 layout.monitors = monitors;
 layout.primaryIndex = 1;
-connectors = ['HDMI-1', 'DP-1', 'DP-2'];
 mainPanel._rightBox.children = [sources.clipboard, sources.quickSettings];
 sources.clipboard.visible = false;
 policy.primaryVisibility.set(sources.clipboard, {visible: true});
@@ -282,7 +278,7 @@ assert.equal(panel.desiredRoles.has('dateMenu'), true, 'per-monitor clock overri
 panel.monitorIndex = 2;
 panel._cloneAllMainPanelIndicators();
 assert.equal(panel.desiredRoles.has('clipboard'), false, 'other extended panel omits the unchecked icon');
-policy.setIndicatorEnabled(settings, 'connector:DP-2', 'quickSettings', false);
+policy.setIndicatorEnabled(settings, 'monitor:2', 'quickSettings', false);
 const trayStart = panelSource.indexOf('MultiMonitorsPanel.prototype._ensureQuickSettingsRightmost = function () {');
 const trayEnd = panelSource.indexOf('\n};', trayStart);
 panel._ensureQuickSettingsRightmost = vm.runInContext(`(${panelSource.slice(trayStart, trayEnd + 2)

@@ -57,7 +57,7 @@ export class MonitorIndicatorsController {
             if (legacyKey)
                 fallback = this.settings.get_boolean(legacyKey);
         }
-        return indicatorIsEnabled(this.settings, monitorKey(global.display, index, primary), role, fallback);
+        return indicatorIsEnabled(this.settings, monitorKey(index, primary), role, fallback);
     }
 
     queueSync() {
@@ -129,7 +129,7 @@ export class MonitorIndicatorsController {
             .filter(index => monitors[index]);
         const catalog = JSON.stringify({
             monitors: order.map(index => ({
-                key: monitorKey(global.display, index, primary),
+                key: monitorKey(index, primary),
                 primary: index === primary,
                 width: monitors[index].width,
                 height: monitors[index].height,

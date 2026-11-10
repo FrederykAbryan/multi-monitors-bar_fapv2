@@ -195,7 +195,7 @@ export class DashMonitorIsolation {
             .filter(Boolean).map(s => s.toLowerCase());
         for (const app of this._pendingPlacements.keys()) {
             const names = [app.get_id().replace(/\.desktop$/, ''),
-                app.get_app_info()?.get_startup_wm_class?.()]
+                app.get_app_info()?.get_startup_wm_class()]
                 .filter(Boolean).map(s => s.toLowerCase());
             if (names.some(n => ids.includes(n)))
                 return app;

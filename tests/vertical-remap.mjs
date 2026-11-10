@@ -53,7 +53,7 @@ const pending = new Map();
 let nextId = 0;
 let themeScale = 1;
 const context = vm.createContext({
-    St: { Icon, Label, Button, BoxLayout: Actor,
+    St: { Icon, Label, Button, BoxLayout: Actor, Widget: Actor,
         ThemeContext: {get_for_stage: () => ({scale_factor: themeScale})} },
     global: {stage: {}},
     Clutter: { Text, Clone: Actor, BinLayout, ActorAlign: { CENTER: 1 } },

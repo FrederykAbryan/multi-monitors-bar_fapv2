@@ -14,11 +14,10 @@ export function sourceIsVisible(actor) {
     return primaryVisibility.get(actor)?.visible ?? actor?.visible ?? false;
 }
 
-export function monitorKey(display, index, primaryIndex) {
+export function monitorKey(index, primaryIndex) {
     if (index === primaryIndex)
         return 'main';
-    const connector = display.get_monitor_plug_name?.(index);
-    return connector ? `connector:${connector}` : `monitor:${index}`;
+    return `monitor:${index}`;
 }
 
 export function readVisibility(settings) {

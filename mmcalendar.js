@@ -142,7 +142,7 @@ const MultiMonitorsPlaceholder = GObject.registerClass(
 
 const MultiMonitorsCalendar = Calendar.Calendar;
 
-var MultiMonitorsEventsSection = (() => {
+const MultiMonitorsEventsSection = (() => {
     let MultiMonitorsEventsSection = class MultiMonitorsEventsSection extends St.Button {
         _init() {
             super._init({
@@ -224,7 +224,7 @@ var MultiMonitorsEventsSection = (() => {
     return GObject.registerClass(MultiMonitorsEventsSection);
 })();
 
-var MultiMonitorsNotificationSection = (() => {
+const MultiMonitorsNotificationSection = (() => {
     // Check if MessageListSection is available, otherwise use St.Widget as base
     // MessageListSection is available in GNOME 40+, use version check
     const BaseClass = (shellVersion >= 40 && MessageList.MessageListSection)
@@ -270,7 +270,7 @@ var MultiMonitorsNotificationSection = (() => {
     return GObject.registerClass(MultiMonitorsNotificationSection);
 })();
 
-var MultiMonitorsCalendarMessageList = (() => {
+const MultiMonitorsCalendarMessageList = (() => {
     let MultiMonitorsCalendarMessageList = class MultiMonitorsCalendarMessageList extends St.Widget {
         // _init will be defined after copyClass
         _initCustom() {
@@ -417,7 +417,7 @@ var MultiMonitorsCalendarMessageList = (() => {
     return RegisteredClass;
 })();
 
-var MultiMonitorsMessagesIndicator = (() => {
+const MultiMonitorsMessagesIndicator = (() => {
     let MultiMonitorsMessagesIndicator = class MultiMonitorsMessagesIndicator extends St.Icon {
         _init() {
             super._init({
@@ -553,7 +553,7 @@ var MultiMonitorsMessagesIndicator = (() => {
     return GObject.registerClass(MultiMonitorsMessagesIndicator);
 })();
 
-var MultiMonitorsDateMenuButton = (() => {
+const MultiMonitorsDateMenuButton = (() => {
     const BaseDateMenuButton = DateMenu.DateMenuButton ?? PanelMenu.Button;
 
     let MultiMonitorsDateMenuButton = class MultiMonitorsDateMenuButton extends BaseDateMenuButton {

@@ -385,7 +385,7 @@ export const MultiMonitorsThumbnailsBox = GObject.registerClass({
 }, MultiMonitorsThumbnailsBoxClass);
 
 /* This isn't compatible with GNOME 40 and i don't know how to fix it -- TH
-var MultiMonitorsSlidingControl = (() => {
+const MultiMonitorsSlidingControl = (() => {
     let MultiMonitorsSlidingControl = class MultiMonitorsSlidingControl extends St.Widget {
     _init(params) {
         params = Params.parse(params, { slideDirection: OverviewControls.SlideDirection.LEFT });
@@ -429,7 +429,7 @@ var MultiMonitorsSlidingControl = (() => {
     return GObject.registerClass(MultiMonitorsSlidingControl);
 })();
 
-var MultiMonitorsThumbnailsSlider = (() => {
+const MultiMonitorsThumbnailsSlider = (() => {
     let MultiMonitorsThumbnailsSlider = class MultiMonitorsThumbnailsSlider extends MultiMonitorsSlidingControl {
     _init(thumbnailsBox) {
         super._init({ slideDirection: OverviewControls.SlideDirection.RIGHT });
@@ -801,13 +801,8 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             }
 
             // Shell.App.create_icon_texture() is unavailable on GNOME 46+.
-            if (!icon && typeof app.create_icon_texture === 'function') {
-                try {
-                    icon = app.create_icon_texture(86);
-                } catch (e) {
-                    console.debug('[MultiMonitors] Could not create app icon texture: ' + e);
-                }
-            }
+            if (!icon && typeof app.create_icon_texture === 'function')
+                icon = app.create_icon_texture(86);
 
             // Final fallback to generic icon
             if (!icon) {

@@ -105,7 +105,7 @@ export function remapClone(clone, vertical) {
 
     let compactIcons = false;
     for (let actor = parent; actor; actor = actor.get_parent()) {
-        if (actor.has_style_class_name?.('mm-astra-monitor')) {
+        if (actor instanceof St.Widget && actor.has_style_class_name('mm-astra-monitor')) {
             compactIcons = true;
             break;
         }

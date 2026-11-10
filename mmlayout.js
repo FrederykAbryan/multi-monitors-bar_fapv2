@@ -210,9 +210,9 @@ export class MultiMonitorsPanelBox {
 		this._geometryFightCount += 1;
 		if (this._geometryFightCount > 5) {
 			this._geometryGiveUp = true;
-			log('[MultiMonitors] Giving up geometry enforcement after repeated fights ' +
-				'(panelBox=' + Math.round(this.panelBox.width) + 'x' + Math.round(this.panelBox.height) +
-				' wanted=' + geometry.width + 'x' + geometry.height + ')');
+			console.warn('[MultiMonitors] Giving up geometry enforcement after repeated fights ' +
+				`(panelBox=${Math.round(this.panelBox.width)}x${Math.round(this.panelBox.height)} ` +
+				`wanted=${geometry.width}x${geometry.height})`);
 			return;
 		}
 
@@ -530,7 +530,7 @@ export class MultiMonitorsLayoutManager {
 		// If the primary monitor changed, do a full teardown + rebuild
 		const currentPrimary = Main.layoutManager.primaryIndex;
 		if (this._lastPrimaryIndex !== currentPrimary) {
-			log('[MultiMonitors] Primary index changed: ' + this._lastPrimaryIndex + ' -> ' + currentPrimary + ', full rebuild');
+			console.debug(`[MultiMonitors] Primary index changed: ${this._lastPrimaryIndex} -> ${currentPrimary}, full rebuild`);
 			this._lastPrimaryIndex = currentPrimary;
 
 			// Full teardown of existing panels
@@ -644,7 +644,7 @@ export class MultiMonitorsLayoutManager {
 			return;
 		}
 
-		const key = monitorKey(global.display, i, Main.layoutManager.primaryIndex);
+		const key = monitorKey(i,Main.layoutManager.primaryIndex);
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor, panelPosition(this._settings, key));
 		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox, this._settings);
 

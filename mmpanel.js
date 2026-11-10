@@ -769,7 +769,7 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _monitorKey() {
-            return monitorKey(global.display, this.monitorIndex, Main.layoutManager.primaryIndex);
+            return monitorKey(this.monitorIndex,Main.layoutManager.primaryIndex);
         }
 
         _applyPanelLayout() {
@@ -822,7 +822,8 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _syncItemOrientation(actor, vertical) {
-            actor._syncPanelOrientation?.(vertical);
+            if (actor instanceof MirroredIndicatorButton)
+                actor._syncPanelOrientation(vertical);
             if (actor instanceof St.BoxLayout) {
                 if (vertical && !isBoxVertical(actor)) {
                     setBoxVertical(actor, true);
@@ -1085,7 +1086,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
         _roleIsEnabled(role, fallback = true) {
             return indicatorIsEnabled(this._settings,
-                monitorKey(global.display, this.monitorIndex, Main.layoutManager.primaryIndex),
+                monitorKey(this.monitorIndex,Main.layoutManager.primaryIndex),
                 role, fallback);
         }
 

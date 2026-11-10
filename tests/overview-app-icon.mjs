@@ -46,9 +46,6 @@ const legacyIcon = new Actor();
 assert.equal(iconFor(app({ create_icon_texture: () => legacyIcon })), legacyIcon,
     'older shells can still use the legacy texture method');
 
-assert.equal(iconFor(app({ create_icon_texture: () => { throw new Error('unavailable'); } }))
-    .icon_name, 'application-x-executable',
-    'a failed legacy texture call uses the generic fallback');
 
 const gicon = {};
 assert.equal(iconFor(app({ get_icon: () => gicon })).gicon, gicon,
