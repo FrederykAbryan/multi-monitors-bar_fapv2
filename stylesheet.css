@@ -139,37 +139,58 @@
 }
 
 /* Keep dock feedback on the rounded icon container. GNOME 50 uses
-   overview-tile in place of app-well-app; theme focus shadows may be important. */
-#dash.multimonitor-dock .app-well-app,
-#dash.multimonitor-dock .overview-tile,
-#dash.multimonitor-dock .grid-search-result,
-#dash.multimonitor-dock .show-apps {
+   overview-tile in place of app-well-app; theme focus shadows may be important.
+   Rules are scoped under the dock bin ID: in overview the dock is reparented
+   into #overviewGroup, where extension rules such as Blur my Shell's
+   `.overview-components-transparent #overviewGroup .overview-tile:hover`
+   (1 id + 3 classes, !important) would otherwise outrank a single-id selector
+   and paint the full-height tile. Two ids win regardless of class count. */
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps,
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:hover,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:hover,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:hover,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:hover,
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:focus,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:focus,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:focus,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:focus,
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:active,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:active,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:active,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:active,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:selected,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:highlighted,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:checked,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:drop {
     background-color: transparent !important;
     background-image: none !important;
     border-color: transparent !important;
     box-shadow: none !important;
 }
 
-#dash.multimonitor-dock .overview-icon {
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-icon {
     border-radius: 1.5em;
 }
 
-.multimonitor-dock .app-well-app:hover .overview-icon,
-.multimonitor-dock .app-well-app:focus .overview-icon,
-.multimonitor-dock .overview-tile:hover .overview-icon,
-.multimonitor-dock .overview-tile:focus .overview-icon,
-.multimonitor-dock .grid-search-result:hover .overview-icon,
-.multimonitor-dock .grid-search-result:focus .overview-icon,
-.multimonitor-dock .show-apps:hover .overview-icon,
-.multimonitor-dock .show-apps:focus .overview-icon {
-    background-color: rgba(255, 255, 255, 0.2);
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:hover .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:focus .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:hover .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:focus .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:hover .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:focus .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:hover .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:focus .overview-icon {
+    background-color: rgba(255, 255, 255, 0.2) !important;
 }
 
-.multimonitor-dock .app-well-app:active .overview-icon,
-.multimonitor-dock .overview-tile:active .overview-icon,
-.multimonitor-dock .grid-search-result:active .overview-icon,
-.multimonitor-dock .show-apps:active .overview-icon {
-    background-color: rgba(255, 255, 255, 0.28);
+#multiMonitorsDockBin #dash.multimonitor-dock .app-well-app:active .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .overview-tile:active .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .grid-search-result:active .overview-icon,
+#multiMonitorsDockBin #dash.multimonitor-dock .show-apps:active .overview-icon {
+    background-color: rgba(255, 255, 255, 0.28) !important;
 }
 
 /* Mirrored indicators should inherit styling from their cloned source.
