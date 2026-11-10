@@ -18,6 +18,7 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as DashModule from 'resource:///org/gnome/shell/ui/dash.js';
@@ -105,6 +106,11 @@ export class MultiMonitorsDock {
             () => this._queuePositionUpdate());
         this._widthChangedId = this._dash.connect('notify::width',
             () => this._queuePositionUpdate());
+        // The dash is allocated the bin's fixed width, so adding or removing
+        // icons never changes its width by itself. Re-measure whenever its
+        // content asks for a new layout (also tracks icon scale animations).
+        this._dash.connectObject('queue-relayout',
+            () => this._queuePositionUpdate(), this._bin);
         this._overviewShowingId = Main.overview.connect('showing', () => {
             this._setOverviewMode(true);
             this._connectOverviewStateAdjustment();
@@ -274,12 +280,16 @@ export class MultiMonitorsDock {
     _queuePositionUpdate() {
         if (this._positionIdleId)
             return;
-        // Size notifications can fire during allocation; defer layout changes.
-        this._positionIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._positionIdleId = 0;
-            this._updatePosition();
-            return GLib.SOURCE_REMOVE;
-        });
+        // Size notifications can fire during allocation; defer layout changes
+        // to before the next frame. An idle source would be starved by
+        // overview/workspace animations, leaving the clipped bin at its old
+        // width so added icons stay hidden until the animation ends.
+        this._positionIdleId = global.compositor.get_laters().add(
+            Meta.LaterType.BEFORE_REDRAW, () => {
+                this._positionIdleId = 0;
+                this._updatePosition();
+                return GLib.SOURCE_REMOVE;
+            });
     }
 
     _getLocalShowAppsButton() {
@@ -427,10 +437,14 @@ export class MultiMonitorsDock {
     }
 
     _getMonitorIndex() {
+        // Match by the dock monitor's center, not exact geometry: extended
+        // docks are not always handed updated geometry on monitor changes
+        // (scale, resume), and an exact mismatch would hide every app.
+        const cx = this._monitor.x + this._monitor.width / 2;
+        const cy = this._monitor.y + this._monitor.height / 2;
         return Main.layoutManager.monitors.findIndex(monitor =>
-            monitor.x === this._monitor.x && monitor.y === this._monitor.y &&
-            monitor.width === this._monitor.width &&
-            monitor.height === this._monitor.height);
+            cx >= monitor.x && cx < monitor.x + monitor.width &&
+            cy >= monitor.y && cy < monitor.y + monitor.height);
     }
 
     updateMonitor(monitor) {
@@ -497,7 +511,7 @@ export class MultiMonitorsDock {
             this._rearmTimeoutId = 0;
         }
         if (this._positionIdleId) {
-            GLib.source_remove(this._positionIdleId);
+            global.compositor.get_laters().remove(this._positionIdleId);
             this._positionIdleId = 0;
         }
 

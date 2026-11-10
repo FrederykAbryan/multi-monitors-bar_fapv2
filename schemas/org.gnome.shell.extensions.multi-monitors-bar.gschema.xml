@@ -168,5 +168,15 @@
         only has windows on other monitors.</description>
     </key>
 
+    <key name="isolate-dock-workspaces" type="b">
+      <default>false</default>
+      <summary>Isolate docks per workspace.</summary>
+      <description>Each dock (including the primary overview dash) only shows running
+        indicators and running apps for windows on the active workspace. Clicking an
+        app focuses its window on the active workspace, or opens a new window there
+        when the app only has windows on other workspaces. Combines with
+        isolate-dock-monitors.</description>
+    </key>
+
   </schema>
 </schemalist>

@@ -163,7 +163,13 @@ const context = vm.createContext({
         constructor(dash) { liveIsolations.add(this); this.dash = dash; }
         destroy() { assert.ok(liveIsolations.delete(this)); }
     }},
-    global: {display, get_pointer: () => pointer, stage: {get_key_focus: () => focus}},
+    Meta: {LaterType: {BEFORE_REDRAW: 0}},
+    global: {display, get_pointer: () => pointer, stage: {get_key_focus: () => focus},
+        // Laters run before the next frame; model them as immediate sources.
+        compositor: {get_laters: () => ({
+            add: (_type, callback) => GLib.timeout_add(0, 0, callback),
+            remove: id => GLib.source_remove(id),
+        })}},
 });
 const Dock = vm.runInContext(source.replace(/^import .*;\n/gm, '')
     .replace('export class MultiMonitorsDock', 'class MultiMonitorsDock') +
