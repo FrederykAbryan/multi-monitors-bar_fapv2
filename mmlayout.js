@@ -65,13 +65,27 @@ export class MultiMonitorsPanelBox {
 		this._geometryFightCount = 0;
 		this._geometryGiveUp = false;
 
+		this._monitorIndex = monitor.index;
+
 		this.panelBox = new St.BoxLayout({
 			name: 'panelBox',
 			...Common.verticalBoxProps(),
 			clip_to_allocation: true,
 			visible: true
 		});
-		Main.layoutManager.addChrome(this.panelBox, { affectsStruts: true, trackFullscreen: true });
+		// Do not use trackFullscreen: GNOME picks the monitor from the actor's
+		// allocation, and addChrome() checks it before the box is ever
+		// allocated. The 0x0 rect at the origin maps to the primary monitor,
+		// so a fullscreen window there hides this box, and a hidden actor is
+		// never allocated to correct it (issue #63: bar gone after unlock,
+		// which re-enables the extension). Track our own monitor index instead.
+		Main.layoutManager.addChrome(this.panelBox, { affectsStruts: true });
+		global.display.connectObject('in-fullscreen-changed',
+			() => this._syncFullscreenVisibility(), this.panelBox);
+		// The overview and lock screen hide window_group; chrome shows then.
+		global.window_group.connectObject('notify::visible',
+			() => this._syncFullscreenVisibility(), this.panelBox);
+		this._syncFullscreenVisibility();
 
 		// Capture a stable panel height that won't fluctuate during overview or
 		// fullscreen transitions on the main monitor.
@@ -120,6 +134,8 @@ export class MultiMonitorsPanelBox {
 			this.panelBox.disconnect(this._allocationChangedId);
 			this._allocationChangedId = null;
 		}
+		global.display.disconnectObject(this.panelBox);
+		global.window_group.disconnectObject(this.panelBox);
 
 		// Explicitly removeChrome before destroy so struts are cleared
 		// synchronously — prevents stale geometry on suspend/wake.
@@ -147,6 +163,13 @@ export class MultiMonitorsPanelBox {
 		return panelGeometry(this._monitor, this._position, thickness);
 	}
 
+	// Same rule as GNOME's trackFullscreen, keyed on the monitor index we
+	// were given rather than on the actor's (possibly never set) allocation.
+	_syncFullscreenVisibility() {
+		const monitor = Main.layoutManager.monitors[this._monitorIndex];
+		this.panelBox.visible = !(global.window_group.visible && monitor?.inFullscreen);
+	}
+
 	updatePanel(monitor) {
 		this._monitor = {
 			x: monitor.x,
@@ -154,6 +177,8 @@ export class MultiMonitorsPanelBox {
 			width: monitor.width,
 			height: monitor.height,
 		};
+		this._monitorIndex = monitor.index;
+		this._syncFullscreenVisibility();
 		// Re-check the stable height (only updates if we get a valid new value)
 		const newHeight = this._getStablePanelHeight();
 		if (newHeight > 0)
