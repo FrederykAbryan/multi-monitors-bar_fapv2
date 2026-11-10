@@ -290,6 +290,8 @@ panel._ensureQuickSettingsRightmost();
 assert.equal(panel.removedRole, 'quickSettings', 'tray placement respects the per-monitor checkbox');
 policy.primaryVisibility.delete(sources.clipboard);
 
+class Icon extends Actor {}
+context.St = { Icon };
 const watcherPanel = vm.runInContext(`({
     ${method('_connectPrimaryPanelBoxWatchers', '_schedulePanelRefresh')}
 })`, context);
@@ -314,6 +316,14 @@ const refreshes = watcherPanel.refreshes;
 lateMenu.visible = false;
 assert.equal(watcherPanel.refreshes, refreshes, 'removed menus stop refreshing the panel');
 assert.equal(lateMenu.handlers.size, 0, 'removed menus release their watchers');
+// Issue #63: AppIndicator loads a tray icon late while the primary panel is
+// hidden; its mirror was dropped as empty and must be rebuilt on the gicon.
+const trayIcon = new Icon();
+wrapper.add_child(trayIcon);
+wrapper.emit('child-added', trayIcon);
+const beforeIcon = watcherPanel.refreshes;
+trayIcon.emit('notify::gicon');
+assert.equal(watcherPanel.refreshes, beforeIcon + 1, 'a late-loaded icon refreshes the extended panel');
 
 settings.values[policy.VISIBILITY_KEY] = 'invalid JSON';
 assert.equal(policy.indicatorIsEnabled(settings, 'main', 'clipboard'), true, 'invalid settings fall back safely');

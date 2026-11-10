@@ -186,6 +186,13 @@ const boxSource = new context.St.BoxLayout();
 boxSource.get_stage = () => ({});
 boxSource.get_allocation_box = () => ({ get_width: () => 24, get_height: () => 20 });
 boxSource.connect = (_sig, cb) => { allocHandler = cb; return 43; };
+boxSource.mapped = true;
+let sourceMappedHandler = null;
+boxSource.connectObject = (sig, cb, owner) => {
+    assert.equal(owner, sizedContainer, 'source map handler goes away with the copy');
+    if (sig === 'notify::mapped')
+        sourceMappedHandler = cb;
+};
 staticSize._syncStaticCopyContainerSize(sizedContainer, boxSource);
 assert.equal(sizedContainer.size, null, 'off-stage container waits for stage attachment');
 onStage = true;
@@ -193,6 +200,18 @@ sizedContainer.mapped = true;
 mappedHandler();
 assert.deepEqual(sizedContainer.size, [24, 20], 'size synced once mapped on stage');
 assert.equal(mappedHandler, null, 'mapped handler disconnects after the first sync');
+
+// Issue #63: an unmapped source (primary panel hidden by a fullscreen window)
+// keeps a stale allocation; after unlock it predates the labels' text. The
+// copy must size to its own content until the source is shown again.
+boxSource.mapped = false;
+sourceMappedHandler();
+assert.deepEqual(sizedContainer.size, [-1, -1], 'unmapped source releases the pinned size');
+allocHandler();
+assert.deepEqual(sizedContainer.size, [-1, -1], 'stale allocation is not pinned while unmapped');
+boxSource.mapped = true;
+sourceMappedHandler();
+assert.deepEqual(sizedContainer.size, [24, 20], 'size pinned again once the source is shown');
 
 // Issue #59: mirrored tray icons follow the source live, including while a
 // fullscreen window leaves the primary panel's AppIndicator icon unmapped.

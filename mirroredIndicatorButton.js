@@ -229,6 +229,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     this._markEmpty();
                     return;
                 }
+                this._loadUnmappedAppIndicatorIcons(sourceChild);
 
                 // Additional check: if the source indicator or its child is not visible, skip
                 if (!sourceIsVisible(this._sourceIndicator)) {
@@ -1759,6 +1760,27 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 iconCopy);
         }
 
+        _loadUnmappedAppIndicatorIcons(actor) {
+            // AppIndicator only loads a new icon actor's first icon once it is
+            // mapped. After unlock the tray icons are recreated on a primary
+            // panel hidden by a fullscreen window, so they stay blank, this
+            // mirror looks empty and is dropped (issue #63). Load them
+            // ourselves; the panel rebuilds the mirror on the new gicon.
+            const walk = node => {
+                if (node instanceof St.Icon) {
+                    if (!node.gicon && !node.is_mapped() && node._indicator &&
+                        typeof node._updateIcon === 'function') {
+                        Promise.resolve(node._updateIcon()).catch(e =>
+                            console.debug(`multi-monitors-bar: AppIndicator load failed: ${e}`));
+                    }
+                    return;
+                }
+                for (const child of node.get_children())
+                    walk(child);
+            };
+            walk(actor);
+        }
+
         _createLabelCopy(sourceLabel) {
             const labelCopy = new St.Label({
                 style_class: sourceLabel.get_style_class_name() || '',
@@ -1871,10 +1893,21 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 return;
 
             const syncSize = () => {
+                // An unmapped source (primary panel hidden by a fullscreen
+                // window) is not laid out again, so its allocation goes stale.
+                // After unlock it was taken during the moment the lock screen
+                // showed the panel, before the labels got text: pinning it
+                // squeezed the label copies to nothing (issue #63). Let the
+                // copy follow its own content until the source is shown again.
+                if (!source.mapped) {
+                    container.set_size(-1, -1);
+                    return;
+                }
                 const [width, height] = this._getActorAllocationSize(source);
                 if (width > 0 && height > 0)
                     container.set_size(width, height);
             };
+            source.connectObject('notify::mapped', syncSize, container);
 
             // Measuring off-stage logs "st_widget_get_theme_node called on the
             // widget [...] which is not in the stage"; wait for the first map.

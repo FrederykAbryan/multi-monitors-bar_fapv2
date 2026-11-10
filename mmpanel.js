@@ -592,6 +592,11 @@ const MultiMonitorsPanel = GObject.registerClass(
                     'notify::visible', scheduleUpdate,
                     'destroy', () => watched.delete(actor),
                     this);
+                // Mirrors of sources without an icon yet are dropped as empty;
+                // rebuild once the icon arrives (AppIndicator loads it late
+                // on a hidden panel, issue #63).
+                if (actor instanceof St.Icon)
+                    actor.connectObject('notify::gicon', scheduleUpdate, this);
                 for (const signal of ['child-added', 'actor-added']) {
                     if (GObject.signal_lookup(signal, actor.constructor.$gtype))
                         actor.connectObject(signal, (_actor, child) => {
