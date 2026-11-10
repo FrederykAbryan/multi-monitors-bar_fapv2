@@ -1651,16 +1651,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (widgets.length > 0) {
                 for (const widget of widgets) {
                     if (widget instanceof St.Icon) {
-                        const iconCopy = new St.Icon({
-                            gicon: widget.gicon,
-                            icon_name: widget.icon_name,
-                            icon_size: this._getSourceIconSize(widget),
-                            style_class: widget.get_style_class_name() || 'system-status-icon',
-                            x_align: Clutter.ActorAlign.CENTER,
-                            y_align: Clutter.ActorAlign.CENTER,
-                            x_expand: false,
-                            y_expand: false,
-                        });
+                        const iconCopy = this._createDisplayWidgetCopy(widget);
                         container.add_child(iconCopy);
                     } else if (widget instanceof St.Label) {
                         // Skip labels for ArcMenu and Clipboard indicators
@@ -1693,9 +1684,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
         _createDisplayWidgetCopy(widget) {
             if (widget instanceof St.Icon) {
-                return new St.Icon({
-                    gicon: widget.gicon,
-                    icon_name: widget.icon_name,
+                const copy = new St.Icon({
                     icon_size: this._getSourceIconSize(widget),
                     style_class: widget.get_style_class_name() || 'system-status-icon',
                     x_align: Clutter.ActorAlign.CENTER,
@@ -1703,6 +1692,23 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     x_expand: false,
                     y_expand: false,
                 });
+                // Pixmap-backed GIcons need not have a unique string form.
+                // Follow notifications instead of relying on the polling
+                // fingerprint, and never overwrite a GIcon with icon_name.
+                const syncIcon = () => {
+                    if (widget.gicon)
+                        copy.gicon = widget.gicon;
+                    else
+                        copy.icon_name = widget.icon_name;
+                    copy.icon_size = this._getSourceIconSize(widget);
+                };
+                syncIcon();
+                widget.connectObject(
+                    'notify::gicon', syncIcon,
+                    'notify::icon-name', syncIcon,
+                    'notify::icon-size', syncIcon,
+                    copy);
+                return copy;
             }
 
             if (widget instanceof St.Label) {
