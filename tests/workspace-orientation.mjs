@@ -30,11 +30,12 @@ Object.assign(button, {
     _workspaceManager: {n_workspaces: 2, get_active_workspace_index: () => active},
 });
 button._syncPanelOrientation(true);
-assert.deepEqual(button._workspaceDotsBox.children.map(dot => [dot.width, dot.height]), [[44, 12], [44, 8]],
-    'side bar workspace markers have a legible width and height');
+assert.deepEqual(button._workspaceDotsBox.children.map(dot => [dot.width, dot.height]), [[32, 10], [8, 8]],
+    'side bar workspace markers are a pill above round dots');
 active = 1;
 button._updateWorkspaceDots();
-assert.equal(button._workspaceDotsBox.children[1].height, 12, 'switching workspaces preserves the larger active marker');
+assert.equal(button._workspaceDotsBox.children[1].width, 32, 'switching workspaces moves the pill to the active marker');
+assert.equal(button._workspaceDotsBox.children[1].height, 10, 'switching workspaces preserves the taller active pill');
 button._syncPanelOrientation(false);
 assert.deepEqual(button._workspaceDotsBox.children.map(dot => [dot.width, dot.height]), [[7, 7], [34, 8]],
     'horizontal bars restore their original dots');

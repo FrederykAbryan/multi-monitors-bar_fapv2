@@ -132,11 +132,12 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.y_expand = true;
             this.y_align = Clutter.ActorAlign.FILL;
 
-            // Container for workspace dots - centered vertically
+            // Container for workspace dots - centered vertically and horizontally
             this._workspaceDotsBox = new St.BoxLayout({
                 style_class: 'workspace-dots',
                 y_align: Clutter.ActorAlign.CENTER,
                 x_align: Clutter.ActorAlign.CENTER,
+                x_expand: true,
                 y_expand: true,
             });
 
@@ -182,11 +183,13 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             for (let i = 0; i < nWorkspaces; i++) {
                 const isActive = (i === activeIndex);
+                const bgColor = isActive ? '#ffffff' : 'rgba(255, 255, 255, 0.4)';
                 const dot = new St.Widget({
                     style_class: isActive ? 'workspace-dot active' : 'workspace-dot',
-                    width: vertical ? 44 : (isActive ? 34 : 7),
-                    height: vertical ? (isActive ? 12 : 8) : (isActive ? 8 : 7),
-                    style: `border-radius: ${vertical ? 4 : 6}px; background-color: rgba(255, 255, 255, ${isActive ? '1' : '0.5'}); margin: ${vertical ? '2px 0' : '0 2px'};`,
+                    width: vertical ? (isActive ? 32 : 8) : (isActive ? 34 : 7),
+                    height: vertical ? (isActive ? 10 : 8) : (isActive ? 8 : 7),
+                    style: `border-radius: 6px; background-color: ${bgColor}; margin: ${vertical ? '2px 0' : '0 2px'};`,
+                    x_align: Clutter.ActorAlign.CENTER,
                     y_align: Clutter.ActorAlign.CENTER,
                 });
                 this._workspaceDotsBox.add_child(dot);

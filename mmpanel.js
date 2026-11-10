@@ -782,8 +782,14 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._vertical = vertical;
                 for (const box of [this._leftBox, this._centerBox, this._centerBin, this._rightBox])
                     setBoxVertical(box, vertical);
+                this._leftBox.x_align = vertical ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.START;
+                this._leftBox.y_align = vertical ? Clutter.ActorAlign.START : Clutter.ActorAlign.FILL;
+                this._centerBox.x_align = vertical ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.CENTER;
+                this._centerBox.y_align = vertical ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.FILL;
                 this._centerBin.x_align = vertical ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.CENTER;
                 this._centerBin.y_align = vertical ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.FILL;
+                this._rightBox.x_align = vertical ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.END;
+                this._rightBox.y_align = vertical ? Clutter.ActorAlign.END : Clutter.ActorAlign.FILL;
                 if (vertical)
                     this.add_style_class_name('multimonitor-panel-vertical');
                 else

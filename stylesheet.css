@@ -77,8 +77,8 @@
 }
 
 .multimonitor-panel-vertical .workspace-dots {
-    spacing: 6px;
-    padding: 6px 0;
+    spacing: 3px;
+    padding: 8px 0;
 }
 
 .multimonitor-panel-vertical #mmPanelActivities,
@@ -89,8 +89,8 @@
 }
 
 .multimonitor-panel-vertical .workspace-dot {
-    background-color: rgba(255, 255, 255, 0.6);
-    border-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.4);
+    border-radius: 6px;
 }
 
 .multimonitor-panel-vertical .workspace-dot.active {
