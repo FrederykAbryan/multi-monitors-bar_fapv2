@@ -64,6 +64,11 @@ export class DashMonitorIsolation {
         this._pendingPlacements = new Map();
         this._refreshLaterId = 0;
         this._settleTimeoutId = 0;
+        // Cancel functions for per-window work that outlives the call that
+        // started it: first-frame waits and placement holds (timeouts plus
+        // window/display handlers). All of it must stop with this instance.
+        this._frameWaits = new Set();
+        this._holds = new Set();
         instances.add(this);
 
         this._settings.connectObject(
@@ -136,6 +141,11 @@ export class DashMonitorIsolation {
             GLib.source_remove(this._settleTimeoutId);
             this._settleTimeoutId = 0;
         }
+        // Copy first: each cancel removes itself from its set.
+        for (const stop of [...this._holds])
+            stop();
+        for (const cancel of [...this._frameWaits])
+            cancel();
     }
 
     _disable() {
@@ -235,22 +245,39 @@ export class DashMonitorIsolation {
 
     // Calls `callback` once when the window's first frame is drawn (or it is
     // already visible). The actor may not exist yet at window-created.
+    // Returns a function that cancels the wait; destroy() cancels it too.
     _onFirstFrame(window, callback) {
         const laters = global.compositor.get_laters();
-        laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
-            const actor = window.get_compositor_private();
-            if (!actor)
-                return GLib.SOURCE_REMOVE;
-            if (actor.mapped && actor.visible) {
-                callback();
-                return GLib.SOURCE_REMOVE;
+        // Owns this wait's handler. connectObject drops it by itself if the
+        // window closes before drawing (the actor is destroyed).
+        const owner = {};
+        let actor = null;
+        let laterId = 0;
+        const cancel = () => {
+            this._frameWaits.delete(cancel);
+            if (laterId) {
+                laters.remove(laterId);
+                laterId = 0;
             }
-            const id = actor.connect('first-frame', () => {
-                actor.disconnect(id);
-                callback();
-            });
+            actor?.disconnectObject(owner);
+        };
+        const fire = () => {
+            cancel();
+            callback();
+        };
+        laterId = laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
+            laterId = 0;
+            actor = window.get_compositor_private();
+            if (!actor)
+                cancel();
+            else if (actor.mapped && actor.visible)
+                fire();
+            else
+                actor.connectObject('first-frame', fire, owner);
             return GLib.SOURCE_REMOVE;
         });
+        this._frameWaits.add(cancel);
+        return cancel;
     }
 
     _holdOnMonitor(window) {
@@ -268,10 +295,21 @@ export class DashMonitorIsolation {
         // (Electron on XWayland) move the window afterwards; re-apply until a
         // short settle period after the first frame (or a hard cap).
         let settleId = 0;
-        let stopped = false;
-        this._onFirstFrame(window, () => {
-            if (stopped)
-                return;
+        // Owns this hold's window and display handlers.
+        const owner = {};
+        // Everything that could call back is removed here, so stop() needs no
+        // "stopped" flag: a second call finds nothing left to remove.
+        const stop = () => {
+            this._holds.delete(stop);
+            cancelFirstFrame();
+            window.disconnectObject(owner);
+            global.display.disconnectObject(owner);
+            if (settleId) {
+                GLib.source_remove(settleId);
+                settleId = 0;
+            }
+        };
+        const cancelFirstFrame = this._onFirstFrame(window, () => {
             moveHere();
             if (settleId)
                 GLib.source_remove(settleId);
@@ -281,24 +319,16 @@ export class DashMonitorIsolation {
                 return GLib.SOURCE_REMOVE;
             });
         });
-        const positionId = window.connect('position-changed', () => moveHere());
-        const stop = () => {
-            if (stopped)
-                return;
-            stopped = true;
-            window.disconnect(positionId);
-            window.disconnect(unmanagedId);
-            global.display.disconnect(grabId);
-            if (settleId)
-                GLib.source_remove(settleId);
-            settleId = 0;
-        };
-        const unmanagedId = window.connect('unmanaged', stop);
+        this._holds.add(stop);
+        window.connectObject(
+            'position-changed', () => moveHere(),
+            'unmanaged', () => stop(),
+            owner);
         // Never fight the user dragging the window elsewhere.
-        const grabId = global.display.connect('grab-op-begin', (_display, grabbed) => {
+        global.display.connectObject('grab-op-begin', (_display, grabbed) => {
             if (grabbed === window)
                 stop();
-        });
+        }, owner);
         // Hard cap in case no first frame ever arrives (replaced by the
         // shorter settle timer once it does).
         if (!settleId) {
@@ -444,6 +474,8 @@ export class DashMonitorIsolation {
         instances.delete(this);
         this._settings.disconnectObject(this);
         this._dash.disconnectObject(this);
+        // Unconditionally, so no timeout, later or handler outlives us.
+        this._cancelPending();
         if (this._active) {
             this._disable();
             this._dash._queueRedisplay();
