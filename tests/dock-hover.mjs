@@ -151,12 +151,18 @@ const Main = {
     }),
 };
 const display = new Signals();
+const liveIsolations = new Set();
 const source = readFileSync(new URL('../mmdock.js', import.meta.url), 'utf8');
 const context = vm.createContext({
     St: {Bin: Actor, Widget: Actor}, GLib, Main,
     Clutter: {ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
         AnimationMode: {EASE_OUT_CUBIC: 1, EASE_IN_OUT_CUBIC: 2}},
     DashModule: {Dash}, OverviewControls: {},
+    // Per-monitor isolation has no hover side effects; only lifecycle matters.
+    DashIsolation: {DashMonitorIsolation: class {
+        constructor(dash) { liveIsolations.add(this); this.dash = dash; }
+        destroy() { assert.ok(liveIsolations.delete(this)); }
+    }},
     global: {display, get_pointer: () => pointer, stage: {get_key_focus: () => focus}},
 });
 const Dock = vm.runInContext(source.replace(/^import .*;\n/gm, '')
@@ -376,4 +382,5 @@ extension._relayout();
 assert.equal(extension._primaryDock, null);
 assert.equal(sources.size, 0);
 assert.equal(tracked.size, 0);
+assert.equal(liveIsolations.size, 0, 'Every dock releases its monitor isolation');
 console.log('Dock hover lifecycle tests passed');

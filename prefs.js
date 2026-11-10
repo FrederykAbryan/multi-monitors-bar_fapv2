@@ -76,6 +76,7 @@ class MultiMonitorsPrefsWidget extends Gtk.Grid {
         this._addBooleanSwitch(_('Show App Grid and Search on extended monitors.'), SHOW_OVERVIEW_ON_EXTENDED_MONITORS_ID);
         this._addBooleanSwitch(_('Show dock on extended monitors.'), SHOW_DOCK_ON_EXTENDED_MONITORS_ID);
         this._addBooleanSwitch(_('Reveal dock on bottom-edge hover.'), 'reveal-dock-on-hover');
+        this._addBooleanSwitch(_('Isolate dock apps per monitor.'), 'isolate-dock-monitors');
     }
 
     add(child) {

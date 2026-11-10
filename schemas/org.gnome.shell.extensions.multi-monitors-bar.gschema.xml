@@ -159,5 +159,14 @@
         this to keep docks visible only in the Activities overview.</description>
     </key>
 
+    <key name="isolate-dock-monitors" type="b">
+      <default>false</default>
+      <summary>Isolate docks per monitor.</summary>
+      <description>Each dock (including the primary overview dash) only shows running
+        indicators and running apps for windows on its own monitor. Clicking an app
+        focuses its window on that monitor, or opens a new window there when the app
+        only has windows on other monitors.</description>
+    </key>
+
   </schema>
 </schemalist>

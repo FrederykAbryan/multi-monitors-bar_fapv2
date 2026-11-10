@@ -23,6 +23,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as DashModule from 'resource:///org/gnome/shell/ui/dash.js';
 import * as OverviewControls from 'resource:///org/gnome/shell/ui/overviewControls.js';
 
+import * as DashIsolation from './dashIsolation.js';
+
 /**
  * A native bottom dock revealed from the desktop's bottom edge when enabled.
  * Extended monitors also show it in overview; the primary uses GNOME's dash.
@@ -56,6 +58,8 @@ export class MultiMonitorsDock {
         this._dash = new DashModule.Dash();
         this._dash.add_style_class_name('multimonitor-dock');
         this._connectShowAppsButton();
+        this._isolation = new DashIsolation.DashMonitorIsolation(this._dash,
+            settings, () => this._getMonitorIndex());
 
         // Match the dock width so empty space beside it remains clickable.
         this._bin = new St.Bin({
@@ -422,6 +426,13 @@ export class MultiMonitorsDock {
             this._monitor.y + this._monitor.height - 2);
     }
 
+    _getMonitorIndex() {
+        return Main.layoutManager.monitors.findIndex(monitor =>
+            monitor.x === this._monitor.x && monitor.y === this._monitor.y &&
+            monitor.width === this._monitor.width &&
+            monitor.height === this._monitor.height);
+    }
+
     updateMonitor(monitor) {
         if (!this._inOverview)
             this._hideDesktopDock();
@@ -442,6 +453,8 @@ export class MultiMonitorsDock {
         global.display.disconnect(this._fullscreenChangedId);
         global.display.disconnect(this._focusWindowId);
         Main.overview.disconnect(this._overviewHiddenId);
+        this._isolation.destroy();
+        this._isolation = null;
         // 'startup-complete' and the app-item 'clicked' handlers are owned by
         // this._bin via connectObject and drop when it is destroyed below.
 

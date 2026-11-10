@@ -33,6 +33,7 @@ export const copyClass = Common.copyClass;
 
 import * as MMLayout from './mmlayout.js';
 import * as MMDock from './mmdock.js';
+import * as DashIsolation from './dashIsolation.js';
 import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
 import * as ScreenshotPatch from './screenshotPatch.js';
@@ -487,9 +488,14 @@ export default class MultiMonitorsExtension extends Extension {
 		// Patch screenshot UI to open on cursor's monitor (or all monitors based on setting)
 		ScreenshotPatch.patchScreenshotUI(this._settings);
 		this._monitorIndicators = new MonitorIndicatorsController(this._settings, () => mmPanel);
+		// GNOME's own overview dash lives on the primary monitor.
+		this._overviewDashIsolation = new DashIsolation.DashMonitorIsolation(
+			Main.overview.dash, this._settings, () => Main.layoutManager.primaryIndex);
 	}
 
 	disable() {
+		this._overviewDashIsolation?.destroy();
+		this._overviewDashIsolation = null;
 		this._monitorIndicators?.destroy();
 		this._monitorIndicators = null;
 		this._destroyPrimaryDock();
