@@ -29,9 +29,11 @@ const mirror = methods('mirroredIndicatorButton.js', 'MirroredIndicatorButton', 
     '_cleanup', '_disconnectMirroredClockDisplay', '_disconnectLabelCopyBindings',
     '_disconnectIconSyncSource', '_disconnectWorkspaceWindowSignals',
 ]);
+const sourceOwners = [];
+const sourceIndicator = { ...live, disconnectObject(owner) { sourceOwners.push(owner); } };
 Object.assign(mirror, {
-    _sourceIndicator: live, _sourcePresenceChild: live,
-    _sourceDestroyId: 10, _clockBinding: live, _labelCopyBindings: [live],
+    _sourceIndicator: sourceIndicator, _sourcePresenceChild: live,
+    _clockBinding: live, _labelCopyBindings: [live],
     _quickSettingsSource: live, _sourceSizeChangedId: 11,
     _allocationCloneSignals: [{ source: live, id: 12 }],
     _workspacePreviewWindowSignalIds: [{ object: live, id: 13 }],
@@ -39,6 +41,7 @@ Object.assign(mirror, {
     _genericMenuPendingRestore() { released.push('restore'); },
 });
 mirror._cleanup();
+assert.deepEqual(sourceOwners, [mirror], 'source handlers (incl. destroy) released via disconnectObject');
 assert.equal(mirror._sourceIndicator, null);
 assert.equal(mirror._sourcePresenceChild, null);
 assert.equal(mirror._quickSettingsSource, null);
@@ -67,8 +70,19 @@ panel.statusArea.tray = { ...live };
 panel._destroyIndicator('tray');
 assert.equal(panel.statusArea.tray, undefined);
 assert.ok(released.indexOf(18) < released.indexOf('destroy'), 'disconnect before destroying owned indicator');
-assert.ok(released.includes(10));
 assert.ok(released.includes(12));
+
+// The button's cleanup must hang off its destroy signal, not a destroy()
+// override: Clutter destroys children of a torn-down panel without calling
+// the JS override, which left the source 'destroy' handler pointing at a
+// disposed button (journal log on issue #59).
+{
+    const source = readFileSync(new URL('../mirroredIndicatorButton.js', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('class MirroredIndicatorButton'));
+    assert.ok(!/\n {8}destroy\(\) \{/.test(body), 'no destroy() override on MirroredIndicatorButton');
+    assert.ok(body.includes("this.connect('destroy', () => this._cleanup())"));
+    assert.ok(!body.includes('_sourceDestroyId'), 'source destroy handler uses connectObject');
+}
 // Issue #40: repeated refreshes must destroy every retired copy while JS can
 // still run its destroy handlers, and release bindings before destruction.
 class Label {
@@ -161,6 +175,72 @@ sizedContainer.mapped = true;
 mappedHandler();
 assert.deepEqual(sizedContainer.size, [24, 20], 'size synced once mapped on stage');
 assert.equal(mappedHandler, null, 'mapped handler disconnects after the first sync');
+
+// Issue #59: mirrored tray icons follow the source live, including while a
+// fullscreen window leaves the primary panel's AppIndicator icon unmapped.
+{
+    class Emitter {
+        handlers = [];
+        connectObject(...args) {
+            const owner = args.pop();
+            for (let i = 0; i < args.length; i += 2)
+                this.handlers.push({ signal: args[i], cb: args[i + 1], owner });
+        }
+        emit(signal) {
+            this.handlers.filter(h => h.signal === signal).forEach(h => h.cb());
+        }
+    }
+    class Icon extends Emitter {
+        constructor(props = {}) {
+            super();
+            this._gicon = null;
+            this._iconName = null;
+            Object.assign(this, props);
+        }
+        get gicon() { return this._gicon; }
+        set gicon(v) { this._gicon = v; this.emit('notify::gicon'); }
+        get icon_name() { return this._iconName; }
+        set icon_name(v) { this._iconName = v; this._gicon = null; this.emit('notify::icon-name'); }
+        get_style_class_name() { return 'system-status-icon'; }
+    }
+    context.St = { Icon, Label: class {}, BoxLayout: class {} };
+    const copier = methods('mirroredIndicatorButton.js', 'MirroredIndicatorButton', [
+        '_createDisplayWidgetCopy', '_refreshUnmappedAppIndicatorIcon',
+    ]);
+    copier._getSourceIconSize = () => 16;
+
+    const indicator = new Emitter();
+    const pixmapA = { name: 'normal' }, pixmapB = { name: 'unread' };
+    let mapped = false, updates = 0;
+    const sourceIcon = new Icon();
+    sourceIcon._gicon = pixmapA;
+    sourceIcon._indicator = indicator;
+    sourceIcon.is_mapped = () => mapped;
+    sourceIcon._updateIcon = async () => { updates++; sourceIcon.gicon = pixmapB; };
+
+    const copy = copier._createDisplayWidgetCopy(sourceIcon);
+    assert.equal(copy.gicon, pixmapA, 'copy starts with the source pixmap');
+    assert.ok(sourceIcon.handlers.every(h => h.owner === copy), 'source handlers owned by the copy');
+    assert.ok(indicator.handlers.every(h => h.owner === copy), 'indicator handlers owned by the copy');
+
+    sourceIcon.gicon = pixmapA;
+    sourceIcon.gicon = { name: 'other' };
+    assert.equal(copy.gicon.name, 'other', 'copy follows gicon swaps');
+
+    indicator.emit('icon');
+    assert.equal(updates, 1, 'unmapped source is refreshed for the mirrors');
+    assert.equal(copy.gicon, pixmapB);
+
+    mapped = true;
+    indicator.emit('overlay-icon');
+    assert.equal(updates, 1, 'a mapped source refreshes itself');
+
+    const plainIcon = new Icon();
+    plainIcon._iconName = 'audio-volume-high';
+    const plainCopy = copier._createDisplayWidgetCopy(plainIcon);
+    assert.equal(plainCopy.icon_name, 'audio-volume-high', 'themed icons copy by name');
+    console.log('Mirrored tray icon sync checks passed (live gicon + unmapped AppIndicator refresh)');
+}
 
 const dateMenu = methods('mmcalendar.js', 'MultiMonitorsDateMenuButton', [
     '_mmTrackClockConnections', '_cleanupClock',
