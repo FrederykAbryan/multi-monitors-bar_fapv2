@@ -168,7 +168,25 @@ const iconSource = new context.St.Icon();
 iconSource.connect = (_sig, cb) => { allocHandler = cb; return 42; };
 staticSize._isClipboardIndicator = () => false;
 staticSize._allocationCloneSignals = [];
+// Icon-only copies (Tiling Shell) and Clipboard Indicator copies keep their
+// natural size: a frozen size squeezed the icon to zero width on side bars.
+onStage = true;
 staticSize._syncStaticCopyContainerSize(sizedContainer, iconSource);
+assert.equal(sizedContainer.size, null, 'icon-only copy is never given a fixed size');
+assert.equal(mappedHandler, null, 'icon-only copy does not wait for a map');
+assert.equal(allocHandler, null, 'icon-only copy does not follow the source allocation');
+staticSize._isClipboardIndicator = () => true;
+staticSize._syncStaticCopyContainerSize(sizedContainer, new context.St.BoxLayout());
+assert.equal(sizedContainer.size, null, 'clipboard copy is never given a fixed size');
+staticSize._isClipboardIndicator = () => false;
+
+// Container sources still mirror the source allocation, once on stage.
+onStage = false;
+const boxSource = new context.St.BoxLayout();
+boxSource.get_stage = () => ({});
+boxSource.get_allocation_box = () => ({ get_width: () => 24, get_height: () => 20 });
+boxSource.connect = (_sig, cb) => { allocHandler = cb; return 43; };
+staticSize._syncStaticCopyContainerSize(sizedContainer, boxSource);
 assert.equal(sizedContainer.size, null, 'off-stage container waits for stage attachment');
 onStage = true;
 sizedContainer.mapped = true;

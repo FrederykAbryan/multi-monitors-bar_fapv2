@@ -1858,37 +1858,16 @@ export const MirroredIndicatorButton = GObject.registerClass(
         }
 
         _syncStaticCopyContainerSize(container, source) {
+            // Clipboard and icon-only indicators (e.g. Tiling Shell) keep the
+            // copied icon's natural size. Mirroring the source button's raw
+            // allocation makes the icon look off-center, and freezing a
+            // measured size leaves the icon squeezed to zero width once a side
+            // bar restyles and stacks the copy (the size was taken before the
+            // icon's themed icon-size applied).
+            if (this._isClipboardIndicator() || source instanceof St.Icon)
+                return;
+
             const syncSize = () => {
-                if (this._isClipboardIndicator()) {
-                    if (!container.get_stage?.())
-                        return;
-                    const [minWidth, natWidth] = container.get_preferred_width(-1);
-                    const [, natHeight] = container.get_preferred_height(-1);
-                    const width = Math.round(natWidth || minWidth);
-                    const height = Math.round(natHeight);
-
-                    if (width > 0 && height > 0)
-                        container.set_size(width, height);
-                    return;
-                }
-
-                // Icon-only indicators (e.g. Tiling Shell) can have asymmetric
-                // allocation from the source button wrapper. Mirroring that raw
-                // allocation width makes the icon look off-center on secondary
-                // panels, so use the copied icon's natural size instead.
-                if (source instanceof St.Icon) {
-                    if (!container.get_stage?.())
-                        return;
-                    const [minWidth, natWidth] = container.get_preferred_width(-1);
-                    const [, natHeight] = container.get_preferred_height(-1);
-                    const width = Math.round(natWidth || minWidth);
-                    const height = Math.round(natHeight);
-
-                    if (width > 0 && height > 0)
-                        container.set_size(width, height);
-                    return;
-                }
-
                 const [width, height] = this._getActorAllocationSize(source);
                 if (width > 0 && height > 0)
                     container.set_size(width, height);
@@ -1896,7 +1875,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // Measuring off-stage logs "st_widget_get_theme_node called on the
             // widget [...] which is not in the stage"; wait for the first map.
-            if (container.get_stage?.()) {
+            if (container.get_stage()) {
                 syncSize();
             } else {
                 container.connectObject('notify::mapped', () => {
