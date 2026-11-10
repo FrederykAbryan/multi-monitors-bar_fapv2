@@ -172,24 +172,12 @@ export class DashMonitorIsolation {
     // their last geometry) ignore it. After launching from this dock, move
     // the app's next normal window onto the dock's monitor.
     _expectWindow(app) {
-        this._dbg(`expect app=${app.get_id()} state=${app.state} ` +
-            `windows=${app.get_windows().length} isolateMon=${this._isolateMonitors}`);
         for (const other of instances)
             other._pendingPlacements.delete(app);
         if (!this._isolateMonitors || this._getMonitorIndex() < 0)
             return;
         this._pendingPlacements.set(app,
             GLib.get_monotonic_time() + PLACEMENT_TIMEOUT_US);
-    }
-
-    // TEMPORARY diagnostics for launch placement; remove once verified.
-    _dbg(msg, window = null) {
-        const w = window ? ` win[type=${window.get_window_type()} class=${window.get_wm_class()} ` +
-            `inst=${window.get_wm_class_instance()} gtk=${window.get_gtk_application_id()} ` +
-            `sbx=${window.get_sandboxed_app_id()} client=${window.get_client_type()} ` +
-            `mon=${window.get_monitor()} app=${Shell.WindowTracker.get_default()
-                .get_window_app(window)?.get_id()} title=${window.get_title()}]` : '';
-        console.log(`[mm-place] dock=${this._getMonitorIndex()} ${msg}${w}`);
     }
 
     _pendingAppFor(window) {
@@ -216,8 +204,6 @@ export class DashMonitorIsolation {
     }
 
     _watchPlacement(window) {
-        if (this._pendingPlacements.size > 0)
-            this._dbg('window-created', window);
         if (this._pendingPlacements.size === 0 ||
             window.get_window_type() !== Meta.WindowType.NORMAL)
             return;
@@ -226,14 +212,12 @@ export class DashMonitorIsolation {
         // app already; otherwise retry once the first frame is drawn, when
         // a Wayland app_id is reliably set.
         const app = this._pendingAppFor(window);
-        this._dbg(`created matched=${app?.get_id()}`, window);
         if (app) {
             this._claimWindow(app, window);
             return;
         }
         this._onFirstFrame(window, () => {
             const lateApp = this._pendingAppFor(window);
-            this._dbg(`first-frame matched=${lateApp?.get_id()}`, window);
             if (lateApp)
                 this._claimWindow(lateApp, window);
         });
@@ -276,9 +260,7 @@ export class DashMonitorIsolation {
             if (moving || index < 0 || window.get_monitor() === index)
                 return;
             moving = true;
-            this._dbg(`move -> ${index}`, window);
             window.move_to_monitor(index);
-            this._dbg('after move', window);
             moving = false;
         };
         moveHere();
@@ -299,10 +281,7 @@ export class DashMonitorIsolation {
                 return GLib.SOURCE_REMOVE;
             });
         });
-        const positionId = window.connect('position-changed', () => {
-            this._dbg('position-changed', window);
-            moveHere();
-        });
+        const positionId = window.connect('position-changed', () => moveHere());
         const stop = () => {
             if (stopped)
                 return;
@@ -397,8 +376,6 @@ export class DashMonitorIsolation {
         }
 
         const windows = this._relevantWindows(app);
-        this._dbg(`activate app=${app.get_id()} here=${windows.length} ` +
-            `all=${app.get_windows().length} canNew=${app.can_open_new_window()}`);
         if (windows.length > 0) {
             // ShellApp sorts windows most-recently-used first.
             Main.activateWindow(windows[0]);
