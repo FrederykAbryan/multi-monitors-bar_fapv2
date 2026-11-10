@@ -5,14 +5,13 @@
 </p>
 
 <p align="center">
-  <a href="https://extensions.gnome.org/extension/XXXX/multi-monitor-bar/">GNOME Extensions</a> ·
   <a href="https://github.com/FrederykAbryan/multi-monitors-bar_fapv2">GitHub</a> ·
   <a href="#donations">Donate</a>
 </p>
 
 ---
 
-An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/multi-monitors-add-on) with modern GNOME Shell support (45 – 49), mirrored indicators, screenshot tool cloning, Blur my Shell integration, and more.
+An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/multi-monitors-add-on) with GNOME Shell support (45–51), mirrored indicators, screenshot tool cloning, Blur my Shell integration, and more.
 
 ## ✨ Features
 
@@ -25,17 +24,19 @@ An updated fork of [spin83/multi-monitors-add-on](https://github.com/spin83/mult
 | **Workspace thumbnails** | Slider on the left, right, or auto |
 | **Mirrored indicators** | Any status-area indicator (Vitals, GSConnect, etc.) can be transferred to secondary panels |
 | **Per-monitor icon selection** | Choose panel icons independently for the main monitor and each extended monitor |
+| **Per-monitor bar layout** | Set the position of each extended panel and choose a color for each monitor |
 | **Indicator exclusion list** | Prevent specific indicators from being transferred (e.g. Fildem) |
 | **Screenshot tools on all monitors** | Clone the screenshot toolbar to every screen, or follow the cursor |
 | **Blur my Shell integration** | Automatically register secondary panels for blur effects |
 | **Overview on extended monitors** | Show App Grid & Search on secondary displays |
+| **Dock on extended monitors** | Show the overview dock on secondary displays and optionally reveal docks by hovering at the bottom edge |
 | **Force workspaces on all displays** | Override GNOME's *workspaces-only-on-primary* setting |
 | **Hot corners** | Enable/disable hot corners on all monitors |
 | **Window drag from panel** | Drag maximized windows off the panel on any monitor |
 
 ## 📋 Compatibility
 
-**GNOME Shell:** 45, 46, 47, 48, 49
+**Declared GNOME Shell support:** 45, 46, 47, 48, 49, 50, 51
 
 Tested on:
 - Fedora 43 — GNOME 49
@@ -84,7 +85,7 @@ gnome-extensions prefs multi-monitors-bar@frederykabryan
 
 ### Preference Switches
 
-Open **Panel icons by monitor** in the extension preferences. Each
+Open **Panels by monitor** in the extension preferences. Each
 connected display gets its own checklist: **Main monitor**, **Extended 1**,
 **Extended 2**, and so on. Check or uncheck an icon to change that panel
 immediately. Choices are saved across restarts, and the list updates when
@@ -96,19 +97,31 @@ monitors. Per-monitor choices override the existing Activities, AppMenu, and
 DateTime switches for that monitor. Enable the extension to see the connected
 monitors and available panel icons in preferences.
 
+For each extended monitor, choose a bar position (top, bottom, left, or right)
+and a color. The main monitor keeps GNOME's top bar, but its color can also be
+changed. Use the clear button to reset a color. Extended monitors fall back to
+the shared panel color, or the theme color when no shared color is set.
+
 | Setting | Key | Default |
 |---|---|---|
 | Show Panel | `show-panel` | `true` |
 | Show Activities Button | `show-activities` | `true` |
 | Show AppMenu Button | `show-app-menu` | `true` |
 | Show DateTime Menu | `show-date-time` | `true` |
+| Show AppIndicators | `show-app-indicators` | `true` |
 | Date and Time Position (all monitors) | `date-time-position` | `center` |
 | Thumbnails Slider Position | `thumbnails-slider-position` | `auto` |
 | Enable Blur my Shell | `enable-blur-my-shell` | `true` |
-| Hot Corners | `enable-hot-corners` | (system default) |
+| Hot Corners | `org.gnome.desktop.interface enable-hot-corners` | (system default) |
 | Screenshot on All Monitors | `screenshot-on-all-monitors` | `false` |
 | Force Workspaces on All Displays | `force-workspaces-on-all-displays` | `true` |
 | Overview on Extended Monitors | `show-overview-on-extended-monitors` | `true` |
+| Dock on Extended Monitors | `show-dock-on-extended-monitors` | `false` |
+| Reveal Dock on Bottom-edge Hover | `reveal-dock-on-hover` | `false` |
+
+The dock appears in the overview on extended monitors when enabled. Hover reveal
+also works on the main monitor; on extended monitors it requires the dock setting
+above. Hot corners use GNOME's desktop-wide setting, not the extension schema.
 
 ### Advanced: gsettings CLI
 
@@ -237,8 +250,8 @@ After modifying the source:
 
 If you find this extension useful, please consider supporting development.
 
-### Top Sponsors
-| Sponsor | Type | Link |
+### Top Donators
+| Donator | Type | Link |
 | :--- | :--- | :--- |
 | <img src="https://github.com/MrNerdy42.png" width="32"> **MrNerdy42** | Individual | [GitHub Profile](https://github.com/MrNerdy42) |
 | <img src="https://github.com/brianpeiris.png" width="32"> **brianpeiris** | Individual | [GitHub Profile](https://github.com/brianpeiris) |
