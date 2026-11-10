@@ -242,6 +242,7 @@ If you find this extension useful, please consider supporting development.
 | :--- | :--- | :--- |
 | <img src="https://github.com/MrNerdy42.png" width="32"> **MrNerdy42** | Individual | [GitHub Profile](https://github.com/MrNerdy42) |
 | <img src="https://github.com/brianpeiris.png" width="32"> **brianpeiris** | Individual | [GitHub Profile](https://github.com/brianpeiris) |
+| <img src="https://github.com/MaggiWuerze.png" width="32"> **MaggiWuerze** | Individual | [GitHub Profile](https://github.com/MaggiWuerze) |
 
 ### Support the Project
 - **Ko-fi:** [frederykabryan](https://ko-fi.com/frederykabryan)
