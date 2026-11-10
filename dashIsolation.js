@@ -26,6 +26,20 @@ import {DASH_ANIMATION_TIME} from 'resource:///org/gnome/shell/ui/dash.js';
 export const ISOLATE_DOCK_MONITORS_ID = 'isolate-dock-monitors';
 export const ISOLATE_DOCK_WORKSPACES_ID = 'isolate-dock-workspaces';
 
+// Slow launchers (Electron, Flatpak cold starts) can take several seconds.
+const PLACEMENT_TIMEOUT_US = 15 * GLib.USEC_PER_SEC;
+// After the first window appears, also place a follow-up main window
+// (Electron splash/bootstrap windows) shown within this period.
+const PLACEMENT_FOLLOWUP_US = 3 * GLib.USEC_PER_SEC;
+// How long a placed window is kept on the dock's monitor against the app
+// restoring its saved position.
+const PLACEMENT_SETTLE_MS = 1500;
+const PLACEMENT_HOLD_CAP_MS = 10000;
+
+// Live instances, so the most recent dock launch of an app wins over an
+// older pending launch of the same app from another dock.
+const instances = new Set();
+
 /**
  * Restricts a native GNOME Dash to the windows on its own monitor and/or the
  * active workspace: running dots, non-favorite running apps and click-to-focus
@@ -46,8 +60,11 @@ export class DashMonitorIsolation {
         this._isolateMonitors = false;
         this._isolateWorkspaces = false;
         this._windows = new Set();
+        // app -> monotonic deadline (µs) for moving its next window here.
+        this._pendingPlacements = new Map();
         this._refreshLaterId = 0;
         this._settleTimeoutId = 0;
+        instances.add(this);
 
         this._settings.connectObject(
             `changed::${ISOLATE_DOCK_MONITORS_ID}`, () => this._sync(),
@@ -95,6 +112,7 @@ export class DashMonitorIsolation {
         global.display.connectObject(
             'window-created', (_display, window) => {
                 this._trackWindow(window);
+                this._watchPlacement(window);
                 this._queueRefresh();
             },
             'window-entered-monitor', () => this._queueRefresh(),
@@ -129,6 +147,7 @@ export class DashMonitorIsolation {
         for (const window of this._windows)
             window.disconnectObject(this);
         this._windows.clear();
+        this._pendingPlacements.clear();
         this._dash._appSystem = this._appSystem;
         for (const item of this._dash._box.get_children())
             this._unpatchItem(item);
@@ -146,6 +165,170 @@ export class DashMonitorIsolation {
                 this._queueRefresh();
             },
             this);
+    }
+
+    // Apps choose where their windows open: Mutter only uses the pointer's
+    // monitor as a hint, and many apps (Chromium/Electron, apps restoring
+    // their last geometry) ignore it. After launching from this dock, move
+    // the app's next normal window onto the dock's monitor.
+    _expectWindow(app) {
+        this._dbg(`expect app=${app.get_id()} state=${app.state} ` +
+            `windows=${app.get_windows().length} isolateMon=${this._isolateMonitors}`);
+        for (const other of instances)
+            other._pendingPlacements.delete(app);
+        if (!this._isolateMonitors || this._getMonitorIndex() < 0)
+            return;
+        this._pendingPlacements.set(app,
+            GLib.get_monotonic_time() + PLACEMENT_TIMEOUT_US);
+    }
+
+    // TEMPORARY diagnostics for launch placement; remove once verified.
+    _dbg(msg, window = null) {
+        const w = window ? ` win[type=${window.get_window_type()} class=${window.get_wm_class()} ` +
+            `inst=${window.get_wm_class_instance()} gtk=${window.get_gtk_application_id()} ` +
+            `sbx=${window.get_sandboxed_app_id()} client=${window.get_client_type()} ` +
+            `mon=${window.get_monitor()} app=${Shell.WindowTracker.get_default()
+                .get_window_app(window)?.get_id()} title=${window.get_title()}]` : '';
+        console.log(`[mm-place] dock=${this._getMonitorIndex()} ${msg}${w}`);
+    }
+
+    _pendingAppFor(window) {
+        const now = GLib.get_monotonic_time();
+        for (const [app, deadline] of this._pendingPlacements) {
+            if (now > deadline)
+                this._pendingPlacements.delete(app);
+        }
+        const tracked = Shell.WindowTracker.get_default().get_window_app(window);
+        if (this._pendingPlacements.has(tracked))
+            return tracked;
+        // The tracker can miss (late WM_CLASS / app_id); compare identifiers.
+        const ids = [window.get_wm_class(), window.get_wm_class_instance(),
+            window.get_gtk_application_id(), window.get_sandboxed_app_id()]
+            .filter(Boolean).map(s => s.toLowerCase());
+        for (const app of this._pendingPlacements.keys()) {
+            const names = [app.get_id().replace(/\.desktop$/, ''),
+                app.get_app_info()?.get_startup_wm_class?.()]
+                .filter(Boolean).map(s => s.toLowerCase());
+            if (names.some(n => ids.includes(n)))
+                return app;
+        }
+        return null;
+    }
+
+    _watchPlacement(window) {
+        if (this._pendingPlacements.size > 0)
+            this._dbg('window-created', window);
+        if (this._pendingPlacements.size === 0 ||
+            window.get_window_type() !== Meta.WindowType.NORMAL)
+            return;
+        // Do not wait for MetaWindow::shown: it is not emitted for every
+        // client (e.g. Electron on XWayland). The tracker usually knows the
+        // app already; otherwise retry once the first frame is drawn, when
+        // a Wayland app_id is reliably set.
+        const app = this._pendingAppFor(window);
+        this._dbg(`created matched=${app?.get_id()}`, window);
+        if (app) {
+            this._claimWindow(app, window);
+            return;
+        }
+        this._onFirstFrame(window, () => {
+            const lateApp = this._pendingAppFor(window);
+            this._dbg(`first-frame matched=${lateApp?.get_id()}`, window);
+            if (lateApp)
+                this._claimWindow(lateApp, window);
+        });
+    }
+
+    _claimWindow(app, window) {
+        // Keep the launch armed briefly for the real window after a
+        // splash/bootstrap window (Electron), then stop so windows the user
+        // opens later are left alone.
+        this._pendingPlacements.set(app, Math.min(
+            this._pendingPlacements.get(app),
+            GLib.get_monotonic_time() + PLACEMENT_FOLLOWUP_US));
+        this._holdOnMonitor(window);
+    }
+
+    // Calls `callback` once when the window's first frame is drawn (or it is
+    // already visible). The actor may not exist yet at window-created.
+    _onFirstFrame(window, callback) {
+        const laters = global.compositor.get_laters();
+        laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
+            const actor = window.get_compositor_private();
+            if (!actor)
+                return GLib.SOURCE_REMOVE;
+            if (actor.mapped && actor.visible) {
+                callback();
+                return GLib.SOURCE_REMOVE;
+            }
+            const id = actor.connect('first-frame', () => {
+                actor.disconnect(id);
+                callback();
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _holdOnMonitor(window) {
+        let moving = false;
+        const moveHere = () => {
+            const index = this._getMonitorIndex();
+            if (moving || index < 0 || window.get_monitor() === index)
+                return;
+            moving = true;
+            this._dbg(`move -> ${index}`, window);
+            window.move_to_monitor(index);
+            this._dbg('after move', window);
+            moving = false;
+        };
+        moveHere();
+        // Mutter's initial placement and apps restoring saved bounds
+        // (Electron on XWayland) move the window afterwards; re-apply until a
+        // short settle period after the first frame (or a hard cap).
+        let settleId = 0;
+        let stopped = false;
+        this._onFirstFrame(window, () => {
+            if (stopped)
+                return;
+            moveHere();
+            if (settleId)
+                GLib.source_remove(settleId);
+            settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACEMENT_SETTLE_MS, () => {
+                settleId = 0;
+                stop();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        const positionId = window.connect('position-changed', () => {
+            this._dbg('position-changed', window);
+            moveHere();
+        });
+        const stop = () => {
+            if (stopped)
+                return;
+            stopped = true;
+            window.disconnect(positionId);
+            window.disconnect(unmanagedId);
+            global.display.disconnect(grabId);
+            if (settleId)
+                GLib.source_remove(settleId);
+            settleId = 0;
+        };
+        const unmanagedId = window.connect('unmanaged', stop);
+        // Never fight the user dragging the window elsewhere.
+        const grabId = global.display.connect('grab-op-begin', (_display, grabbed) => {
+            if (grabbed === window)
+                stop();
+        });
+        // Hard cap in case no first frame ever arrives (replaced by the
+        // shorter settle timer once it does).
+        if (!settleId) {
+            settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACEMENT_HOLD_CAP_MS, () => {
+                settleId = 0;
+                stop();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
     }
 
     _isRelevant(window) {
@@ -208,11 +391,14 @@ export class DashMonitorIsolation {
         const wantsNewWindow = button === Clutter.BUTTON_MIDDLE ||
             (modifiers & Clutter.ModifierType.CONTROL_MASK) !== 0;
         if (app.state !== Shell.AppState.RUNNING || wantsNewWindow) {
+            this._expectWindow(app);
             stockActivate.call(icon, button);
             return;
         }
 
         const windows = this._relevantWindows(app);
+        this._dbg(`activate app=${app.get_id()} here=${windows.length} ` +
+            `all=${app.get_windows().length} canNew=${app.can_open_new_window()}`);
         if (windows.length > 0) {
             // ShellApp sorts windows most-recently-used first.
             Main.activateWindow(windows[0]);
@@ -221,6 +407,7 @@ export class DashMonitorIsolation {
             // to another monitor or workspace. New windows follow the
             // pointer's monitor and the active workspace.
             icon.animateLaunch();
+            this._expectWindow(app);
             app.open_new_window(-1);
         } else {
             stockActivate.call(icon, button);
@@ -277,6 +464,7 @@ export class DashMonitorIsolation {
     }
 
     destroy() {
+        instances.delete(this);
         this._settings.disconnectObject(this);
         this._dash.disconnectObject(this);
         if (this._active) {
