@@ -195,13 +195,11 @@ assert.equal(manager._focusedApp, null, 'closing invalidates pending results');
 manager._visible = true;
 query = 'vsc';
 const retiringSearch = manager._syncAppGridState();
-const callback = handlers.get(manager);
 manager._disconnectAll();
+// Teardown disconnects 'installed-changed', so it cannot fire afterwards.
 assert.equal(handlers.size, 0);
 grid.get_children = () => assert.fail('pending search must not access destroyed actors');
 pending[4](['visual studio code.desktop']);
 await retiringSearch;
-manager._populateAppGrid = () => assert.fail('must not touch actors after teardown');
-callback();
 manager._disconnectAll();
 console.log('Overview app search regression checks passed');

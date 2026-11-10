@@ -145,14 +145,54 @@ vfunc_destroy() {
 }
 ```
 
-### Do not use `_isDestroyed` guard flags
-Avoid flags such as `this._isDestroyed` or `this._isCleanedUp` to prevent access after destroy. The owner should null the property that holds the instance after calling `destroy()`, and destroyed objects should null their owned references during cleanup.
+### Do not use destroyed/destroying guard flags
+This covers **any** flag of this kind: `this._destroyed`, `this._destroying`,
+`this._isDestroyed`, `this._isCleanedUp`, `this._disposed`, and so on. Each one is a band-aid. If
+a callback can run after (or during) destroy, something was left connected. A flag hides that
+bug instead of fixing it, and every new method then needs another `if (this._destroyed) return;`
+check that is easy to forget.
+
+Make it impossible for the callback to run instead:
+
+- **Disconnect first, tear down second.** In `destroy()`, disconnect every signal and remove
+  every GLib source *before* destroying or removing any actor. Nothing can then call back into a
+  half-destroyed object.
+- **Prefer `connectObject(..., owner)`.** Handlers owned by an actor are dropped automatically when
+  that actor is destroyed, including when it is torn down from C.
+- **Cancel async work.** An `await` continuation is not a signal and cannot be disconnected. Bump a
+  request ID in cleanup (the continuation then returns at its `requestId !==` check) or pass a
+  `Gio.Cancellable` and cancel it.
+- **Owner nulls the reference.** After `destroy()`, the owner sets its property to `null`, and the
+  destroyed object nulls the references it owns.
 
 ```javascript
-// ❌ Bad
-if (this._isDestroyed)
+// ❌ Bad - any of these names
+if (this._destroyed)
     return;
-this._isDestroyed = true;
+this._destroyed = true;
+
+// ❌ Bad - guarding every handler because teardown order is wrong
+_onSettingsChanged() {
+    if (this._destroying)
+        return;
+    this._update();
+}
+
+// ✅ Good - async continuation cancelled by a request ID
+async _search(text) {
+    const requestId = ++this._searchRequestId;
+    const results = await provider.getInitialResultSet(text, null);
+    if (requestId !== this._searchRequestId)
+        return; // superseded by a newer search, or by destroy()
+    this._showResults(results);
+}
+
+destroy() {
+    this._searchRequestId++;
+    this._settings.disconnectObject(this); // disconnect first...
+    this._box.destroy();                   // ...tear down second
+    this._box = null;
+}
 
 // ✅ Good - owner side
 if (this._panel) {
@@ -266,6 +306,9 @@ processData(data);
 ```
 
 ### Required check before submission
+
+`git grep -nE 'this\._(is)?(destroyed|destroying|disposed|cleanedUp)\b' -- '*.js'` must return
+nothing (see [Do not use destroyed/destroying guard flags](#do-not-use-destroyeddestroying-guard-flags)).
 
 Review every `try`/`catch` in the files included in the submission archive. For each
 catch, identify the operation that can throw during normal execution and the

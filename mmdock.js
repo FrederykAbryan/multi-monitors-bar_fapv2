@@ -51,7 +51,6 @@ export class MultiMonitorsDock {
         this._overviewShowingId = null;
         this._overviewHidingId = null;
         this._ignoreShowAppsButtonToggle = false;
-        this._destroying = false;
 
         // Native GNOME Shell Dash widget (same class used by the overview)
         this._dash = new DashModule.Dash();
@@ -127,7 +126,7 @@ export class MultiMonitorsDock {
     }
 
     _canReveal() {
-        return !this._destroying && !this._inOverview &&
+        return !this._inOverview &&
             !Main.layoutManager._startingUp &&
             !Main.overview.visible && !Main.overview.animationInProgress &&
             !Main.sessionMode.isLocked && Main.sessionMode.currentMode === 'user' &&
@@ -219,7 +218,7 @@ export class MultiMonitorsDock {
     }
 
     _dismissDock() {
-        if (this._destroying || this._inOverview || !this._bin.visible || this._hiding)
+        if (this._inOverview || !this._bin.visible || this._hiding)
             return;
         this._hideDesktopDock(true);
         // Hiding uncovers the edge beneath the pointer. Do not interpret that
@@ -269,7 +268,7 @@ export class MultiMonitorsDock {
     }
 
     _queuePositionUpdate() {
-        if (this._destroying || this._positionIdleId)
+        if (this._positionIdleId)
             return;
         // Size notifications can fire during allocation; defer layout changes.
         this._positionIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -288,7 +287,7 @@ export class MultiMonitorsDock {
 
     _connectShowAppsButton() {
         const button = this._getLocalShowAppsButton();
-        if (this._destroying || !button || this._showAppsButtonId)
+        if (!button || this._showAppsButtonId)
             return;
 
         this._showAppsButtonId = button.connect('notify::checked',
@@ -315,9 +314,6 @@ export class MultiMonitorsDock {
     }
 
     _connectOverviewStateAdjustment() {
-        if (this._destroying)
-            return;
-
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment || adjustment === this._stateAdjustment)
             return;
@@ -333,7 +329,7 @@ export class MultiMonitorsDock {
 
     _setShowAppsChecked(checked) {
         const button = this._getLocalShowAppsButton();
-        if (this._destroying || !button)
+        if (!button)
             return;
 
         try {
@@ -348,9 +344,6 @@ export class MultiMonitorsDock {
     }
 
     _syncShowAppsButton() {
-        if (this._destroying)
-            return;
-
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment)
             return;
@@ -360,7 +353,7 @@ export class MultiMonitorsDock {
     }
 
     _onShowAppsButtonToggled() {
-        if (this._destroying || this._ignoreShowAppsButtonToggle)
+        if (this._ignoreShowAppsButtonToggle)
             return;
 
         const button = this._getLocalShowAppsButton();
@@ -408,7 +401,7 @@ export class MultiMonitorsDock {
     }
 
     _updatePosition() {
-        if (this._destroying || !this._bin || !this._dash)
+        if (!this._bin || !this._dash)
             return;
 
         // Use the Dash's natural height; fall back to 60 px
@@ -442,26 +435,15 @@ export class MultiMonitorsDock {
     }
 
     destroy() {
-        this._destroying = true;
-        this._hideDesktopDock();
-        // `_hideDesktopDock(true)` keeps this source alive while the hide
-        // animation finishes, so destruction must remove it explicitly.
-        if (this._rearmTimeoutId) {
-            GLib.source_remove(this._rearmTimeoutId);
-            this._rearmTimeoutId = 0;
-        }
-        if (this._positionIdleId) {
-            GLib.source_remove(this._positionIdleId);
-            this._positionIdleId = 0;
-        }
+        // Disconnect every handler before touching any actor, so nothing can
+        // call back into a half-destroyed dock. No "destroying" flag needed.
         this._settings.disconnect(this._hoverSettingId);
         Main.sessionMode.disconnect(this._sessionUpdatedId);
         global.display.disconnect(this._fullscreenChangedId);
         global.display.disconnect(this._focusWindowId);
         Main.overview.disconnect(this._overviewHiddenId);
-        Main.layoutManager.removeChrome(this._edge);
-        this._edge.destroy();
-        this._edge = null;
+        // 'startup-complete' and the app-item 'clicked' handlers are owned by
+        // this._bin via connectObject and drop when it is destroyed below.
 
         if (this._overviewShowingId) {
             Main.overview.disconnect(this._overviewShowingId);
@@ -489,8 +471,26 @@ export class MultiMonitorsDock {
             this._dash.disconnect(this._heightChangedId);
             this._heightChangedId = null;
         }
-        if (this._dash && this._widthChangedId)
+        if (this._dash && this._widthChangedId) {
             this._dash.disconnect(this._widthChangedId);
+            this._widthChangedId = null;
+        }
+
+        this._hideDesktopDock();
+        // `_hideDesktopDock(true)` keeps this source alive while the hide
+        // animation finishes, so destruction must remove it explicitly.
+        if (this._rearmTimeoutId) {
+            GLib.source_remove(this._rearmTimeoutId);
+            this._rearmTimeoutId = 0;
+        }
+        if (this._positionIdleId) {
+            GLib.source_remove(this._positionIdleId);
+            this._positionIdleId = 0;
+        }
+
+        Main.layoutManager.removeChrome(this._edge);
+        this._edge.destroy();
+        this._edge = null;
 
         if (this._inOverview)
             Main.layoutManager.overviewGroup.remove_child(this._bin);

@@ -471,7 +471,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             this._spacer_height = 0;
             this._fixGeometry = 0;
             this._visible = false;
-            this._destroying = false;
             this._pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
             this._overviewStateAdjustment = null;
             this._overviewStateChangedId = 0;
@@ -523,9 +522,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Connect search entry to filter app grid locally
             this._searchEntry.clutter_text.connect('text-changed', actor => {
-                if (this._destroying)
-                    return;
-
                 const text = this._getSearchTextFromActor(actor);
                 // Filter the local app grid based on search text or app-grid state.
                 this._filterAppGrid(text);
@@ -533,9 +529,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Handle Enter key to activate focused app
             this._searchEntry.clutter_text.connect('activate', () => {
-                if (this._destroying)
-                    return;
-
                 if (this._focusedApp && this._focusedApp._appInfo) {
                     this._launchApp(this._focusedApp._appInfo);
                 }
@@ -543,9 +536,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Handle arrow keys to navigate between apps
             this._searchEntry.clutter_text.connect('key-press-event', (actor, event) => {
-                if (this._destroying)
-                    return Clutter.EVENT_PROPAGATE;
-
                 const symbol = event.get_key_symbol();
                 if (symbol === Clutter.KEY_Left || symbol === Clutter.KEY_Right ||
                     symbol === Clutter.KEY_Up || symbol === Clutter.KEY_Down) {
@@ -680,28 +670,28 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
             if (searchText !== null && searchText !== undefined)
                 return searchText;
 
-            if (this._destroying || !this._searchEntry)
+            if (!this._searchEntry)
                 return '';
 
             return this._searchEntry.get_text() ?? '';
         }
 
         _setSearchText(text) {
-            if (this._destroying || !this._searchEntry)
+            if (!this._searchEntry)
                 return;
 
             this._searchEntry.set_text(text);
         }
 
         _focusSearchEntry() {
-            if (this._destroying || !this._searchEntry)
+            if (!this._searchEntry)
                 return;
 
             this._searchEntry.grab_key_focus();
         }
 
         _setActorVisible(actor, visible) {
-            if (this._destroying || !actor)
+            if (!actor)
                 return false;
 
             actor.visible = visible;
@@ -717,9 +707,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _onInstalledAppsChanged() {
-            if (this._destroying)
-                return;
-
             this._populateAppGrid();
             // Reapply the current query, including keyboard focus, while open.
             return this._syncAppGridState();
@@ -752,9 +739,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _connectOverviewStateWatcher() {
-            if (this._destroying)
-                return;
-
             let adjustment = null;
             const controls = Main.overview?._overview?._controls ?? Main.overview?._controls;
             adjustment = controls?._stateAdjustment;
@@ -861,9 +845,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _setFocusedApp(app) {
-            if (this._destroying)
-                return;
-
             // Base style without highlight (use consistent sizing)
             const baseStyle = 'padding: 16px; margin: 8px; border-radius: 16px; min-width: 120px;';
             // Focused style uses box-shadow with white/gray color at 75% opacity
@@ -886,7 +867,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _navigateApps(keySymbol) {
-            if (this._destroying || !this._appGrid) return;
+            if (!this._appGrid) return;
 
             // Get visible apps
             let children = [];
@@ -1242,15 +1223,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         async _syncAppGridState(searchText = null) {
-            if (this._destroying)
-                return;
-
             const requestId = this._appSearchRequestId = (this._appSearchRequestId ?? 0) + 1;
             const normalizedSearch = this._getSearchText(searchText).toLowerCase().trim();
             const hasText = this._visible && normalizedSearch.length > 0;
             const showApps = this._visible && this._isAppGridState();
-            if (this._destroying)
-                return;
             const useNativeAppDisplay = !!this._appDisplay;
 
             if (!this._appGrid) return;
@@ -1260,14 +1236,10 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
                 if (this._appGridScrollView) {
                     this._setActorVisible(this._appGridScrollView, false);
-                    if (this._destroying)
-                        return;
                 }
 
                 if (this._appDisplayVisible && this._appDisplay) {
                     this._setActorVisible(this._appDisplay, false);
-                    if (this._destroying)
-                        return;
                 }
                 this._appDisplayVisible = false;
 
@@ -1275,8 +1247,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 // its geometry. Restore both when returning to the window picker.
                 if (this._visible) {
                     this._tryFindWorkspacesViews();
-                    if (this._destroying)
-                        return;
                 }
                 this._resetWorkspacesViewTransform();
                 this._lastWorkspaceTransformKey = null;
@@ -1287,8 +1257,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
                 if (this._thumbnailsBox) {
                     this._setActorVisible(this._thumbnailsBox, true);
-                    if (this._destroying)
-                        return;
                 }
 
                 if (this._searchController)
@@ -1317,7 +1285,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     console.debug('[MultiMonitors] App search failed: ' + e);
                 }
                 // Typing, closing, installing apps, or teardown can supersede a search.
-                if (this._destroying || requestId !== this._appSearchRequestId)
+                if (requestId !== this._appSearchRequestId)
                     return;
 
                 const buttons = new Map(children.filter(child => child._appInfo)
@@ -1367,26 +1335,16 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
                 // Always re-discover workspacesViews to ensure we have a valid reference
                 this._tryFindWorkspacesViews();
-                if (this._destroying)
-                    return;
 
                 this._setActorVisible(this._appGridScrollView, hasText || (showApps && !useNativeAppDisplay));
-                if (this._destroying)
-                    return;
 
                 if (this._appDisplay) {
                     const nextAppDisplayVisible = showApps && !hasText;
                     this._configureNativeAppDisplayLayout();
-                    if (this._destroying)
-                        return;
                     if (this._appDisplay) {
                         this._syncNativePageIndicatorsPosition();
-                        if (this._destroying)
-                            return;
                         this._syncNativeAppDisplayInset();
                         this._setActorVisible(this._appDisplay, nextAppDisplayVisible);
-                        if (this._destroying)
-                            return;
                         if (nextAppDisplayVisible && !this._appDisplayVisible)
                             this._refreshNativeAppDisplay();
                         this._appDisplayVisible = nextAppDisplayVisible && !!this._appDisplay;
@@ -1414,8 +1372,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 // Also hide our own thumbnails box when searching or showing apps.
                 if (this._thumbnailsBox) {
                     this._setActorVisible(this._thumbnailsBox, !(hasText || showApps));
-                    if (this._destroying)
-                        return;
                 }
 
                 // Hide the searchController placeholder when using our own grid.
@@ -1478,9 +1434,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         show() {
-            if (this._destroying)
-                return;
-
             // Called when overview is shown
             this._visible = true;
             this._connectOverviewStateWatcher();
@@ -1511,9 +1464,6 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         hide() {
-            if (this._destroying)
-                return;
-
             // Called when overview is closed - clear the search input
             this._visible = false;
             this._setSearchText('');
@@ -1531,7 +1481,9 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
         }
 
         _disconnectAll() {
-            this._destroying = true;
+            // Supersede any in-flight async app search so its continuation
+            // returns at the requestId check instead of touching torn-down actors.
+            this._appSearchRequestId = (this._appSearchRequestId ?? 0) + 1;
 
             // Remove all pending timeouts per EGO guidelines
             for (let timeoutId of this._pendingTimeouts) {
