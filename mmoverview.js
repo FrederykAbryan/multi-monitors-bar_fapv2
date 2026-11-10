@@ -313,7 +313,7 @@ class MultiMonitorsThumbnailsBoxClass extends St.Widget {
         if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
             this._updatePorthole();
             if (!this._porthole || this._porthole.width <= 0 || this._porthole.height <= 0) {
-                console.debug('[Multi Monitors Add-On] Invalid porthole dimensions, skipping thumbnail creation');
+                console.debug('[MultiMonitors] Invalid porthole dimensions, skipping thumbnail creation');
                 return;
             }
         }

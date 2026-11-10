@@ -1752,7 +1752,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 if (sourceIcon.is_mapped() || !sourceIcon._indicator)
                     return;
                 Promise.resolve(sourceIcon._updateIcon()).catch(e =>
-                    console.debug(`multi-monitors-bar: AppIndicator refresh failed: ${e}`));
+                    console.debug(`[MultiMonitors] AppIndicator refresh failed: ${e}`));
             };
             indicator.connectObject(
                 'icon', refresh,
@@ -1771,7 +1771,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     if (!node.gicon && !node.is_mapped() && node._indicator &&
                         typeof node._updateIcon === 'function') {
                         Promise.resolve(node._updateIcon()).catch(e =>
-                            console.debug(`multi-monitors-bar: AppIndicator load failed: ${e}`));
+                            console.debug(`[MultiMonitors] AppIndicator load failed: ${e}`));
                     }
                     return;
                 }
