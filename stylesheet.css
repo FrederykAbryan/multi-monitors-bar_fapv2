@@ -29,9 +29,23 @@
 }
 
 .multimonitor-panel-vertical .clock {
-    font-size: 18px;
+    font-size: 12px;
     font-weight: bold;
     text-align: center;
+}
+
+/* The theme pads the clock pill by ~12px a side (under #panel, so it needs
+   an id to be overridden). On a side bar that padding made the clock wider
+   than the column, and the whole thing was shrunk to fit. */
+#panel.multimonitor-panel-vertical .panel-button.clock-display,
+#panel.multimonitor-panel-vertical .panel-button.clock-display .clock,
+#panel.multimonitor-panel-vertical .panel-button .clock {
+    -natural-hpadding: 0;
+    -minimum-hpadding: 0;
+    padding-left: 0;
+    padding-right: 0;
+    margin-left: 0;
+    margin-right: 0;
 }
 
 /* Keep workspace names and previews legible in the narrow side column.

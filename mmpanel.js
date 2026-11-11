@@ -50,6 +50,9 @@ import { setBoxVertical } from './common.js';
 
 MMCalendar.setMainRef(Main);
 
+// Line height of the stacked clock on side bars (1 = the font's own).
+const CLOCK_LINE_HEIGHT = 1.6;
+
 // St.BoxLayout replaced `vertical` with `orientation` in GNOME 48.
 function isBoxVertical(box) {
     return 'orientation' in box ? box.orientation === Clutter.Orientation.VERTICAL : box.vertical;
@@ -864,6 +867,9 @@ const MultiMonitorsPanel = GObject.registerClass(
                 this._clockVerticalText = null;
                 clutterText?.connectObject(
                     'notify::text', () => this._formatClock(),
+                    // St swaps the attribute list whenever it restyles the
+                    // label (hover, theme, scale), dropping the line height.
+                    'notify::attributes', () => this._syncClockLineHeight(),
                     'destroy', () => {
                         this._clockText = null;
                     },
@@ -884,6 +890,9 @@ const MultiMonitorsPanel = GObject.registerClass(
                     this);
             }
             clutterText.line_alignment = Pango.Alignment.CENTER;
+            // Unwrapped text sits at the left of a label wider than it is,
+            // so on a side bar shrink the label to its text and center that.
+            label.x_align = this._vertical ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.FILL;
             this._formatClock();
         }
 
@@ -896,7 +905,7 @@ const MultiMonitorsPanel = GObject.registerClass(
             if (!clutterText || !Pango.attr_line_height_new)
                 return;
             // GJS can't read an attribute's type, so match ours by value.
-            const lineHeight = Pango.attr_line_height_new(1.35);
+            const lineHeight = Pango.attr_line_height_new(CLOCK_LINE_HEIGHT);
             const attrs = clutterText.attributes?.copy() ?? new Pango.AttrList();
             const removed = attrs.filter(attr => attr.equal(lineHeight));
             if (!!removed === !!this._vertical)

@@ -2,8 +2,9 @@ export const PANEL_LAYOUT_KEY = 'monitor-panel-layout';
 export const PANEL_COLOR_KEY = 'panel-color';
 export const PANEL_POSITIONS = ['top', 'bottom', 'left', 'right'];
 
-// Side bars hold the clock, so they need more room than the bar is tall.
-export const VERTICAL_THICKNESS_SCALE = 2;
+// Side bars stack the clock and mirrored horizontal widgets, so they need
+// a bit more room than the bar is tall to keep them legible.
+export const VERTICAL_THICKNESS_SCALE = 1.5;
 
 export function readPanelLayout(settings) {
     try {
