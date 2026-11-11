@@ -35,6 +35,10 @@ const PLACEMENT_FOLLOWUP_US = 3 * GLib.USEC_PER_SEC;
 // restoring its saved position.
 const PLACEMENT_SETTLE_MS = 1500;
 const PLACEMENT_HOLD_CAP_MS = 10000;
+// Single-instance apps (Podman Desktop, most Electron apps) answer a launch
+// by re-showing their existing window instead of creating one. Move such a
+// window here if it is focused or asks for attention within this period.
+const EXISTING_WINDOW_TIMEOUT_US = 5 * GLib.USEC_PER_SEC;
 
 // Live instances, so the most recent dock launch of an app wins over an
 // older pending launch of the same app from another dock.
@@ -62,6 +66,10 @@ export class DashMonitorIsolation {
         this._windows = new Set();
         // app -> monotonic deadline (µs) for moving its next window here.
         this._pendingPlacements = new Map();
+        // app -> deadline (µs) for moving an already existing window here.
+        this._pendingExisting = new Map();
+        // Windows already held on this monitor, so they are claimed once.
+        this._claimed = new WeakSet();
         this._refreshLaterId = 0;
         this._settleTimeoutId = 0;
         // Cancel functions for per-window work that outlives the call that
@@ -122,6 +130,14 @@ export class DashMonitorIsolation {
             },
             'window-entered-monitor', () => this._queueRefresh(),
             'window-left-monitor', () => this._queueRefresh(),
+            'notify::focus-window', () =>
+                this._claimExisting(global.display.focus_window, false),
+            // On Wayland a re-shown window often only demands attention
+            // ("App is ready") instead of taking focus.
+            'window-demands-attention', (_display, window) =>
+                this._claimExisting(window, true),
+            'window-marked-urgent', (_display, window) =>
+                this._claimExisting(window, true),
             this);
         global.workspace_manager.connectObject('active-workspace-changed',
             () => this._queueRefresh(), this);
@@ -158,6 +174,7 @@ export class DashMonitorIsolation {
             window.disconnectObject(this);
         this._windows.clear();
         this._pendingPlacements.clear();
+        this._pendingExisting.clear();
         this._dash._appSystem = this._appSystem;
         for (const item of this._dash._box.get_children())
             this._unpatchItem(item);
@@ -182,28 +199,33 @@ export class DashMonitorIsolation {
     // their last geometry) ignore it. After launching from this dock, move
     // the app's next normal window onto the dock's monitor.
     _expectWindow(app) {
-        for (const other of instances)
+        for (const other of instances) {
             other._pendingPlacements.delete(app);
+            other._pendingExisting.delete(app);
+        }
         if (!this._isolateMonitors || this._getMonitorIndex() < 0)
             return;
-        this._pendingPlacements.set(app,
-            GLib.get_monotonic_time() + PLACEMENT_TIMEOUT_US);
+        const now = GLib.get_monotonic_time();
+        this._pendingPlacements.set(app, now + PLACEMENT_TIMEOUT_US);
+        this._pendingExisting.set(app, now + EXISTING_WINDOW_TIMEOUT_US);
     }
 
-    _pendingAppFor(window) {
+    _pendingAppFor(window, pending = this._pendingPlacements) {
         const now = GLib.get_monotonic_time();
-        for (const [app, deadline] of this._pendingPlacements) {
+        for (const [app, deadline] of pending) {
             if (now > deadline)
-                this._pendingPlacements.delete(app);
+                pending.delete(app);
         }
+        if (pending.size === 0)
+            return null;
         const tracked = Shell.WindowTracker.get_default().get_window_app(window);
-        if (this._pendingPlacements.has(tracked))
+        if (pending.has(tracked))
             return tracked;
         // The tracker can miss (late WM_CLASS / app_id); compare identifiers.
         const ids = [window.get_wm_class(), window.get_wm_class_instance(),
             window.get_gtk_application_id(), window.get_sandboxed_app_id()]
             .filter(Boolean).map(s => s.toLowerCase());
-        for (const app of this._pendingPlacements.keys()) {
+        for (const app of pending.keys()) {
             const names = [app.get_id().replace(/\.desktop$/, ''),
                 app.get_app_info()?.get_startup_wm_class()]
                 .filter(Boolean).map(s => s.toLowerCase());
@@ -234,13 +256,35 @@ export class DashMonitorIsolation {
     }
 
     _claimWindow(app, window) {
+        if (this._claimed.has(window))
+            return;
+        this._claimed.add(window);
+        // The launch was answered: existing windows are left alone now.
+        this._pendingExisting.delete(app);
         // Keep the launch armed briefly for the real window after a
         // splash/bootstrap window (Electron), then stop so windows the user
         // opens later are left alone.
-        this._pendingPlacements.set(app, Math.min(
-            this._pendingPlacements.get(app),
-            GLib.get_monotonic_time() + PLACEMENT_FOLLOWUP_US));
+        const deadline = this._pendingPlacements.get(app);
+        if (deadline !== undefined) {
+            this._pendingPlacements.set(app, Math.min(deadline,
+                GLib.get_monotonic_time() + PLACEMENT_FOLLOWUP_US));
+        }
         this._holdOnMonitor(window);
+    }
+
+    // A single-instance app answered the dock launch by focusing (or asking
+    // attention for) a window it already had, possibly on another monitor.
+    _claimExisting(window, activate) {
+        if (!window || this._pendingExisting.size === 0 ||
+            window.skip_taskbar ||
+            window.get_window_type() !== Meta.WindowType.NORMAL)
+            return;
+        const app = this._pendingAppFor(window, this._pendingExisting);
+        if (!app)
+            return;
+        this._claimWindow(app, window);
+        if (activate)
+            Main.activateWindow(window);
     }
 
     // Calls `callback` once when the window's first frame is drawn (or it is
@@ -281,20 +325,26 @@ export class DashMonitorIsolation {
     }
 
     _holdOnMonitor(window) {
+        const laters = global.compositor.get_laters();
+        const capDeadline = GLib.get_monotonic_time() + PLACEMENT_HOLD_CAP_MS * 1000;
         let moving = false;
+        // Returns whether the window had to be moved back.
         const moveHere = () => {
             const index = this._getMonitorIndex();
             if (moving || index < 0 || window.get_monitor() === index)
-                return;
+                return false;
             moving = true;
             window.move_to_monitor(index);
             moving = false;
+            return true;
         };
         moveHere();
         // Mutter's initial placement and apps restoring saved bounds
         // (Electron on XWayland) move the window afterwards; re-apply until a
         // short settle period after the first frame (or a hard cap).
         let settleId = 0;
+        let recheckId = 0;
+        let drawn = false;
         // Owns this hold's window and display handlers.
         const owner = {};
         // Everything that could call back is removed here, so stop() needs no
@@ -304,13 +354,16 @@ export class DashMonitorIsolation {
             cancelFirstFrame();
             window.disconnectObject(owner);
             global.display.disconnectObject(owner);
+            if (recheckId) {
+                laters.remove(recheckId);
+                recheckId = 0;
+            }
             if (settleId) {
                 GLib.source_remove(settleId);
                 settleId = 0;
             }
         };
-        const cancelFirstFrame = this._onFirstFrame(window, () => {
-            moveHere();
+        const armSettle = () => {
             if (settleId)
                 GLib.source_remove(settleId);
             settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACEMENT_SETTLE_MS, () => {
@@ -318,17 +371,46 @@ export class DashMonitorIsolation {
                 stop();
                 return GLib.SOURCE_REMOVE;
             });
+        };
+        // MetaWindow emits position-changed BEFORE it updates the window's
+        // monitor, so get_monitor() is stale inside that handler (and
+        // move_to_monitor() would be a no-op). Check again once the move has
+        // been fully applied.
+        const queueRecheck = () => {
+            if (recheckId)
+                return;
+            recheckId = laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
+                recheckId = 0;
+                // The app is still repositioning itself (e.g. restoring its
+                // saved bounds late): keep holding a little longer.
+                if (moveHere() && drawn && GLib.get_monotonic_time() < capDeadline)
+                    armSettle();
+                return GLib.SOURCE_REMOVE;
+            });
+        };
+        const cancelFirstFrame = this._onFirstFrame(window, () => {
+            drawn = true;
+            moveHere();
+            armSettle();
         });
         this._holds.add(stop);
         window.connectObject(
-            'position-changed', () => moveHere(),
+            'position-changed', () => {
+                moveHere();
+                queueRecheck();
+            },
             'unmanaged', () => stop(),
             owner);
-        // Never fight the user dragging the window elsewhere.
-        global.display.connectObject('grab-op-begin', (_display, grabbed) => {
-            if (grabbed === window)
-                stop();
-        }, owner);
+        global.display.connectObject(
+            'window-entered-monitor', (_display, _monitor, entered) => {
+                if (entered === window)
+                    queueRecheck();
+            },
+            // Never fight the user dragging the window elsewhere.
+            'grab-op-begin', (_display, grabbed) => {
+                if (grabbed === window)
+                    stop();
+            }, owner);
         // Hard cap in case no first frame ever arrives (replaced by the
         // shorter settle timer once it does).
         if (!settleId) {

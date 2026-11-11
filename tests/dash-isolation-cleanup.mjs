@@ -189,4 +189,22 @@ function assertNothingPending(what, {window, actor}) {
     assert.equal(fired, false, 'cancelled wait never calls back');
 }
 
+// 6. Mutter emits position-changed before it updates the window's monitor:
+//    an app moving itself away is still brought back, and destroy() leaves
+//    nothing pending afterwards.
+{
+    const t = setup();
+    t.isolation._holdOnMonitor(t.window);
+    laters.runAll();
+    t.actor.emit('first-frame');
+    t.window.emit('position-changed'); // monitor still reads 1 (stale)
+    t.window.monitor = 0;              // ...and only then becomes 0
+    assert.equal(laters.pending.size, 1, 'recheck queued after a move');
+    laters.runAll();
+    assert.equal(t.window.monitor, 1, 'window brought back after a stale position-changed');
+    t.window.emit('position-changed');
+    t.isolation.destroy();
+    assertNothingPending('recheck pending', t);
+}
+
 console.log('DashMonitorIsolation destroy removes every timeout, later and handler');
