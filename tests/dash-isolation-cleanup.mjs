@@ -82,10 +82,10 @@ const context = vm.createContext({
     Clutter: {},
     Shell: {},
     Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}},
-    Main: {},
-    DASH_ANIMATION_TIME: 200,
+    Main: {layoutManager: new Signals()},
     global: {
         display,
+        workspace_manager: new Signals(),
         compositor: {get_laters: () => ({
             add: (_type, callback) => laters.add(callback),
             remove: id => laters.remove(id),
@@ -102,6 +102,8 @@ function setup() {
     settings.get_boolean = () => false;
     const dash = new Signals();
     dash._appSystem = {};
+    dash._box = new Signals();
+    dash._box.get_children = () => [];
     dash._queueRedisplay = () => {};
     let monitorQueries = 0;
     const isolation = new DashMonitorIsolation(dash, settings, () => {
