@@ -21,7 +21,10 @@ import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import {DASH_ANIMATION_TIME} from 'resource:///org/gnome/shell/ui/dash.js';
+
+// Mirrors DASH_ANIMATION_TIME in the shell's ui/dash.js, which only exports
+// it from GNOME Shell 50 onward; importing it breaks loading on 45-49.
+const DASH_ANIMATION_TIME = 200;
 
 export const ISOLATE_DOCK_MONITORS_ID = 'isolate-dock-monitors';
 export const ISOLATE_DOCK_WORKSPACES_ID = 'isolate-dock-workspaces';
