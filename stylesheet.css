@@ -152,6 +152,20 @@
     border-radius: 9px 0 0 9px;
 }
 
+/* Translucent glass tint lets the blurred backdrop show through. */
+#multiMonitorsDockBin #dash.multimonitor-dock .dash-background {
+    background-color: rgba(32, 34, 39, 0.42) !important;
+    background-image: none !important;
+}
+
+#multiMonitorsDockBin #dash.multimonitor-dock.mm-dock-light {
+    color: #242424;
+}
+
+#multiMonitorsDockBin #dash.multimonitor-dock.mm-dock-light .dash-background {
+    background-color: rgba(245, 245, 247, 0.46) !important;
+}
+
 /* Keep dock feedback on the rounded icon container. GNOME 50 uses
    overview-tile in place of app-well-app; theme focus shadows may be important.
    Rules are scoped under the dock bin ID: in overview the dock is reparented

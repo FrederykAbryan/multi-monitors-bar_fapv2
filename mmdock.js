@@ -18,7 +18,9 @@ along with this program; if not, visit https://www.gnu.org/licenses/.
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as DashModule from 'resource:///org/gnome/shell/ui/dash.js';
@@ -58,6 +60,16 @@ export class MultiMonitorsDock {
         // Native GNOME Shell Dash widget (same class used by the overview)
         this._dash = new DashModule.Dash();
         this._dash.add_style_class_name('multimonitor-dock');
+        // Blur only the backdrop; app icons retain their sharp edges.
+        const blur = new Shell.BlurEffect({
+            mode: Shell.BlurMode.BACKGROUND,
+            brightness: 0.8,
+        });
+        if ('radius' in blur)
+            blur.radius = 60;
+        else
+            blur.sigma = 30;
+        this._dash._background.add_effect_with_name('mm-dock-blur', blur);
         this._connectShowAppsButton();
         this._isolation = new DashIsolation.DashMonitorIsolation(this._dash,
             settings, () => this._getMonitorIndex());
@@ -75,6 +87,17 @@ export class MultiMonitorsDock {
         this._slide = new St.Bin();
         this._slide.set_child(this._dash);
         this._bin.set_child(this._slide);
+        this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        const syncTheme = () => {
+            const dark = this._interfaceSettings.get_string('color-scheme') === 'prefer-dark';
+            if (dark)
+                this._dash.remove_style_class_name('mm-dock-light');
+            else
+                this._dash.add_style_class_name('mm-dock-light');
+            blur.brightness = dark ? 0.8 : 1.0;
+        };
+        this._interfaceSettings.connectObject('changed::color-scheme', syncTheme, this._bin);
+        syncTheme();
         this._dash._box.connectObject('child-added', (_box, item) =>
             this._connectAppItem(item), this._bin);
         for (const item of this._dash._box.get_children())

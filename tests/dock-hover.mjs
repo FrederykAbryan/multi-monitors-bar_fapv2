@@ -66,11 +66,14 @@ class Actor extends Signals {
 }
 
 class Dash extends Actor {
+    _background = {add_effect_with_name(name, effect) { this.effect = effect; }};
     populated = false;
     _redisplay() { this.populated = true; }
     showAppsButton = new Actor({checked: false});
     _box = new Actor();
-    add_style_class_name() {}
+    styleClasses = new Set();
+    add_style_class_name(name) { this.styleClasses.add(name); }
+    remove_style_class_name(name) { this.styleClasses.delete(name); }
     get_preferred_height() { return [80, 80]; }
     get_preferred_width() { return [100, this.populated ? 600 : 1]; }
     setMaxSize() {}
@@ -156,6 +159,14 @@ const display = new Signals();
 const liveIsolations = new Set();
 const source = readFileSync(new URL('../mmdock.js', import.meta.url), 'utf8');
 const context = vm.createContext({
+    Gio: {Settings: class extends Signals {
+        scheme = 'default';
+        get_string() { return this.scheme; }
+    }},
+    Shell: {BlurMode: {BACKGROUND: 1}, BlurEffect: class {
+        radius = 0;
+        constructor(properties) { Object.assign(this, properties); }
+    }},
     St: {Bin: Actor, Widget: Actor}, GLib, Main,
     Clutter: {ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
         AnimationMode: {EASE_OUT_CUBIC: 1, EASE_IN_OUT_CUBIC: 2}},
@@ -177,6 +188,15 @@ const Dock = vm.runInContext(source.replace(/^import .*;\n/gm, '')
     .replace('export class MultiMonitorsDock', 'class MultiMonitorsDock') +
     '\nMultiMonitorsDock;', context);
 const dock = new Dock(monitor, settings);
+assert.ok(dock._dash.styleClasses.has('mm-dock-light'));
+dock._interfaceSettings.scheme = 'prefer-dark';
+dock._interfaceSettings.emit('changed::color-scheme');
+assert.ok(!dock._dash.styleClasses.has('mm-dock-light'));
+assert.equal(dock._dash._background.effect.brightness, 0.8);
+dock._interfaceSettings.scheme = 'prefer-light';
+dock._interfaceSettings.emit('changed::color-scheme');
+assert.ok(dock._dash.styleClasses.has('mm-dock-light'));
+assert.equal(dock._dash._background.effect.brightness, 1);
 assert.equal(dock._edge.width, 600, 'First hover target spans populated icons before deferred work');
 advance(0);
 assert.equal(dock._bin.visible, false);
@@ -322,6 +342,7 @@ assert.equal(dock._edge.y, -362);
 reveal();
 dock._dash.emit('notify::width');
 dock.destroy();
+assert.equal(dock._interfaceSettings.handlers.size, 0, 'Theme listener is released');
 assert.equal(sources.size, 0, 'Destroy cancels hover and layout sources');
 assert.equal(tracked.size, 0);
 assert.equal(settings.handlers.size, 0);
