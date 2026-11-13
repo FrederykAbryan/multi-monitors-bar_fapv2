@@ -39,6 +39,9 @@ import * as MMPanel from './mmpanel.js';
 import * as ScreenshotPatch from './screenshotPatch.js';
 import { MonitorIndicatorsController } from './monitorIndicatorsDialog.js';
 import { PANEL_LAYOUT_KEY, panelColor } from './monitorPanelPolicy.js';
+import {
+	clearMonitorConnectors, migrateMonitorSettings, refreshMonitorConnectors,
+} from './monitorIdentity.js';
 
 const MUTTER_SCHEMA = 'org.gnome.mutter';
 const WORKSPACES_ONLY_ON_PRIMARY_ID = 'workspaces-only-on-primary';
@@ -367,7 +370,22 @@ export default class MultiMonitorsExtension extends Extension {
 		}
 	}
 
+	// Per-monitor settings are keyed by connector. Move the ones older
+	// versions saved by index, now and for monitors plugged in later.
+	_syncMonitorKeys() {
+		refreshMonitorConnectors(() => {
+			// Older Mutter only learns the connector names here, which
+			// changes the keys of the bars that already exist.
+			migrateMonitorSettings(this._settings);
+			for (const panel of mmPanel)
+				panel._applyPanelLayout();
+			this._monitorIndicators?.sync();
+		});
+		migrateMonitorSettings(this._settings);
+	}
+
 	_relayout() {
+		this._syncMonitorKeys();
 		const newCount = Main.layoutManager.monitors.length;
 		const newPrimary = Main.layoutManager.primaryIndex;
 		const primaryMonitor = Main.layoutManager.monitors[newPrimary];
@@ -407,6 +425,7 @@ export default class MultiMonitorsExtension extends Extension {
 
 		this._settings = this.getSettings();
 		this._mu_settings = new Gio.Settings({ schema: MUTTER_SCHEMA });
+		this._syncMonitorKeys();
 		this._applyMainPanelClipping();
 		this._applyMainPanelLayout();
 		this._mainDateTimePositionId = this._settings.connect('changed::' + DATE_TIME_POSITION_ID,
@@ -497,6 +516,7 @@ export default class MultiMonitorsExtension extends Extension {
 		this._overviewDashIsolation?.destroy();
 		this._overviewDashIsolation = null;
 		this._monitorIndicators?.destroy();
+		clearMonitorConnectors();
 		this._monitorIndicators = null;
 		this._destroyPrimaryDock();
 		// Unpatch screenshot UI

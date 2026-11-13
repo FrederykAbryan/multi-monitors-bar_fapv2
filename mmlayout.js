@@ -24,7 +24,7 @@ import * as Layout from 'resource:///org/gnome/shell/ui/layout.js';
 import * as Common from './common.js';
 import * as MMPanel from './mmpanel.js';
 import * as MMDock from './mmdock.js';
-import { monitorKey } from './monitorIndicatorPolicy.js';
+import { currentMonitorKey } from './monitorIdentity.js';
 import {
 	VERTICAL_THICKNESS_SCALE, isVerticalPosition, panelGeometry, panelPosition,
 } from './monitorPanelPolicy.js';
@@ -616,6 +616,10 @@ export class MultiMonitorsLayoutManager {
 				j++;
 			}
 		}
+		// Settings are keyed by connector, and a kept panel's index may now
+		// belong to a different screen.
+		for (const panel of getMMPanelArray() ?? [])
+			panel._applyPanelLayout();
 		this._showAppMenu();
 		if (tIndicators && this.statusIndicatorsController) {
 			this.statusIndicatorsController.transferIndicators();
@@ -669,7 +673,7 @@ export class MultiMonitorsLayoutManager {
 			return;
 		}
 
-		const key = monitorKey(i,Main.layoutManager.primaryIndex);
+		const key = currentMonitorKey(i);
 		let mmPanelBox = new MultiMonitorsPanelBox(monitor, panelPosition(this._settings, key));
 		let panel = new MMPanel.MultiMonitorsPanel(i, mmPanelBox, this._settings);
 

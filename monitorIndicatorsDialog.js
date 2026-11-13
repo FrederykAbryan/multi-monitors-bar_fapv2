@@ -4,8 +4,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 import {
     CATALOG_KEY, CONTROL_ROLE, EXCLUDED_MIRROR_ROLES, VISIBILITY_KEY,
-    indicatorIsEnabled, monitorKey, primaryVisibility,
+    indicatorIsEnabled, primaryVisibility,
 } from './monitorIndicatorPolicy.js';
+import { currentMonitorKey } from './monitorIdentity.js';
 
 export class MonitorIndicatorsController {
     constructor(settings, panels) {
@@ -57,7 +58,7 @@ export class MonitorIndicatorsController {
             if (legacyKey)
                 fallback = this.settings.get_boolean(legacyKey);
         }
-        return indicatorIsEnabled(this.settings, monitorKey(index, primary), role, fallback);
+        return indicatorIsEnabled(this.settings, currentMonitorKey(index), role, fallback);
     }
 
     queueSync() {
@@ -129,7 +130,7 @@ export class MonitorIndicatorsController {
             .filter(index => monitors[index]);
         const catalog = JSON.stringify({
             monitors: order.map(index => ({
-                key: monitorKey(index, primary),
+                key: currentMonitorKey(index),
                 primary: index === primary,
                 width: monitors[index].width,
                 height: monitors[index].height,

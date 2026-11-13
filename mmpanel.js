@@ -39,8 +39,9 @@ import * as Constants from './mmPanelConstants.js';
 import { StatusIndicatorsController } from './statusIndicatorsController.js';
 import { MirroredIndicatorButton } from './mirroredIndicatorButton.js';
 import {
-    CONTROL_ROLE, EXCLUDED_MIRROR_ROLES, indicatorIsEnabled, monitorKey, sourceIsVisible,
+    CONTROL_ROLE, EXCLUDED_MIRROR_ROLES, indicatorIsEnabled, sourceIsVisible,
 } from './monitorIndicatorPolicy.js';
+import { currentMonitorKey } from './monitorIdentity.js';
 import {
     PANEL_LAYOUT_KEY, distributePanelSections, fitScale, isVerticalPosition, panelColor, panelPosition,
     verticalClockText,
@@ -777,7 +778,7 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _monitorKey() {
-            return monitorKey(this.monitorIndex,Main.layoutManager.primaryIndex);
+            return currentMonitorKey(this.monitorIndex);
         }
 
         _applyPanelLayout() {
@@ -1100,8 +1101,7 @@ const MultiMonitorsPanel = GObject.registerClass(
 
         _roleIsEnabled(role, fallback = true) {
             return indicatorIsEnabled(this._settings,
-                monitorKey(this.monitorIndex,Main.layoutManager.primaryIndex),
-                role, fallback);
+                currentMonitorKey(this.monitorIndex), role, fallback);
         }
 
         _ensureIndicator(role) {

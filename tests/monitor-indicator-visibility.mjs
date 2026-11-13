@@ -119,9 +119,13 @@ const mainPanel = {
     addToStatusArea() { assert.fail('settings control must not add a panel icon'); },
 };
 const panels = [{refreshes: 0, _updatePanel() { this.refreshes++; }}];
+// Connector per monitor index; empty means Mutter does not expose them.
+let connectors = [];
+const currentMonitorKey = index => policy.monitorKey(index, layout.primaryIndex, connectors[index]);
 const context = vm.createContext({
     ...policy,
     ...panelPolicy,
+    currentMonitorKey,
     _: text => text,
     Main: {panel: mainPanel, layoutManager: layout, extensionManager: new Actor()},
     global: {display: {get_current_monitor: () => 1}},
@@ -210,7 +214,7 @@ layout.primaryIndex = 0;
 layout.emit('monitors-changed');
 flush();
 assert.equal(preferences.page.children.length, 2, 'disconnect removes the extra section');
-assert.equal(controller.enabled(1, 'clipboard'), true, 'choices are keyed by monitor index');
+assert.equal(controller.enabled(1, 'clipboard'), true, 'without connectors, choices are keyed by monitor index');
 assert.equal(sources.clipboard.visible, false, 'main choice follows the primary monitor');
 layout.monitors = [monitors[1]];
 layout.emit('monitors-changed');
@@ -331,4 +335,52 @@ assert.equal(policy.indicatorIsEnabled(settings, 'main', 'clipboard'), true, 'in
 settings.values[policy.VISIBILITY_KEY] = 'null';
 policy.setIndicatorEnabled(settings, 'main', 'clipboard', false);
 assert.equal(policy.indicatorIsEnabled(settings, 'main', 'clipboard'), false, 'malformed settings can be replaced');
+
+// Issue #64: settings follow the connector, not the monitor index.
+assert.equal(policy.monitorKey(1, 1, 'DP-1'), 'main', 'the primary monitor stays "main"');
+assert.equal(policy.monitorKey(0, 1, 'DP-1'), 'connector:DP-1');
+assert.equal(policy.monitorKey(0, 1, null), 'monitor:0', 'index key is the fallback');
+
+const stored = key => JSON.parse(settings.get_string(key));
+settings.values[policy.VISIBILITY_KEY] = JSON.stringify({
+    main: {clipboard: false},
+    'monitor:0': {clipboard: false},
+    'monitor:2': {dateMenu: false},
+    'connector:HDMI-1': {dateMenu: true},
+});
+policy.migrateMonitorKeys(settings, policy.VISIBILITY_KEY, [
+    {index: 0, connector: 'DP-1'}, {index: 2, connector: 'HDMI-1'}, {index: 3, connector: null},
+]);
+assert.deepEqual(stored(policy.VISIBILITY_KEY), {
+    main: {clipboard: false},
+    'connector:HDMI-1': {dateMenu: true},
+    'connector:DP-1': {clipboard: false},
+}, 'index entries move to the connector; an existing connector entry wins');
+
+settings.values[panelPolicy.PANEL_LAYOUT_KEY] = '{"monitor:0":{"color":"rgba(0,0,0,0.5)"},"monitor:5":{"position":"left"}}';
+policy.migrateMonitorKeys(settings, panelPolicy.PANEL_LAYOUT_KEY, [{index: 0, connector: 'DP-1'}]);
+assert.equal(panelPolicy.panelColor(settings, 'connector:DP-1'), 'rgba(0,0,0,0.5)', 'bar color survives the migration');
+assert.equal(panelPolicy.panelPosition(settings, 'monitor:5'), 'left', 'disconnected monitors keep their entry');
+const migrated = settings.get_string(panelPolicy.PANEL_LAYOUT_KEY);
+policy.migrateMonitorKeys(settings, panelPolicy.PANEL_LAYOUT_KEY, [{index: 0, connector: 'DP-1'}]);
+assert.equal(settings.get_string(panelPolicy.PANEL_LAYOUT_KEY), migrated, 'migration is idempotent');
+settings.values[panelPolicy.PANEL_LAYOUT_KEY] = 'not json';
+policy.migrateMonitorKeys(settings, panelPolicy.PANEL_LAYOUT_KEY, [{index: 0, connector: 'DP-1'}]);
+assert.equal(settings.get_string(panelPolicy.PANEL_LAYOUT_KEY), 'not json', 'malformed settings are left alone');
+
+// The same screen keeps its choices when Mutter renumbers it.
+settings.values[policy.VISIBILITY_KEY] = '{"connector:DP-1":{"clipboard":false}}';
+layout.monitors = monitors;
+layout.primaryIndex = 1;
+connectors = ['DP-1', 'eDP-1', 'HDMI-1'];
+const renumbered = new Controller(settings, () => panels);
+assert.equal(renumbered.enabled(0, 'clipboard'), false);
+assert.equal(renumbered.enabled(2, 'clipboard'), true);
+connectors = ['HDMI-1', 'eDP-1', 'DP-1'];
+assert.equal(renumbered.enabled(2, 'clipboard'), false, 'choice follows the connector to its new index');
+assert.equal(renumbered.enabled(0, 'clipboard'), true);
+renumbered.sync();
+assert.deepEqual(JSON.parse(settings.get_string(policy.CATALOG_KEY)).monitors.map(monitor => monitor.key),
+    ['main', 'connector:HDMI-1', 'connector:DP-1'], 'preferences receive connector keys');
+renumbered.destroy();
 console.log('Per-monitor preferences, persistence, hotplug, source visibility, and cleanup checks passed');

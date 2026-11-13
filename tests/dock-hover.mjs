@@ -354,7 +354,8 @@ assert.equal(sources.size, 0);
 // Exercise the actual extension entry point with a single primary monitor.
 // A dock-only unit test would miss a factory that skips primary displays.
 const extensionSource = readFileSync(new URL('../extension.js', import.meta.url), 'utf8');
-Object.assign(context, {Extension: class {}, MMDock: {MultiMonitorsDock: Dock}, log() {}});
+Object.assign(context, {Extension: class {}, MMDock: {MultiMonitorsDock: Dock}, log() {},
+    migrateMonitorSettings() {}, refreshMonitorConnectors() {}, clearMonitorConnectors() {}});
 const ExtensionClass = vm.runInContext(extensionSource.slice(
     extensionSource.indexOf('export default class MultiMonitorsExtension'))
     .replace('export default class', 'class') + '\nMultiMonitorsExtension;', context);
