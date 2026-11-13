@@ -1198,11 +1198,10 @@ const MultiMonitorsPanel = GObject.registerClass(
         }
 
         _getGrabSprite(event) {
+            // Only reached on GNOME 50+, where Meta.Window.begin_grab_op()
+            // takes the Clutter.Sprite that Clutter.Backend hands out.
             const backend = global.stage.get_context().get_backend();
-            if (backend && typeof backend.get_sprite === 'function')
-                return backend.get_sprite(global.stage, event);
-
-            return null;
+            return backend.get_sprite(global.stage, event);
         }
 
         _beginWindowGrab(dragWindow, event, x, y, button = -1) {
@@ -1309,7 +1308,7 @@ const MultiMonitorsPanel = GObject.registerClass(
                 return -1;
             const mainContainer = mainIndicator.container || mainIndicator;
             return mainBox.get_children().findIndex(child =>
-                child === mainContainer || (child.contains && child.contains(mainContainer)));
+                child === mainContainer || child.contains(mainContainer));
         }
 
         _getCenterInsertIndex(role, position, exclude = null) {
@@ -1471,8 +1470,8 @@ const MultiMonitorsPanel = GObject.registerClass(
                     // so strict equality misses them and causes skipped mirrors.
                     if (indicator === child ||
                         container === child ||
-                        (child.contains && child.contains(container)) ||
-                        (container.contains && container.contains(child))) {
+                        child.contains(container) ||
+                        container.contains(child)) {
                         return role;
                     }
                 }

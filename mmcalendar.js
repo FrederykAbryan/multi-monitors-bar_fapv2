@@ -24,7 +24,6 @@ import Pango from 'gi://Pango';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
 
-import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as MessageList from 'resource:///org/gnome/shell/ui/messageList.js';
 import * as DateMenu from 'resource:///org/gnome/shell/ui/dateMenu.js';
 import * as Calendar from 'resource:///org/gnome/shell/ui/calendar.js';
@@ -554,7 +553,7 @@ const MultiMonitorsMessagesIndicator = (() => {
 })();
 
 const MultiMonitorsDateMenuButton = (() => {
-    const BaseDateMenuButton = DateMenu.DateMenuButton ?? PanelMenu.Button;
+    const BaseDateMenuButton = DateMenu.DateMenuButton;
 
     let MultiMonitorsDateMenuButton = class MultiMonitorsDateMenuButton extends BaseDateMenuButton {
         _init(panel = null) {
@@ -823,15 +822,7 @@ const MultiMonitorsDateMenuButton = (() => {
             };
 
             try {
-                if (typeof super._setEventSource === 'function') {
-                    super._setEventSource(eventSource);
-                } else {
-                    // Fallback path (no upstream DateMenuButton to inherit from).
-                    this._eventSource?.destroy();
-                    this._calendar?.setEventSource(eventSource);
-                    this._eventsItem?.setEventSource(eventSource);
-                    this._eventSource = eventSource;
-                }
+                super._setEventSource(eventSource);
             } finally {
                 delete eventSource.connect;
             }

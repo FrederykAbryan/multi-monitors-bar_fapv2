@@ -51,7 +51,7 @@ const MMWorkspacePreviewLayout = GObject.registerClass(
                 const fallbackBox = new Clutter.ActorBox();
                 fallbackBox.set_origin(0, 0);
                 fallbackBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
-                for (const child of container.get_children ? container.get_children() : [])
+                for (const child of container.get_children())
                     child.allocate(fallbackBox);
                 return;
             }
@@ -63,12 +63,12 @@ const MMWorkspacePreviewLayout = GObject.registerClass(
                 const fallbackBox = new Clutter.ActorBox();
                 fallbackBox.set_origin(0, 0);
                 fallbackBox.set_size(Math.max(1, box.get_width()), Math.max(1, box.get_height()));
-                for (const child of container.get_children ? container.get_children() : [])
+                for (const child of container.get_children())
                     child.allocate(fallbackBox);
                 return;
             }
 
-            const children = container.get_children ? container.get_children() : [];
+            const children = container.get_children();
 
             for (const child of children) {
                 if (!child.metaWindow) {
@@ -331,7 +331,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (actor instanceof Clutter.Clone)
                 return true;
 
-            const children = actor.get_children ? actor.get_children() : [];
+            const children = actor.get_children();
             if (children.length === 0)
                 return true;
 
@@ -916,7 +916,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (width > 0 && height > 0)
                 return [width, height];
 
-            if (typeof actor.get_stage === 'function' && !actor.get_stage())
+            if (!actor.get_stage())
                 return [0, 0];
 
             const [, natWidth] = actor.get_preferred_width(-1);
@@ -1003,7 +1003,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             this.reactive = false;
             this.track_hover = false;
             
-            const children = source.get_children ? source.get_children() : [];
+            const children = source.get_children();
             if (children.length === 0) {
                 // Base clone fallback if structure not as expected
                 this._createAllocationMatchedClone(root, source, true);
@@ -1019,7 +1019,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                 const proxy = new St.Button({
                     reactive: child.reactive !== false, 
                     track_hover: child.track_hover !== false,
-                    style_class: child.get_style_class_name ? child.get_style_class_name() : 'panel-button',
+                    style_class: child instanceof St.Widget ? child.get_style_class_name() : 'panel-button',
                     y_expand: true,
                     y_align: Clutter.ActorAlign.FILL,
                     x_expand: child.x_expand !== false,
@@ -1194,7 +1194,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                         const result = vfunc.call(targetChild, event);
                         if (result === Clutter.EVENT_STOP) handled = true;
                     }
-                    if (!handled && typeof targetChild.emit === 'function') {
+                    if (!handled) {
                         targetChild.emit(eventName, event);
                         handled = true;
                     }
@@ -1935,7 +1935,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (actor instanceof St.Icon || actor instanceof St.Label) {
                 widgets.push(actor);
             }
-            const children = actor.get_children ? actor.get_children() : [];
+            const children = actor.get_children();
             for (const child of children) {
                 widgets.push(...this._findAllDisplayWidgets(child));
             }
@@ -1955,7 +1955,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (actor instanceof St.Label)
                 return !!actor.text && actor.text.trim().length > 0;
 
-            const children = actor.get_children ? actor.get_children() : [];
+            const children = actor.get_children();
             for (const child of children) {
                 if (this._hasRenderableMirrorContent(child))
                     return true;
@@ -2013,7 +2013,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
                     parts.push(`l:${node.text || ''}`);
                 }
 
-                const children = node.get_children ? node.get_children() : [];
+                const children = node.get_children();
                 parts.push(`(${children.length}`);
                 for (const child of children)
                     walk(child);
@@ -2048,7 +2048,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             // For favorites-menu@fthx - create real widget copy instead of Clutter.Clone
             // This prevents visual glitches when the main panel hides during fullscreen
             const container = new St.BoxLayout({
-                style_class: source.get_style_class_name ? source.get_style_class_name() : 'panel-status-menu-box',
+                style_class: source instanceof St.Widget ? source.get_style_class_name() : 'panel-status-menu-box',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
                 y_expand: true,
@@ -2085,7 +2085,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
             if (actor instanceof St.Icon) {
                 return actor;
             }
-            const children = actor.get_children ? actor.get_children() : [];
+            const children = actor.get_children();
             for (const child of children) {
                 const found = this._findIconInActor(child);
                 if (found) return found;
@@ -3111,7 +3111,7 @@ export const MirroredIndicatorButton = GObject.registerClass(
 
             // 2. Handle constraints
             const removedConstraints = [];
-            const constraints = menuBox.get_constraints ? menuBox.get_constraints() : [];
+            const constraints = menuBox.get_constraints();
             for (let constraint of constraints) {
                 if (constraint.constructor.name === 'BindConstraint' ||
                     constraint.constructor.name === 'AlignConstraint') {

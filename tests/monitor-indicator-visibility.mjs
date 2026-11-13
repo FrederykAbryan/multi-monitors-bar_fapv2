@@ -12,6 +12,7 @@ class Actor {
         this._visible = true;
         Object.assign(this, typeof params === 'object' ? params : {});
     }
+    contains(actor) { return actor === this || this.children.some(child => child.contains(actor)); }
     connect(signal, callback) {
         const id = Symbol(signal);
         this.handlers.set(id, {signal, callback});

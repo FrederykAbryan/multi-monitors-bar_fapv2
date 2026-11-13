@@ -199,8 +199,10 @@ export class MultiMonitorsDock {
             const [x, y] = global.get_pointer();
             const inside = x >= this._bin.x && x < this._bin.x + this._bin.width &&
                 y >= this._bin.y && y < this._monitor.y + this._monitor.height;
+            // AppIcon keeps its popup in `_menu`; checking only `menu` let
+            // the dock hide (and close the menu) as the pointer moved onto it.
             const menuOpen = this._dash._box.get_children().some(
-                item => item.child?.menu?.isOpen);
+                item => (item.child?._menu ?? item.child?.menu)?.isOpen);
             const focus = global.stage.get_key_focus();
             // Mouse clicks can leave stale Shell key focus on an icon even
             // after a normal application owns the keyboard.

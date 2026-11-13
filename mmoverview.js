@@ -719,7 +719,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 return app.should_show();
             });
 
-            console.debug('[MultiMonitors] Found ' + apps.length + ' apps to display');
+            console.debug(`[MultiMonitors] Found ${apps.length} apps to display`);
 
             // Sort alphabetically
             apps.sort((a, b) => a.get_name().localeCompare(b.get_name()));
@@ -735,7 +735,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 this._appGrid.add_child(appButton);
             }
 
-            console.debug('[MultiMonitors] App grid populated with ' + apps.length + ' buttons');
+            console.debug(`[MultiMonitors] App grid populated with ${apps.length} buttons`);
         }
 
         _connectOverviewStateWatcher() {
@@ -924,7 +924,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                 try {
                     appInfo.launch([], null);
                 } catch (e) {
-                    console.warn('[MultiMonitors] Failed to launch app: ' + e.message);
+                    console.warn(`[MultiMonitors] Failed to launch app: ${e.message}`);
                 }
             }
 
@@ -1277,7 +1277,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     matchingIds = await this._appSearchProvider.getInitialResultSet(
                         normalizedSearch.split(/\s+/), null);
                 } catch (e) {
-                    console.debug('[MultiMonitors] App search failed: ' + e);
+                    console.debug(`[MultiMonitors] App search failed: ${e}`);
                 }
                 // Typing, closing, installing apps, or teardown can supersede a search.
                 if (requestId !== this._appSearchRequestId)
@@ -1326,7 +1326,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             // Toggle visibility of the entire scroll view based on search text
             if (this._appGridScrollView) {
-                console.debug('[MultiMonitors] _filterAppGrid: hasText=' + hasText + ', visibleApps=' + visibleCount);
+                console.debug(`[MultiMonitors] _filterAppGrid: hasText=${hasText}, visibleApps=${visibleCount}`);
 
                 // Always re-discover workspacesViews to ensure we have a valid reference
                 this._tryFindWorkspacesViews();
@@ -1361,7 +1361,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
                     this._workspacesViews.visible = !hasText;
                     this._workspacesViews.opacity = hasText ? 0 : 255;
                     this._syncWorkspacesViewGeometry(showApps && !hasText);
-                    console.debug('[MultiMonitors] Set workspacesViews visible=' + !hasText + ', opacity=' + (hasText ? 0 : 255));
+                    console.debug(`[MultiMonitors] Set workspacesViews visible=${!hasText}, opacity=${hasText ? 0 : 255}`);
                 }
 
                 // Also hide our own thumbnails box when searching or showing apps.
@@ -1392,7 +1392,7 @@ export const MultiMonitorsControlsManager = GObject.registerClass(
 
             if (workspacesDisplay && workspacesDisplay._workspacesViews && workspacesDisplay._workspacesViews[this._monitorIndex]) {
                 this._setWorkspacesViews(workspacesDisplay._workspacesViews[this._monitorIndex]);
-                console.debug('[MultiMonitors] Lazy discovery: Found workspacesView for monitor ' + this._monitorIndex);
+                console.debug(`[MultiMonitors] Lazy discovery: Found workspacesView for monitor ${this._monitorIndex}`);
             } else if (workspacesDisplay && workspacesDisplay._primaryWorkspacesView && this._monitorIndex === Main.layoutManager.primaryIndex) {
                 this._setWorkspacesViews(workspacesDisplay._primaryWorkspacesView);
                 console.debug('[MultiMonitors] Lazy discovery: Found primary workspacesView');

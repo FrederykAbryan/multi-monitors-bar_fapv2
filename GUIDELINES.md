@@ -211,6 +211,46 @@ destroy() {
 }
 ```
 
+### Do not disable selectively
+EGO reviewers reject cleanup that only runs under a condition ("Selective disable isn't
+allowed"). `disable()` and every `destroy()` must undo **everything** the object may have done,
+whatever the current settings or state flags say. Do not skip cleanup because a feature
+"was not active": a flag can be out of sync with what is actually connected or patched, and
+then a handler, timeout, later or monkey patch outlives the extension.
+
+Make the cleanup method idempotent instead, and always call it:
+
+- `disconnectObject(this)` is a no-op when nothing is connected.
+- Source and later IDs are checked and zeroed where they are removed.
+- Restoring a patched property to its saved original is harmless when it was never patched.
+
+```javascript
+// ❌ Bad - cleanup depends on a state flag
+destroy() {
+    if (this._active) {
+        this._disable();
+        this._dash._queueRedisplay();
+    }
+}
+
+// ❌ Bad - cleanup depends on a setting
+disable() {
+    if (this._settings.get_boolean('show-panel'))
+        this._removePanels();
+}
+
+// ✅ Good - _disable() is idempotent, so it always runs
+destroy() {
+    this._settings.disconnectObject(this);
+    this._disable();
+    this._dash._queueRedisplay();
+    this._dash = null;
+}
+```
+
+This is about teardown only. Enabling a feature conditionally (`if (active) this._enable();`)
+is fine, and so is null-checking a reference that is legitimately absent.
+
 ---
 
 ## Defensive Checks

@@ -28,6 +28,7 @@ class Actor {
     }
 
     get_parent() { return this.parent; }
+    contains(actor) { return actor === this || this.children.some(child => child.contains(actor)); }
     get_children() { return [...this.children]; }
     get_n_children() { return this.children.length; }
     connect() { return 1; }

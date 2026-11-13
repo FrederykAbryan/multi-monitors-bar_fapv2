@@ -556,12 +556,11 @@ export class DashMonitorIsolation {
         instances.delete(this);
         this._settings.disconnectObject(this);
         this._dash.disconnectObject(this);
-        // Unconditionally, so no timeout, later or handler outlives us.
-        this._cancelPending();
-        if (this._active) {
-            this._disable();
-            this._dash._queueRedisplay();
-        }
+        // Always undo everything, whatever the settings say: _disable() is
+        // idempotent (it also cancels pending work), so no timeout, later,
+        // handler or patch outlives us.
+        this._disable();
+        this._dash._queueRedisplay();
         this._active = false;
         this._dash = null;
     }

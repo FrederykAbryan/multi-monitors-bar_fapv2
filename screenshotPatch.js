@@ -8,10 +8,8 @@ of the License, or (at your option) any later version.
 */
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import Meta from 'gi://Meta';
 import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
-import Gio from 'gi://Gio';
 import St from 'gi://St';
 
 const SCREENSHOT_ON_ALL_MONITORS_ID = 'screenshot-on-all-monitors';
@@ -20,8 +18,6 @@ let _originalOpen = null;
 let _originalClose = null;
 let _settings = null;
 let _screenshotClones = [];
-let _stageEventId = null;
-let _cloneRects = []; // Store clone bounding boxes for click detection
 let _pendingTimeouts = [];  // Track all one-shot timeouts for cleanup
 
 function getMonitorAtCursor() {
@@ -65,12 +61,6 @@ function _destroyClones() {
     }
     _pendingTimeouts = [];
 
-    // Disconnect stage event handler
-    if (_stageEventId) {
-        global.stage.disconnect(_stageEventId);
-        _stageEventId = null;
-    }
-
     for (let clone of _screenshotClones) {
         if (clone) {
             if (clone.get_parent()) {
@@ -80,88 +70,22 @@ function _destroyClones() {
         }
     }
     _screenshotClones = [];
-    _cloneRects = [];
 }
 
-function _findToolbarActor(actor) {
-    if (!actor) return null;
-
-    // Try to find the main panel/toolbar container
-    if (actor._panel) return actor._panel;
-    if (actor._bottomBar) return actor._bottomBar;
-    if (actor._toolbar) return actor._toolbar;
-    if (actor._buttonLayout) return actor._buttonLayout;
-
-    // Check children for the largest widget that looks like a toolbar
-    const children = actor.get_children();
-    let bestChild = null;
-    let maxChildCount = 0;
-
-    for (let child of children) {
-        if (child instanceof St.BoxLayout || child instanceof St.Widget) {
-            const childChildren = child.get_children ? child.get_children() : [];
-            if (childChildren.length > maxChildCount) {
-                maxChildCount = childChildren.length;
-                bestChild = child;
-            }
-        }
-    }
-
-    if (bestChild && maxChildCount > 2) {
-        return bestChild;
-    }
-
-    return null;
-}
-
-function _isClickInCloneArea(x, y) {
-    for (let rect of _cloneRects) {
-        if (x >= rect.x && x <= rect.x + rect.width &&
-            y >= rect.y && y <= rect.y + rect.height) {
-            return rect;
-        }
-    }
-    return null;
-}
-
-function _forwardClickToToolbar(stageX, stageY, rect, eventType, button) {
-    const relX = stageX - rect.x;
-    const relY = stageY - rect.y;
-    const targetX = rect.toolbarX + relX;
-    const targetY = rect.toolbarY + relY;
-
-    const targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, targetX, targetY);
-
-    if (targetActor && targetActor !== global.stage) {
-        // Try different activation methods
-        if (typeof targetActor.emit === 'function') {
-            targetActor.emit('clicked');
-        }
-
-        if (typeof targetActor.activate === 'function') {
-            targetActor.activate(Clutter.get_current_event());
-        }
-
-        // Simulate button press/release events
-        let pressEvent = Clutter.Event.new(Clutter.EventType.BUTTON_PRESS);
-        pressEvent.set_coords(targetX, targetY);
-        pressEvent.set_button(button);
-        targetActor.emit('button-press-event', pressEvent);
-
-        const releaseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
-            _pendingTimeouts = _pendingTimeouts.filter(id => id !== releaseTimeoutId);
-            let releaseEvent = Clutter.Event.new(Clutter.EventType.BUTTON_RELEASE);
-            releaseEvent.set_coords(targetX, targetY);
-            releaseEvent.set_button(button);
-            targetActor.emit('button-release-event', releaseEvent);
-            return GLib.SOURCE_REMOVE;
-        });
-        _pendingTimeouts.push(releaseTimeoutId);
-
-        return true;
-    }
-
-    return false;
+/**
+ * Flash the capture button's pressed style, then click it.
+ *
+ * @param {St.Button} button - the screenshot UI capture button
+ */
+function _clickCaptureButton(button) {
+    button.add_style_pseudo_class('active');
+    const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        _pendingTimeouts = _pendingTimeouts.filter(id => id !== timeoutId);
+        button.remove_style_pseudo_class('active');
+        button.emit('clicked', 0);
+        return GLib.SOURCE_REMOVE;
+    });
+    _pendingTimeouts.push(timeoutId);
 }
 
 function _createToolbarClonesForAllMonitors() {
@@ -174,36 +98,23 @@ function _createToolbarClonesForAllMonitors() {
     const monitors = Main.layoutManager.monitors;
     const primaryMonitor = monitors[primaryIndex];
 
-    // DEFINITION OF ELEMENTS
-    // interactiveElements: Used to calculate the total clickable area (overlay size)
-    // visualElements: Used to create the visual clones (can be a subset to avoid duplicates)
-
-    const interactiveElements = [
+    // Private ScreenshotUI fields; skip any that a Shell release lacks.
+    const elements = [
         screenshotUI._panel,
         screenshotUI._captureButton,
-        screenshotUI._shotCastContainer, // Restoring toggle 1
-        screenshotUI._showPointerButtonContainer, // Restoring toggle 2
-        screenshotUI._closeButton
+        screenshotUI._shotCastContainer,
+        screenshotUI._showPointerButtonContainer,
+        screenshotUI._closeButton,
     ].filter(e => e != null);
 
-    // For visuals, we RE-ADD _captureButton because the user said "that version worked".
-    // We prioritize functionality over the visual duplicate for now.
-    const visualElements = [
-        screenshotUI._panel,
-        screenshotUI._captureButton, // Restored to fix functionality
-        screenshotUI._shotCastContainer, // Restoring toggle 1
-        screenshotUI._showPointerButtonContainer, // Restoring toggle 2
-        screenshotUI._closeButton
-    ].filter(e => e != null);
-
-    if (interactiveElements.length === 0) {
+    if (elements.length === 0) {
         console.debug('[MultiMonitors] No screenshot UI elements found to clone');
         return;
     }
 
-    // 1. Calculate the bounding box using INTERACTIVE elements (max coverage)
+    // Bounding box of the toolbar on the primary monitor.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let elem of interactiveElements) {
+    for (const elem of elements) {
         const [x, y] = elem.get_transformed_position();
         const w = elem.get_width();
         const h = elem.get_height();
@@ -216,162 +127,69 @@ function _createToolbarClonesForAllMonitors() {
     const toolbarWidth = maxX - minX;
     const toolbarHeight = maxY - minY;
 
-    // Calculate bottom margin from primary monitor to preserve vertical spacing
+    // Keep the primary monitor's gap between the toolbar and the screen edge.
     const marginBottom = (primaryMonitor.y + primaryMonitor.height) - maxY;
 
-    console.debug('[MultiMonitors] Toolbar bounds: x=' + minX + ', y=' + minY + ', w=' + toolbarWidth + ', h=' + toolbarHeight + ', bottomMargin=' + marginBottom);
+    console.debug(`[MultiMonitors] Toolbar bounds: x=${minX}, y=${minY}, w=${toolbarWidth}, h=${toolbarHeight}, bottomMargin=${marginBottom}`);
 
-    // Create clones for each non-primary monitor
     for (let monitorIdx = 0; monitorIdx < monitors.length; monitorIdx++) {
         if (monitorIdx === primaryIndex) continue;
 
         const monitor = monitors[monitorIdx];
 
-        // Calculate Centered Position for this monitor
-        // New Origin X = Monitor X + (Monitor Width - Toolbar Width) / 2
-        const destOriginX = monitor.x + (monitor.width - toolbarWidth) / 2;
-
-        // New Origin Y = Monitor Y + Monitor Height - Toolbar Height - Bottom Margin
-        // User requested extra padding ("no bottom margin from screen")
-        // Adding 40px extra spacing to lift it up.
+        // Centre the toolbar copy horizontally and lift it slightly above
+        // the primary monitor's bottom margin.
         const extraBottomPadding = 40;
+        const destOriginX = monitor.x + (monitor.width - toolbarWidth) / 2;
         const destOriginY = monitor.y + monitor.height - toolbarHeight - marginBottom - extraBottomPadding;
-
-        // Calculate offset from PRIMARY origin to DESTINATION origin
-        // We use this to shift each element
         const shiftX = destOriginX - minX;
         const shiftY = destOriginY - minY;
 
-        // We do NOT use the simple offsetX/Y anymore because that was just screen-to-screen delta.
-        // We want to force centering.
-        const offsetX = shiftX;
-        const offsetY = shiftY;
-
-        // 2. Create VISUAL clones using only the visualElements list
-        for (let elem of visualElements) {
+        for (const elem of elements) {
             const [origX, origY] = elem.get_transformed_position();
-            // Apply the shift calculated from the bounding box origin
-            const cloneX = origX + shiftX;
-            const cloneY = origY + shiftY;
 
-            // Fix stretch: Set explicit size, remove offset, debug opacity
+            // An explicit size keeps the clone from stretching.
             const clone = new Clutter.Clone({
                 source: elem,
-                x: cloneX,
-                y: cloneY,
-                width: elem.get_width(), // Force exact width
-                height: elem.get_height(), // Force exact height to fix stretching
+                x: origX + shiftX,
+                y: origY + shiftY,
+                width: elem.get_width(),
+                height: elem.get_height(),
                 reactive: true,
             });
 
-            const isDuplicateToken = (elem === screenshotUI._captureButton) ||
-                (elem === screenshotUI._shotCastContainer) ||
-                (elem === screenshotUI._showPointerButtonContainer);
+            // The panel clone already paints these children, so their own
+            // clones stay invisible and only take clicks.
+            const isPaintedByPanel = elem === screenshotUI._captureButton ||
+                elem === screenshotUI._shotCastContainer ||
+                elem === screenshotUI._showPointerButtonContainer;
 
-            const isCloseButton = (elem === screenshotUI._closeButton);
-
-            if (isDuplicateToken) {
-                clone.opacity = 0;   // Hidden but reactive!
+            if (isPaintedByPanel) {
+                clone.opacity = 0;
                 clone.set_z_position(9999);
-            } else {
-                clone.opacity = 255;
             }
 
-            // Add direct click handler
-            if (isDuplicateToken || isCloseButton) {
+            if (elem === screenshotUI._captureButton) {
                 clone.connect('button-release-event', () => {
-                    if (elem === screenshotUI._captureButton) {
-                        if (typeof elem.set_pressed === 'function') {
-                            elem.set_pressed(true);
-                        } else if (typeof elem.add_style_pseudo_class === 'function') {
-                            elem.add_style_pseudo_class('active');
-                        }
-
-                        const pressTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                            _pendingTimeouts = _pendingTimeouts.filter(id => id !== pressTimeoutId);
-                            if (typeof elem.set_pressed === 'function') {
-                                elem.set_pressed(false);
-                            } else {
-                                if (typeof elem.remove_style_pseudo_class === 'function') {
-                                    elem.remove_style_pseudo_class('active');
-                                }
-                                if (typeof elem.clicked === 'function') {
-                                    elem.clicked(0);
-                                } else if (typeof elem.emit === 'function') {
-                                    elem.emit('clicked', 0);
-                                }
-                            }
-                            return GLib.SOURCE_REMOVE;
-                        });
-                        _pendingTimeouts.push(pressTimeoutId);
-                    } else if (elem.toggle_mode) {
-                        const isPointerButton = (elem === screenshotUI._showPointerButtonContainer) ||
-                            (screenshotUI._showPointerButton && elem === screenshotUI._showPointerButton);
-
-                        let currentChecked = false;
-                        if (typeof elem.get_checked === 'function') {
-                            currentChecked = elem.get_checked();
-                        } else if (elem.checked !== undefined) {
-                            currentChecked = elem.checked;
-                        }
-
-                        if (isPointerButton) {
-                            if (typeof elem.set_checked === 'function') {
-                                elem.set_checked(!currentChecked);
-                            } else {
-                                elem.checked = !currentChecked;
-                            }
-                        } else {
-                            if (typeof elem.set_checked === 'function') {
-                                elem.set_checked(true);
-                            } else {
-                                elem.checked = true;
-                            }
-                        }
-                        if (typeof elem.clicked === 'function') {
-                            elem.clicked(0);
-                        } else {
-                            elem.emit('clicked', 0);
-                        }
-                    } else {
-                        if (typeof elem.clicked === 'function') {
-                            elem.clicked(0);
-                        } else {
-                            elem.emit('clicked', 0);
-                        }
-                    }
+                    _clickCaptureButton(elem);
+                    return Clutter.EVENT_STOP;
+                });
+            } else if (elem === screenshotUI._closeButton) {
+                clone.connect('button-release-event', () => {
+                    elem.emit('clicked', 0);
                     return Clutter.EVENT_STOP;
                 });
             }
 
-            clone.visible = true;
             screenshotUI.add_child(clone);
             _screenshotClones.push(clone);
         }
 
-        // 3. Keep Overlay for background clicks / drag?
-        // Reset correction since overlay is just fallback now.
-        const interactionCorrectionY = 0;
-
-        const overlayX = minX + offsetX;
-        const overlayY = minY + offsetY;
-
-        // Store rect info for this monitor
-        _cloneRects.push({
-            x: overlayX,
-            y: overlayY,
-            width: toolbarWidth,
-            height: toolbarHeight,
-            origX: minX,
-            origY: minY,
-            offsetX: offsetX,
-            offsetY: offsetY + interactionCorrectionY, // Include correction in mapping offset
-            monitorIndex: monitorIdx
-        });
-
+        // Transparent overlay that maps clicks on the copy back to the
+        // buttons of the real toolbar.
         const overlay = new St.Widget({
-            x: overlayX,
-            y: overlayY,
+            x: minX + shiftX,
+            y: minY + shiftY,
             width: toolbarWidth,
             height: toolbarHeight,
             reactive: true,
@@ -380,113 +198,37 @@ function _createToolbarClonesForAllMonitors() {
             style: 'background-color: transparent;',
         });
 
-        overlay.connect('button-press-event', (actor, event) => {
-            return Clutter.EVENT_STOP;
-        });
+        overlay.connect('button-press-event', () => Clutter.EVENT_STOP);
 
-        overlay.connect('button-release-event', (actor, event) => {
+        overlay.connect('button-release-event', (_actor, event) => {
             const [stageX, stageY] = event.get_coords();
+            const targetX = Math.round(stageX - shiftX);
+            const targetY = Math.round(stageY - shiftY);
 
-            // Calculate corresponding position on original toolbar
-            const targetX = Math.round(stageX - offsetX);
-            const targetY = Math.round(stageY - offsetY);
+            console.debug(`[MultiMonitors] Overlay click at (${stageX},${stageY}) -> finding button at (${targetX},${targetY})`);
 
-            console.debug('[MultiMonitors] Overlay click at (' + stageX + ',' + stageY + ') -> finding button at (' + targetX + ',' + targetY + ')');
-
-            // Find the actor at target position on original toolbar
-            let targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, targetX, targetY);
-
-            if (!targetActor || targetActor === global.stage) {
+            const targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, targetX, targetY);
+            if (!targetActor || targetActor === global.stage)
                 return Clutter.EVENT_STOP;
-            }
 
-            let actorToClick = targetActor;
-            for (let j = 0; j < 10 && actorToClick; j++) {
+            // The pick may land on a button's child; walk up to the button.
+            let button = targetActor;
+            for (let depth = 0; depth < 10 && button && !(button instanceof St.Button); depth++)
+                button = button.get_parent();
 
-                // Check for St.Button, IconLabelButton, or specific capture button style class
-                const isButton = actorToClick instanceof St.Button ||
-                    actorToClick.constructor.name === 'IconLabelButton' ||
-                    (actorToClick.has_style_class_name && actorToClick.has_style_class_name('screenshot-ui-capture-button'));
+            if (!(button instanceof St.Button))
+                return Clutter.EVENT_STOP;
 
-                if (isButton) {
-
-                    if (actorToClick.toggle_mode) {
-                        const isPointerButton = (screenshotUI._showPointerButtonContainer && (actorToClick === screenshotUI._showPointerButtonContainer || actorToClick.get_parent() === screenshotUI._showPointerButtonContainer)) ||
-                            (screenshotUI._showPointerButton && actorToClick === screenshotUI._showPointerButton);
-
-                        let currentChecked = false;
-                        if (typeof actorToClick.get_checked === 'function') {
-                            currentChecked = actorToClick.get_checked();
-                        } else if (actorToClick.checked !== undefined) {
-                            currentChecked = actorToClick.checked;
-                        }
-
-                        if (isPointerButton) {
-                            if (typeof actorToClick.set_checked === 'function') {
-                                actorToClick.set_checked(!currentChecked);
-                            } else {
-                                actorToClick.checked = !currentChecked;
-                            }
-                        } else {
-                            if (typeof actorToClick.set_checked === 'function') {
-                                actorToClick.set_checked(true);
-                            } else {
-                                actorToClick.checked = true;
-                            }
-                        }
-
-                        if (typeof actorToClick.clicked === 'function') {
-                            actorToClick.clicked(0);
-                        } else {
-                            actorToClick.emit('clicked', 0);
-                        }
-                        return Clutter.EVENT_STOP;
-                    }
-
-                    // --- CASE 2: Capture Button ---
-                    // The user said this USED to work with simple logic. 
-                    // We identify it by class and force the simple path.
-
-                    const isCaptureButton = (actorToClick === screenshotUI._captureButton) ||
-                        (actorToClick.has_style_class_name && actorToClick.has_style_class_name('screenshot-ui-capture-button'));
-
-                    if (isCaptureButton) {
-                        if (typeof actorToClick.set_pressed === 'function') {
-                            actorToClick.set_pressed(true);
-                        } else if (typeof actorToClick.add_style_pseudo_class === 'function') {
-                            actorToClick.add_style_pseudo_class('active');
-                        }
-
-                        const captureTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-                            _pendingTimeouts = _pendingTimeouts.filter(id => id !== captureTimeoutId);
-                            if (typeof actorToClick.set_pressed === 'function') {
-                                actorToClick.set_pressed(false);
-                            } else {
-                                if (typeof actorToClick.remove_style_pseudo_class === 'function') {
-                                    actorToClick.remove_style_pseudo_class('active');
-                                }
-                                if (typeof actorToClick.clicked === 'function') {
-                                    actorToClick.clicked(0);
-                                } else if (typeof actorToClick.emit === 'function') {
-                                    actorToClick.emit('clicked', 0);
-                                }
-                            }
-                            return GLib.SOURCE_REMOVE;
-                        });
-                        _pendingTimeouts.push(captureTimeoutId);
-                        return Clutter.EVENT_STOP;
-                    }
-
-                    if (typeof actorToClick.clicked === 'function') {
-                        actorToClick.clicked(0);
-                        return Clutter.EVENT_STOP;
-                    }
-
-                    actorToClick.emit('clicked', 0);
-                    return Clutter.EVENT_STOP;
-                }
-
-                actorToClick = actorToClick.get_parent();
+            if (button.toggle_mode) {
+                // The pointer toggle flips; mode buttons behave like radios.
+                const isPointerButton = button === screenshotUI._showPointerButton ||
+                    button.get_parent() === screenshotUI._showPointerButtonContainer;
+                button.checked = isPointerButton ? !button.checked : true;
+                button.emit('clicked', 0);
+            } else if (button === screenshotUI._captureButton) {
+                _clickCaptureButton(button);
+            } else {
+                button.emit('clicked', 0);
             }
 
             return Clutter.EVENT_STOP;
@@ -504,9 +246,7 @@ export function patchScreenshotUI(settings) {
     _settings = settings;
 
     _originalOpen = Main.screenshotUI.open.bind(Main.screenshotUI);
-    if (Main.screenshotUI.close) {
-        _originalClose = Main.screenshotUI.close.bind(Main.screenshotUI);
-    }
+    _originalClose = Main.screenshotUI.close.bind(Main.screenshotUI);
 
     Main.screenshotUI.open = async function (screenshotType, options = {}) {
         const showOnAllMonitors = _settings && _settings.get_boolean(SCREENSHOT_ON_ALL_MONITORS_ID);
@@ -514,8 +254,7 @@ export function patchScreenshotUI(settings) {
         if (showOnAllMonitors) {
             delete Main.screenshotUI._restorePrimary;
 
-            const openPromise = _originalOpen(screenshotType, options);
-            await openPromise;
+            await _originalOpen(screenshotType, options);
 
             // Create clones after UI opens
             const cloneTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
@@ -538,8 +277,7 @@ export function patchScreenshotUI(settings) {
 
         const ui = Main.screenshotUI;
         if (ui._areaSelector) {
-            if (typeof ui._areaSelector.reset === 'function')
-                ui._areaSelector.reset();
+            ui._areaSelector.reset();
             if (ui._areaSelector._selectionRect)
                 ui._areaSelector._selectionRect = null;
         }
@@ -559,10 +297,8 @@ export function patchScreenshotUI(settings) {
 
         _restorePendingPrimary(this);
 
-        let ret;
-        if (_originalClose) ret = _originalClose.call(this);
-        return ret;
-    }
+        return _originalClose.call(this);
+    };
 }
 
 export function unpatchScreenshotUI() {
