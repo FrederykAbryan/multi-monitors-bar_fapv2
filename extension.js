@@ -374,12 +374,12 @@ export default class MultiMonitorsExtension extends Extension {
 	// versions saved by index, now and for monitors plugged in later.
 	_syncMonitorKeys() {
 		refreshMonitorConnectors(() => {
-			// Older Mutter only learns the connector names here, which
-			// changes the keys of the bars that already exist.
+			// The connector names arrive here, which changes the keys of
+			// the bars that already exist.
 			migrateMonitorSettings(this._settings);
 			for (const panel of mmPanel)
 				panel._applyPanelLayout();
-			this._monitorIndicators?.sync();
+			this._monitorIndicators.sync();
 		});
 		migrateMonitorSettings(this._settings);
 	}

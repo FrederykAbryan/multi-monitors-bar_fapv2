@@ -14,28 +14,42 @@ export function sourceIsVisible(actor) {
     return primaryVisibility.get(actor)?.visible ?? actor?.visible ?? false;
 }
 
-// Extended monitors are keyed by connector (e.g. "connector:DP-1") so their
-// settings follow the screen when Mutter renumbers the monitors. The index
-// key is the fallback when the connector is unknown, and the legacy format.
+/**
+ * Extended monitors are keyed by connector (e.g. "connector:DP-1") so their
+ * settings follow the screen when Mutter renumbers the monitors. The index
+ * key is the fallback when the connector is unknown, and the legacy format.
+ *
+ * @param {number} index - layout index of the monitor
+ * @param {number} primaryIndex - layout index of the primary monitor
+ * @param {string|null} connector - connector name, when known
+ * @returns {string} the key the monitor's settings are stored under
+ */
 export function monitorKey(index, primaryIndex, connector = null) {
     if (index === primaryIndex)
         return 'main';
     return connector ? `connector:${connector}` : `monitor:${index}`;
 }
 
-// Move the settings stored under a legacy index key to the connector of the
-// monitor now at that index. `monitors` lists the extended monitors as
-// {index, connector}. An existing connector entry wins; the index entry is
-// dropped either way so it cannot attach to a different monitor later.
-export function migrateMonitorKeys(settings, settingsKey, monitors) {
-    let stored;
+function readObject(settings, settingsKey) {
     try {
-        stored = JSON.parse(settings.get_string(settingsKey));
+        const value = JSON.parse(settings.get_string(settingsKey));
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     } catch {
-        return;
+        return {};
     }
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored))
-        return;
+}
+
+/**
+ * Move the settings stored under a legacy index key to the connector of the
+ * monitor now at that index. An existing connector entry wins; the index
+ * entry is dropped either way so it cannot attach to another monitor later.
+ *
+ * @param {Gio.Settings} settings - the extension settings
+ * @param {string} settingsKey - a key holding a JSON object of per-monitor entries
+ * @param {{index: number, connector: string}[]} monitors - the extended monitors
+ */
+export function migrateMonitorKeys(settings, settingsKey, monitors) {
+    const stored = readObject(settings, settingsKey);
     let changed = false;
     for (const {index, connector} of monitors) {
         const legacy = `monitor:${index}`;
@@ -52,12 +66,7 @@ export function migrateMonitorKeys(settings, settingsKey, monitors) {
 }
 
 export function readVisibility(settings) {
-    try {
-        const value = JSON.parse(settings.get_string(VISIBILITY_KEY));
-        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    } catch {
-        return {};
-    }
+    return readObject(settings, VISIBILITY_KEY);
 }
 
 export function indicatorIsEnabled(settings, key, role, fallback = true) {

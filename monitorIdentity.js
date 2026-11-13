@@ -8,51 +8,49 @@ import { PANEL_LAYOUT_KEY } from './monitorPanelPolicy.js';
 const DISPLAY_CONFIG_NAME = 'org.gnome.Mutter.DisplayConfig';
 const DISPLAY_CONFIG_PATH = '/org/gnome/Mutter/DisplayConfig';
 
-// Mutter 49+ lists its monitors directly. Older releases only resolve a
-// connector name to an index, so the names are fetched from DisplayConfig
-// (asynchronously) and cached here until clearMonitorConnectors().
+// Mutter resolves a connector name to a monitor index, but the names
+// themselves come from DisplayConfig, asynchronously. They are cached here
+// until clearMonitorConnectors().
 let connectorNames = [];
 let cancellable = null;
 
-function listsMonitors(manager) {
-    return typeof manager.get_logical_monitors === 'function';
-}
-
-// Connector name (e.g. "DP-1") of the monitor at a layout index, or null
-// when it is not known (yet) or the index is gone.
+/**
+ * @param {number} index - layout index of the monitor
+ * @returns {string|null} its connector name (e.g. "DP-1"), or null when it
+ *   is not known (yet) or the index is gone
+ */
 export function monitorConnector(index) {
     const manager = global.backend.get_monitor_manager();
-    if (listsMonitors(manager)) {
-        const logical = manager.get_logical_monitors()
-            .find(monitor => monitor.get_number() === index);
-        return logical?.get_monitors()[0]?.get_connector() ?? null;
-    }
     return connectorNames.find(name =>
         manager.get_monitor_for_connector(name) === index) ?? null;
 }
 
-// Refresh the cached connector names where Mutter cannot list its monitors.
-// `onChanged` runs once the names differ from the cached ones; until then
-// unknown monitors keep their index key.
+/**
+ * Refresh the cached connector names. Until the reply arrives, unknown
+ * monitors keep their index key.
+ *
+ * @param {Function} onChanged - called when the names differ from the cached ones
+ */
 export function refreshMonitorConnectors(onChanged) {
-    if (listsMonitors(global.backend.get_monitor_manager()))
-        return;
     cancellable?.cancel();
     const pending = cancellable = new Gio.Cancellable();
     Gio.DBus.session.call(DISPLAY_CONFIG_NAME, DISPLAY_CONFIG_PATH, DISPLAY_CONFIG_NAME,
         'GetCurrentState', null, null, Gio.DBusCallFlags.NONE, -1, pending,
         (connection, result) => {
-            let names;
+            if (cancellable === pending)
+                cancellable = null;
+            let reply;
             try {
-                const [, monitors] = connection.call_finish(result).deep_unpack();
-                names = monitors.map(([[connector]]) => connector).sort();
-            } catch {
-                // Cancelled, or DisplayConfig is unavailable: keep what we have.
+                reply = connection.call_finish(result);
+            } catch (e) {
+                // Cancelled by a newer request or by disable(); any other
+                // failure keeps the names we already have.
+                if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    console.warn(`[MultiMonitors] Could not read monitor connectors: ${e.message}`);
                 return;
-            } finally {
-                if (cancellable === pending)
-                    cancellable = null;
             }
+            const [, monitors] = reply.deep_unpack();
+            const names = monitors.map(([[connector]]) => connector).sort();
             if (names.join('\n') === connectorNames.join('\n'))
                 return;
             connectorNames = names;
@@ -60,18 +58,27 @@ export function refreshMonitorConnectors(onChanged) {
         });
 }
 
+/** Cancel a pending refresh and forget the cached names; for disable(). */
 export function clearMonitorConnectors() {
     cancellable?.cancel();
     cancellable = null;
     connectorNames = [];
 }
 
+/**
+ * @param {number} index - layout index of the monitor
+ * @returns {string} the key its per-monitor settings are stored under
+ */
 export function currentMonitorKey(index) {
     const primary = Main.layoutManager.primaryIndex;
     return monitorKey(index, primary, index === primary ? null : monitorConnector(index));
 }
 
-// Re-key settings saved by index (older versions) for the connected monitors.
+/**
+ * Re-key settings saved by index (older versions) for the connected monitors.
+ *
+ * @param {Gio.Settings} settings - the extension settings
+ */
 export function migrateMonitorSettings(settings) {
     const primary = Main.layoutManager.primaryIndex;
     const monitors = Main.layoutManager.monitors

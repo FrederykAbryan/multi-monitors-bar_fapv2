@@ -618,7 +618,7 @@ export class MultiMonitorsLayoutManager {
 		}
 		// Settings are keyed by connector, and a kept panel's index may now
 		// belong to a different screen.
-		for (const panel of getMMPanelArray() ?? [])
+		for (const panel of getMMPanelArray())
 			panel._applyPanelLayout();
 		this._showAppMenu();
 		if (tIndicators && this.statusIndicatorsController) {
