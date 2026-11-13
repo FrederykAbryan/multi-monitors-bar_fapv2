@@ -130,7 +130,16 @@ export class MultiMonitorsDock {
                 this._dismissDock();
         });
         Main.layoutManager.connectObject('startup-complete',
-            () => this._syncEdge(), this._bin);
+            () => {
+                this._dash._redisplay();
+                this._updatePosition();
+                this._syncEdge();
+            }, this._bin);
+        // Hidden dashes defer their initial icon population until mapped or
+        // the deferred-work timeout. Populate now so the edge already spans
+        // the full dock on the first approach after login.
+        this._dash._redisplay();
+        this._updatePosition();
         this._setOverviewMode(Main.overview.visible);
         this._connectOverviewStateAdjustment();
     }

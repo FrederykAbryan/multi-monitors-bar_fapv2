@@ -66,11 +66,13 @@ class Actor extends Signals {
 }
 
 class Dash extends Actor {
+    populated = false;
+    _redisplay() { this.populated = true; }
     showAppsButton = new Actor({checked: false});
     _box = new Actor();
     add_style_class_name() {}
     get_preferred_height() { return [80, 80]; }
-    get_preferred_width() { return [100, 600]; }
+    get_preferred_width() { return [100, this.populated ? 600 : 1]; }
     setMaxSize() {}
 }
 
@@ -175,6 +177,7 @@ const Dock = vm.runInContext(source.replace(/^import .*;\n/gm, '')
     .replace('export class MultiMonitorsDock', 'class MultiMonitorsDock') +
     '\nMultiMonitorsDock;', context);
 const dock = new Dock(monitor, settings);
+assert.equal(dock._edge.width, 600, 'First hover target spans populated icons before deferred work');
 advance(0);
 assert.equal(dock._bin.visible, false);
 assert.equal(dock._edge.visible, true);
@@ -337,7 +340,9 @@ assert.equal(startupDock._bin.visible, false, 'Startup must not accept hover act
 Main.layoutManager._updateVisibility();
 assert.equal(startupDock._bin.visible, false);
 Main.layoutManager._startingUp = false;
+startupDock._dash.populated = false;
 Main.layoutManager.emit('startup-complete');
+assert.equal(startupDock._edge.width, 600, 'Startup refreshes icons before enabling hover');
 assert.equal(startupDock._edge.visible, true);
 assert.equal(startupDock._bin.visible, false, 'Startup completion only enables the trigger');
 startupDock.destroy();
