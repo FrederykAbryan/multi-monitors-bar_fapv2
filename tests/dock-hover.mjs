@@ -163,6 +163,7 @@ const Main = {
     }),
 };
 const display = new Signals();
+const stage = Object.assign(new Signals(), {get_key_focus: () => focus});
 const liveIsolations = new Set();
 const source = readFileSync(new URL('../mmdock.js', import.meta.url), 'utf8');
 const context = vm.createContext({
@@ -175,7 +176,7 @@ const context = vm.createContext({
         constructor(properties) { Object.assign(this, properties); }
     }},
     St: {Bin: Actor, Widget: Actor}, GLib, Main,
-    Clutter: {ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
+    Clutter: {EventType: {MOTION: 1}, ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
         AnimationMode: {EASE_OUT_CUBIC: 1, EASE_IN_OUT_CUBIC: 2}},
     DashModule: {Dash}, OverviewControls: {},
     // Per-monitor isolation has no hover side effects; only lifecycle matters.
@@ -184,7 +185,7 @@ const context = vm.createContext({
         destroy() { assert.ok(liveIsolations.delete(this)); }
     }},
     Meta: {LaterType: {BEFORE_REDRAW: 0}},
-    global: {display, get_pointer: () => pointer, stage: {get_key_focus: () => focus},
+    global: {display, get_pointer: () => pointer, stage,
         // Laters run before the next frame; model them as immediate sources.
         compositor: {get_laters: () => ({
             add: (_type, callback) => GLib.timeout_add(0, 0, callback),
@@ -284,6 +285,44 @@ assert.equal(dock._bin.visible, false, 'Stale icon focus cannot keep dock open o
 focus = null;
 display.focus_window = null;
 
+// Rapid re-entry lands on the still-visible bin, not the edge underneath it.
+for (let attempt = 0; attempt < 20; attempt++) {
+    reveal();
+    pointer = [0, 0];
+    advance(100);
+    advance(300);
+    assert.equal(dock._hiding, true);
+    pointer = [dock._edge.x + 100, dock._edge.y - 10];
+    dock._bin.emit('enter-event');
+    assert.equal(dock._hiding, false, 'Re-entering the dock cancels its hide');
+    advance(280);
+    assert.equal(dock._bin.visible, true, 'Old animation cannot hide the re-entered dock');
+    leave();
+}
+
+// A departure and return between two 100 ms polls must rearm after a click.
+reveal();
+icon.emit('clicked');
+pointer = [0, 0];
+stage.emit('captured-event', {type: () => 1, get_coords: () => pointer});
+pointer = [dock._edge.x + 100, dock._edge.y];
+dock._bin.emit('enter-event');
+assert.equal(dock._hiding, false, 'Fast real departure rearms without waiting for a poll');
+advance(280);
+assert.equal(dock._bin.visible, true);
+assert.equal(stage.handlers.size, 0, 'Temporary motion watcher is released after rearming');
+leave();
+
+// If a crossing event is lost during unmapping, check the final pointer position.
+reveal();
+pointer = [0, 0];
+advance(100);
+advance(300);
+pointer = [dock._edge.x + 100, dock._edge.y];
+advance(280);
+assert.equal(dock._bin.visible, true, 'Pointer at the edge cannot be stranded after hiding');
+leave();
+
 // An overview transition must cancel a pending hide completion.
 reveal();
 dock._hideDesktopDock(true);
@@ -359,6 +398,18 @@ assert.equal(display.handlers.size, 0);
 assert.equal(icon.handlers.size, 0);
 assert.equal(animations.size, 0);
 assert.equal(Main.layoutManager.handlers.size, 0);
+assert.equal(stage.handlers.size, 0);
+
+// Disabling with click dismissal pending must release the global motion hook.
+const dismissedDock = new Dock(monitor, settings);
+pointer = [dismissedDock._edge.x + 100, dismissedDock._edge.y];
+dismissedDock._edge.emit('enter-event');
+dismissedDock._dismissDock();
+assert.equal(stage.handlers.size, 1);
+dismissedDock.destroy();
+assert.equal(stage.handlers.size, 0);
+assert.equal(sources.size, 0);
+assert.equal(animations.size, 0);
 
 Main.layoutManager._startingUp = true;
 const startupDock = new Dock(monitor, settings, {showInOverview: false});

@@ -40,6 +40,7 @@ export class MultiMonitorsDock {
         this._hideTimeoutId = 0;
         this._positionIdleId = 0;
         this._rearmTimeoutId = 0;
+        this._rearmMotionId = 0;
         this._hiding = false;
         this._inOverview = false;
         this._monitor = {
@@ -127,6 +128,12 @@ export class MultiMonitorsDock {
             trackFullscreen: false,
         });
         this._edge.connect('enter-event', () => {
+            this._revealDock();
+            return Clutter.EVENT_PROPAGATE;
+        });
+        // During a hide animation the bin still covers the edge trigger.
+        // Re-entering either actor must interrupt that animation.
+        this._bin.connect('enter-event', () => {
             this._revealDock();
             return Clutter.EVENT_PROPAGATE;
         });
@@ -246,8 +253,7 @@ export class MultiMonitorsDock {
         let outsideSince = null;
         this._hideTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
             const [x, y] = global.get_pointer();
-            const inside = x >= this._bin.x && x < this._bin.x + this._bin.width &&
-                y >= this._bin.y && y < this._monitor.y + this._monitor.height;
+            const inside = this._containsPointer(x, y);
             // AppIcon keeps its popup in `_menu`; checking only `menu` let
             // the dock hide (and close the menu) as the pointer moved onto it.
             const menuOpen = this._dash._box.get_children().some(
@@ -285,14 +291,39 @@ export class MultiMonitorsDock {
         // Hiding uncovers the edge beneath the pointer. Do not interpret that
         // synthetic enter as another reveal; require a fresh approach.
         if (!this._rearmTimeoutId) {
+            // Polling alone misses a quick leave-and-return between samples.
+            // Observe real motion only while waiting for a fresh approach;
+            // synthetic enter/leave events from unmapping do not rearm it.
+            this._rearmMotionId = global.stage.connect('captured-event', (_stage, event) => {
+                if (event.type() === Clutter.EventType.MOTION &&
+                    !this._containsPointer(...event.get_coords()))
+                    this._clearRearm();
+                return Clutter.EVENT_PROPAGATE;
+            });
             this._rearmTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
                 const [x, y] = global.get_pointer();
-                if (x >= this._bin.x && x < this._bin.x + this._bin.width &&
-                    y >= this._bin.y && y < this._monitor.y + this._monitor.height)
+                if (this._containsPointer(x, y))
                     return GLib.SOURCE_CONTINUE;
                 this._rearmTimeoutId = 0;
+                this._clearRearm();
                 return GLib.SOURCE_REMOVE;
             });
+        }
+    }
+
+    _containsPointer(x, y) {
+        return x >= this._bin.x && x < this._bin.x + this._bin.width &&
+            y >= this._bin.y && y < this._monitor.y + this._monitor.height;
+    }
+
+    _clearRearm() {
+        if (this._rearmTimeoutId) {
+            GLib.source_remove(this._rearmTimeoutId);
+            this._rearmTimeoutId = 0;
+        }
+        if (this._rearmMotionId) {
+            global.stage.disconnect(this._rearmMotionId);
+            this._rearmMotionId = 0;
         }
     }
 
@@ -315,6 +346,10 @@ export class MultiMonitorsDock {
                     this._hiding = false;
                     this._slide.opacity = 255;
                     this._slide.translation_y = 0;
+                    // A crossing can be lost as the animated actor unmaps.
+                    // Respect click-dismissal and session guards in reveal.
+                    if (this._containsPointer(...global.get_pointer()))
+                        this._revealDock();
                 },
             });
         } else {
@@ -323,10 +358,7 @@ export class MultiMonitorsDock {
             this._returnNativeDash();
             this._slide.opacity = 255;
             this._slide.translation_y = 0;
-            if (this._rearmTimeoutId) {
-                GLib.source_remove(this._rearmTimeoutId);
-                this._rearmTimeoutId = 0;
-            }
+            this._clearRearm();
         }
     }
 
@@ -605,12 +637,6 @@ export class MultiMonitorsDock {
         }
 
         this._hideDesktopDock();
-        // `_hideDesktopDock(true)` keeps this source alive while the hide
-        // animation finishes, so destruction must remove it explicitly.
-        if (this._rearmTimeoutId) {
-            GLib.source_remove(this._rearmTimeoutId);
-            this._rearmTimeoutId = 0;
-        }
         if (this._positionIdleId) {
             global.compositor.get_laters().remove(this._positionIdleId);
             this._positionIdleId = 0;
