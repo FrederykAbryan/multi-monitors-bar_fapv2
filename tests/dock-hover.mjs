@@ -43,6 +43,13 @@ class Actor extends Signals {
         this.children.splice(this.children.indexOf(child), 1);
         child.parent = null;
     }
+    get_parent() { return this.parent; }
+    insert_child_at_index(child, index) {
+        this.add_child(child);
+        this.children.pop();
+        this.children.splice(index, 0, child);
+    }
+    queue_relayout() {}
     get_children() { return this.children; }
     set_size(width, height) { Object.assign(this, {width, height}); }
     set_position(x, y) { Object.assign(this, {x, y}); }
@@ -249,8 +256,8 @@ assert.equal(dock._bin.visible, false);
 const icon = new Actor({_delegate: {app: {}}});
 dock._dash._box.emit('child-added', {child: icon});
 reveal();
-assert.equal(dock._slide.opacity, 0);
-assert.equal(dock._slide.translation_y, dock._bin.height);
+assert.equal(dock._slide.opacity, 255, 'Hover is visible immediately');
+assert.equal(dock._slide.translation_y, 0);
 assert.equal(dock._bin.clip_to_allocation, true);
 advance(350);
 assert.equal(dock._slide.opacity, 255);
@@ -392,15 +399,71 @@ extension._showThumbnailsSlider = () => {};
 Main.overview.visible = false;
 Main.layoutManager.primaryIndex = 0;
 Main.layoutManager.monitors = [monitor];
+const nativeParent = new Actor();
+const nativeDash = new Dash({opacity: 128});
+nativeDash._redisplay();
+nativeParent.add_child(new Actor());
+nativeParent.add_child(nativeDash);
+nativeParent.add_child(new Actor());
+Main.overview.dash = nativeDash;
+Main.layoutManager._startingUp = true;
+extension._relayout();
+assert.equal(extension._primaryDock, null, 'No primary dock constructed during login');
+Main.layoutManager._startingUp = false;
 extension._relayout();
 const primaryDock = extension._primaryDock;
 assert.ok(primaryDock, 'Single-display setup creates a desktop hover dock');
+assert.equal(primaryDock._dash, nativeDash, 'Reuse the actual Shell dash');
+assert.equal(nativeDash.parent, nativeParent, 'Leave native ownership intact until hover');
+assert.equal(nativeDash.styleClasses.size, 0, 'Keep native styling');
+assert.equal(liveIsolations.size, 0, 'Do not duplicate primary monitor isolation');
+// Opening Overview before the first hover must not move any actors or do
+// desktop geometry work on each frame of Shell's native dash animation.
+let nativeMeasurements = 0;
+const nativeHeight = nativeDash.get_preferred_height.bind(nativeDash);
+nativeDash.get_preferred_height = (...args) => {
+    nativeMeasurements++;
+    return nativeHeight(...args);
+};
+nativeDash.emit('queue-relayout');
+assert.ok(primaryDock._positionIdleId, 'Desktop changes queue a measurement');
+Main.overview.visible = true;
+Main.overview.animationInProgress = true;
+Main.overview.emit('showing');
+assert.equal(primaryDock._positionIdleId, 0, 'Cancel work queued before Overview opens');
+assert.equal(primaryDock._bin.parent, chrome, 'Desktop wrapper stays out of Overview');
+assert.equal(nativeDash.parent, nativeParent);
+for (let frame = 0; frame < 20; frame++) {
+    nativeDash.emit('queue-relayout');
+    nativeDash.emit('notify::width');
+    nativeDash.emit('notify::height');
+    advance(16);
+}
+assert.equal(nativeMeasurements, 0, 'No hover layout work during native animation');
+Main.overview.animationInProgress = false;
+Main.overview.visible = false;
+Main.overview.emit('hidden');
+assert.equal(nativeMeasurements, 1, 'Refresh the desktop trigger after Overview closes');
+
 pointer = [primaryDock._edge.x + 100, primaryDock._edge.y];
 primaryDock._edge.emit('enter-event');
 assert.equal(primaryDock._bin.visible, true);
-Main.overview.visible = true;
-Main.overview.emit('showing');
+assert.equal(nativeDash.parent, primaryDock._slide);
+assert.equal(nativeDash.opacity, 255);
+assert.equal(primaryDock._slide.opacity, 255);
+Main.overview.show = state => {
+    assert.equal(state, 2);
+    assert.equal(nativeDash.parent, nativeParent, 'Return dash before opening app grid');
+    Main.overview.visible = true;
+    Main.overview.emit('showing');
+};
+nativeDash.showAppsButton.checked = true;
+nativeDash.showAppsButton.emit('notify::checked');
+assert.equal(Main.overview.visible, true, 'Native Show Apps opens overview from desktop');
 assert.equal(primaryDock._bin.visible, false, 'Primary overview keeps only the built-in dash');
+assert.equal(nativeDash.parent, nativeParent);
+assert.equal(nativeParent.children[1], nativeDash, 'Restore original sibling order');
+assert.equal(nativeDash.opacity, 128);
 Main.overview.visible = false;
 Main.overview.emit('hidden');
 assert.equal(primaryDock._edge.visible, true);
@@ -409,11 +472,35 @@ Main.layoutManager.primaryIndex = 1;
 extension._relayout();
 assert.equal(extension._primaryDock, primaryDock);
 assert.equal(primaryDock._edge.y, 718, 'Primary reassignment moves the hover trigger');
+primaryDock._edge.emit('enter-event');
+assert.equal(nativeDash.parent, primaryDock._slide);
+settings.enabled = false;
+settings.emit('changed::reveal-dock-on-hover');
+assert.equal(nativeDash.parent, nativeParent, 'Disabling hover returns the native dash');
+settings.enabled = true;
+settings.emit('changed::reveal-dock-on-hover');
+primaryDock._edge.emit('enter-event');
+assert.equal(nativeDash.parent, primaryDock._slide);
 Main.layoutManager.monitors = [];
 Main.layoutManager.primaryIndex = -1;
 extension._relayout();
 assert.equal(extension._primaryDock, null);
+assert.equal(nativeDash.parent, nativeParent, 'Destroy returns a borrowed dash');
+assert.equal(nativeDash.destroyed, undefined, 'Never destroy Shell actors');
+assert.equal(nativeDash.handlers.size, 0);
+assert.equal(nativeDash._box.handlers.size, 0);
+assert.equal(nativeDash.showAppsButton.handlers.size, 0);
 assert.equal(sources.size, 0);
 assert.equal(tracked.size, 0);
 assert.equal(liveIsolations.size, 0, 'Every dock releases its monitor isolation');
+Main.overview.visible = true;
+const nativeOverviewDock = new Dock(monitor, settings,
+    {showInOverview: false, nativeDash});
+assert.equal(nativeOverviewDock._bin.parent, chrome);
+nativeOverviewDock.destroy();
+assert.equal(nativeDash.parent, nativeParent);
+assert.equal(nativeDash.destroyed, undefined);
+assert.equal(tracked.size, 0, 'Destroy during Overview removes desktop chrome');
+assert.equal(sources.size, 0);
+
 console.log('Dock hover lifecycle tests passed');

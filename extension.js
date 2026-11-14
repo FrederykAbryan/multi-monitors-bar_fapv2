@@ -393,11 +393,10 @@ export default class MultiMonitorsExtension extends Extension {
 			this._destroyPrimaryDock();
 		} else if (this._primaryDock) {
 			this._primaryDock.updateMonitor(primaryMonitor);
-		} else {
-			// The primary monitor already has GNOME's overview dash, but
-			// needs its own desktop hover dock even with no external displays.
+		} else if (!Main.layoutManager._startingUp && Main.overview.dash?.get_parent()) {
+			// Borrow the initialized Shell dash only when the pointer reveals it.
 			this._primaryDock = new MMDock.MultiMonitorsDock(primaryMonitor,
-				this._settings, { showInOverview: false });
+				this._settings, { showInOverview: false, nativeDash: Main.overview.dash });
 		}
 		if (this._mmMonitors !== newCount || this._primaryIndex !== newPrimary) {
 
@@ -470,6 +469,8 @@ export default class MultiMonitorsExtension extends Extension {
 
 		this._thumbnailsSliderPositionId = this._settings.connect('changed::' + THUMBNAILS_SLIDER_POSITION_ID, this._showThumbnailsSlider.bind(this));
 		this._relayoutId = Main.layoutManager.connect('monitors-changed', this._relayout.bind(this));
+		this._dockStartupId = Main.layoutManager.connect('startup-complete',
+			() => this._relayout());
 		this._relayout();
 
 		// Proactively tear down extra panels before suspend so the lock
@@ -513,6 +514,10 @@ export default class MultiMonitorsExtension extends Extension {
 	}
 
 	disable() {
+		if (this._dockStartupId) {
+			Main.layoutManager.disconnect(this._dockStartupId);
+			this._dockStartupId = null;
+		}
 		this._overviewDashIsolation?.destroy();
 		this._overviewDashIsolation = null;
 		this._monitorIndicators?.destroy();

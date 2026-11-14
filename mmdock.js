@@ -34,7 +34,7 @@ import * as DashIsolation from './dashIsolation.js';
  * Neither the dock nor its edge trigger reserves desktop space.
  */
 export class MultiMonitorsDock {
-    constructor(monitor, settings, {showInOverview = true} = {}) {
+    constructor(monitor, settings, {showInOverview = true, nativeDash = null} = {}) {
         this._settings = settings;
         this._showInOverview = showInOverview;
         this._hideTimeoutId = 0;
@@ -57,22 +57,26 @@ export class MultiMonitorsDock {
         this._overviewHidingId = null;
         this._ignoreShowAppsButtonToggle = false;
 
-        // Native GNOME Shell Dash widget (same class used by the overview)
-        this._dash = new DashModule.Dash();
-        this._dash.add_style_class_name('multimonitor-dock');
-        // Blur only the backdrop; app icons retain their sharp edges.
-        const blur = new Shell.BlurEffect({
-            mode: Shell.BlurMode.BACKGROUND,
-            brightness: 0.8,
-        });
-        if ('radius' in blur)
-            blur.radius = 60;
-        else
-            blur.sigma = 30;
-        this._dash._background.add_effect_with_name('mm-dock-blur', blur);
+        this._borrowedDash = !!nativeDash;
+        this._dash = nativeDash ?? new DashModule.Dash();
+        let blur = null;
+        if (!this._borrowedDash) {
+            this._dash.add_style_class_name('multimonitor-dock');
+            // Blur only the backdrop; app icons retain their sharp edges.
+            blur = new Shell.BlurEffect({
+                mode: Shell.BlurMode.BACKGROUND,
+                brightness: 0.8,
+            });
+            if ('radius' in blur)
+                blur.radius = 60;
+            else
+                blur.sigma = 30;
+            this._dash._background.add_effect_with_name('mm-dock-blur', blur);
+            this._isolation = new DashIsolation.DashMonitorIsolation(this._dash,
+                settings, () => this._getMonitorIndex());
+        }
+
         this._connectShowAppsButton();
-        this._isolation = new DashIsolation.DashMonitorIsolation(this._dash,
-            settings, () => this._getMonitorIndex());
 
         // Match the dock width so empty space beside it remains clickable.
         this._bin = new St.Bin({
@@ -85,19 +89,22 @@ export class MultiMonitorsDock {
         // Keep the input region stationary and clip the moving content at
         // the monitor edge, including when another display is below this one.
         this._slide = new St.Bin();
-        this._slide.set_child(this._dash);
+        if (!this._borrowedDash)
+            this._slide.set_child(this._dash);
         this._bin.set_child(this._slide);
-        this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-        const syncTheme = () => {
-            const dark = this._interfaceSettings.get_string('color-scheme') === 'prefer-dark';
-            if (dark)
-                this._dash.remove_style_class_name('mm-dock-light');
-            else
-                this._dash.add_style_class_name('mm-dock-light');
-            blur.brightness = dark ? 0.8 : 1.0;
-        };
-        this._interfaceSettings.connectObject('changed::color-scheme', syncTheme, this._bin);
-        syncTheme();
+        if (!this._borrowedDash) {
+            this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            const syncTheme = () => {
+                const dark = this._interfaceSettings.get_string('color-scheme') === 'prefer-dark';
+                if (dark)
+                    this._dash.remove_style_class_name('mm-dock-light');
+                else
+                    this._dash.add_style_class_name('mm-dock-light');
+                blur.brightness = dark ? 0.8 : 1.0;
+            };
+            this._interfaceSettings.connectObject('changed::color-scheme', syncTheme, this._bin);
+            syncTheme();
+        }
         this._dash._box.connectObject('child-added', (_box, item) =>
             this._connectAppItem(item), this._bin);
         for (const item of this._dash._box.get_children())
@@ -154,14 +161,16 @@ export class MultiMonitorsDock {
         });
         Main.layoutManager.connectObject('startup-complete',
             () => {
-                this._dash._redisplay();
+                if (!this._borrowedDash)
+                    this._dash._redisplay();
                 this._updatePosition();
                 this._syncEdge();
             }, this._bin);
         // Hidden dashes defer their initial icon population until mapped or
         // the deferred-work timeout. Populate now so the edge already spans
         // the full dock on the first approach after login.
-        this._dash._redisplay();
+        if (!this._borrowedDash)
+            this._dash._redisplay();
         this._updatePosition();
         this._setOverviewMode(Main.overview.visible);
         this._connectOverviewStateAdjustment();
@@ -185,6 +194,21 @@ export class MultiMonitorsDock {
     }
 
     _setOverviewMode(inOverview) {
+        if (this._borrowedDash) {
+            // The native dash belongs to Overview. Keep our empty desktop
+            // container out of its actor tree and stop measuring its animated
+            // allocations until Shell has finished leaving Overview.
+            this._inOverview = inOverview;
+            if (this._positionIdleId) {
+                global.compositor.get_laters().remove(this._positionIdleId);
+                this._positionIdleId = 0;
+            }
+            this._hideDesktopDock();
+            if (!inOverview)
+                this._updatePosition();
+            this._syncEdge();
+            return;
+        }
         this._hideDesktopDock();
         if (this._inOverview !== inOverview) {
             if (this._inOverview)
@@ -210,20 +234,13 @@ export class MultiMonitorsDock {
         if (!this._canReveal() || this._hideTimeoutId || this._rearmTimeoutId)
             return;
 
+        this._borrowNativeDash();
         this._updatePosition();
         this._slide.remove_all_transitions();
-        if (!this._bin.visible) {
-            this._slide.opacity = 0;
-            this._slide.translation_y = this._bin.height;
-        }
         this._hiding = false;
+        this._slide.opacity = 255;
+        this._slide.translation_y = 0;
         this._bin.show();
-        this._slide.ease({
-            opacity: 255,
-            translation_y: 0,
-            duration: 350,
-            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-        });
         // Poll only while revealed. This also works while an icon's popup
         // menu owns the pointer grab and normal leave events are unavailable.
         let outsideSince = null;
@@ -294,6 +311,7 @@ export class MultiMonitorsDock {
                 mode: Clutter.AnimationMode.EASE_IN_OUT_CUBIC,
                 onComplete: () => {
                     this._bin.hide();
+                    this._returnNativeDash();
                     this._hiding = false;
                     this._slide.opacity = 255;
                     this._slide.translation_y = 0;
@@ -302,6 +320,7 @@ export class MultiMonitorsDock {
         } else {
             this._hiding = false;
             this._bin.hide();
+            this._returnNativeDash();
             this._slide.opacity = 255;
             this._slide.translation_y = 0;
             if (this._rearmTimeoutId) {
@@ -311,8 +330,41 @@ export class MultiMonitorsDock {
         }
     }
 
+    _borrowNativeDash() {
+        if (!this._borrowedDash || this._nativePlacement)
+            return;
+        const parent = this._dash.get_parent();
+        this._nativePlacement = {
+            parent,
+            index: parent.get_children().indexOf(this._dash),
+            opacity: this._dash.opacity,
+            visible: this._dash.visible,
+        };
+        parent.remove_child(this._dash);
+        this._slide.set_child(this._dash);
+        this._dash.opacity = 255;
+        this._dash.show();
+    }
+
+    _returnNativeDash() {
+        if (!this._nativePlacement)
+            return;
+        const {parent, index, opacity, visible} = this._nativePlacement;
+        this._nativePlacement = null;
+        this._slide.remove_child(this._dash);
+        parent.insert_child_at_index(this._dash, index);
+        this._dash.opacity = opacity;
+        this._dash.visible = visible;
+        parent.queue_relayout();
+    }
+
+    _nativeOverviewOwnsLayout() {
+        return this._borrowedDash && (this._inOverview ||
+            Main.overview.visible || Main.overview.animationInProgress);
+    }
+
     _queuePositionUpdate() {
-        if (this._positionIdleId)
+        if (this._nativeOverviewOwnsLayout() || this._positionIdleId)
             return;
         // Size notifications can fire during allocation; defer layout changes
         // to before the next frame. An idle source would be starved by
@@ -362,6 +414,8 @@ export class MultiMonitorsDock {
     }
 
     _connectOverviewStateAdjustment() {
+        if (this._borrowedDash)
+            return;
         const adjustment = this._getOverviewStateAdjustment();
         if (!adjustment || adjustment === this._stateAdjustment)
             return;
@@ -376,6 +430,8 @@ export class MultiMonitorsDock {
     }
 
     _setShowAppsChecked(checked) {
+        if (this._borrowedDash)
+            return;
         const button = this._getLocalShowAppsButton();
         if (!button)
             return;
@@ -401,6 +457,16 @@ export class MultiMonitorsDock {
     }
 
     _onShowAppsButtonToggled() {
+        if (this._borrowedDash) {
+            // Shell's own toggle handler changes the overview state, but
+            // does not open it when this button is used from the desktop.
+            if (this._nativePlacement && !Main.overview.visible &&
+                this._dash.showAppsButton.checked) {
+                this._hideDesktopDock();
+                Main.overview.show(OverviewControls.ControlsState?.APP_GRID ?? 2);
+            }
+            return;
+        }
         if (this._ignoreShowAppsButtonToggle)
             return;
 
@@ -449,7 +515,7 @@ export class MultiMonitorsDock {
     }
 
     _updatePosition() {
-        if (!this._bin || !this._dash)
+        if (!this._bin || !this._dash || this._nativeOverviewOwnsLayout())
             return;
 
         // Use the Dash's natural height; fall back to 60 px
@@ -457,7 +523,8 @@ export class MultiMonitorsDock {
         if (!natHeight || natHeight <= 0)
             natHeight = 60;
 
-        this._dash.setMaxSize(this._monitor.width, this._monitor.height);
+        if (!this._borrowedDash)
+            this._dash.setMaxSize(this._monitor.width, this._monitor.height);
         const [, natWidth] = this._dash.get_preferred_width(natHeight);
         const width = Math.min(this._monitor.width, Math.max(1, natWidth));
         this._bin.set_size(width, natHeight);
@@ -501,7 +568,7 @@ export class MultiMonitorsDock {
         global.display.disconnect(this._fullscreenChangedId);
         global.display.disconnect(this._focusWindowId);
         Main.overview.disconnect(this._overviewHiddenId);
-        this._isolation.destroy();
+        this._isolation?.destroy();
         this._isolation = null;
         // 'startup-complete' and the app-item 'clicked' handlers are owned by
         // this._bin via connectObject and drop when it is destroyed below.
@@ -553,7 +620,7 @@ export class MultiMonitorsDock {
         this._edge.destroy();
         this._edge = null;
 
-        if (this._inOverview)
+        if (this._inOverview && !this._borrowedDash)
             Main.layoutManager.overviewGroup.remove_child(this._bin);
         else
             Main.layoutManager.removeChrome(this._bin);
