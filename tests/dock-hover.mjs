@@ -73,12 +73,16 @@ class Actor extends Signals {
 }
 
 class Dash extends Actor {
-    _background = {add_effect_with_name(name, effect) { this.effect = effect; }};
+    _background = {
+        add_effect_with_name(name, effect) { this.effect = effect; },
+        remove_effect(effect) { assert.equal(this.effect, effect); this.effect = null; },
+    };
     populated = false;
     _redisplay() { this.populated = true; }
     showAppsButton = new Actor({checked: false});
     _box = new Actor();
     styleClasses = new Set();
+    has_style_class_name(name) { return this.styleClasses.has(name); }
     add_style_class_name(name) { this.styleClasses.add(name); }
     remove_style_class_name(name) { this.styleClasses.delete(name); }
     get_preferred_height() { return [80, 80]; }
@@ -502,6 +506,13 @@ assert.equal(primaryDock._bin.visible, true);
 assert.equal(nativeDash.parent, primaryDock._slide);
 assert.equal(nativeDash.opacity, 255);
 assert.equal(primaryDock._slide.opacity, 255);
+assert.ok(nativeDash.styleClasses.has('multimonitor-dock'), 'Primary reveal uses shared dock CSS');
+assert.ok(nativeDash.styleClasses.has('mm-dock-light'));
+assert.equal(nativeDash._background.effect.brightness, 1);
+primaryDock._interfaceSettings.scheme = 'prefer-dark';
+primaryDock._interfaceSettings.emit('changed::color-scheme');
+assert.ok(!nativeDash.styleClasses.has('mm-dock-light'));
+assert.equal(nativeDash._background.effect.brightness, 0.8);
 Main.overview.show = state => {
     assert.equal(state, 2);
     assert.equal(nativeDash.parent, nativeParent, 'Return dash before opening app grid');
@@ -515,6 +526,11 @@ assert.equal(primaryDock._bin.visible, false, 'Primary overview keeps only the b
 assert.equal(nativeDash.parent, nativeParent);
 assert.equal(nativeParent.children[1], nativeDash, 'Restore original sibling order');
 assert.equal(nativeDash.opacity, 128);
+assert.equal(nativeDash.styleClasses.size, 0, 'Overview restores native styling');
+assert.equal(nativeDash._background.effect, null, 'Overview removes desktop blur');
+primaryDock._interfaceSettings.scheme = 'prefer-light';
+primaryDock._interfaceSettings.emit('changed::color-scheme');
+assert.equal(nativeDash.styleClasses.size, 0, 'Theme changes leave native Overview alone');
 Main.overview.visible = false;
 Main.overview.emit('hidden');
 assert.equal(primaryDock._edge.visible, true);
@@ -538,6 +554,9 @@ extension._relayout();
 assert.equal(extension._primaryDock, null);
 assert.equal(nativeDash.parent, nativeParent, 'Destroy returns a borrowed dash');
 assert.equal(nativeDash.destroyed, undefined, 'Never destroy Shell actors');
+assert.equal(nativeDash.styleClasses.size, 0, 'Destroy restores native styling');
+assert.equal(nativeDash._background.effect, null);
+assert.equal(primaryDock._interfaceSettings.handlers.size, 0);
 assert.equal(nativeDash.handlers.size, 0);
 assert.equal(nativeDash._box.handlers.size, 0);
 assert.equal(nativeDash.showAppsButton.handlers.size, 0);

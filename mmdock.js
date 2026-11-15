@@ -60,19 +60,8 @@ export class MultiMonitorsDock {
 
         this._borrowedDash = !!nativeDash;
         this._dash = nativeDash ?? new DashModule.Dash();
-        let blur = null;
+        this._dockStyle = null;
         if (!this._borrowedDash) {
-            this._dash.add_style_class_name('multimonitor-dock');
-            // Blur only the backdrop; app icons retain their sharp edges.
-            blur = new Shell.BlurEffect({
-                mode: Shell.BlurMode.BACKGROUND,
-                brightness: 0.8,
-            });
-            if ('radius' in blur)
-                blur.radius = 60;
-            else
-                blur.sigma = 30;
-            this._dash._background.add_effect_with_name('mm-dock-blur', blur);
             this._isolation = new DashIsolation.DashMonitorIsolation(this._dash,
                 settings, () => this._getMonitorIndex());
         }
@@ -93,19 +82,11 @@ export class MultiMonitorsDock {
         if (!this._borrowedDash)
             this._slide.set_child(this._dash);
         this._bin.set_child(this._slide);
-        if (!this._borrowedDash) {
-            this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-            const syncTheme = () => {
-                const dark = this._interfaceSettings.get_string('color-scheme') === 'prefer-dark';
-                if (dark)
-                    this._dash.remove_style_class_name('mm-dock-light');
-                else
-                    this._dash.add_style_class_name('mm-dock-light');
-                blur.brightness = dark ? 0.8 : 1.0;
-            };
-            this._interfaceSettings.connectObject('changed::color-scheme', syncTheme, this._bin);
-            syncTheme();
-        }
+        this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        this._interfaceSettings.connectObject('changed::color-scheme',
+            () => this._syncDockTheme(), this._bin);
+        if (!this._borrowedDash)
+            this._applyDockStyle();
         this._dash._box.connectObject('child-added', (_box, item) =>
             this._connectAppItem(item), this._bin);
         for (const item of this._dash._box.get_children())
@@ -362,6 +343,51 @@ export class MultiMonitorsDock {
         }
     }
 
+    _applyDockStyle() {
+        if (this._dockStyle)
+            return;
+        // Save only our classes; other extensions may update unrelated styles.
+        const classes = ['multimonitor-dock', 'mm-dock-light'];
+        const originalClasses = classes.filter(name => this._dash.has_style_class_name(name));
+        const blur = new Shell.BlurEffect({
+            mode: Shell.BlurMode.BACKGROUND,
+            brightness: 0.8,
+        });
+        if ('radius' in blur)
+            blur.radius = 60;
+        else
+            blur.sigma = 30;
+        this._dockStyle = {classes, originalClasses, blur};
+        this._dash.add_style_class_name('multimonitor-dock');
+        this._dash._background.add_effect_with_name('mm-dock-blur', blur);
+        this._syncDockTheme();
+    }
+
+    _syncDockTheme() {
+        if (!this._dockStyle)
+            return;
+        const dark = this._interfaceSettings.get_string('color-scheme') === 'prefer-dark';
+        if (dark)
+            this._dash.remove_style_class_name('mm-dock-light');
+        else
+            this._dash.add_style_class_name('mm-dock-light');
+        this._dockStyle.blur.brightness = dark ? 0.8 : 1.0;
+    }
+
+    _restoreDockStyle() {
+        if (!this._dockStyle)
+            return;
+        const {classes, originalClasses, blur} = this._dockStyle;
+        this._dash._background.remove_effect(blur);
+        for (const name of classes) {
+            if (originalClasses.includes(name))
+                this._dash.add_style_class_name(name);
+            else
+                this._dash.remove_style_class_name(name);
+        }
+        this._dockStyle = null;
+    }
+
     _borrowNativeDash() {
         if (!this._borrowedDash || this._nativePlacement)
             return;
@@ -374,6 +400,7 @@ export class MultiMonitorsDock {
         };
         parent.remove_child(this._dash);
         this._slide.set_child(this._dash);
+        this._applyDockStyle();
         this._dash.opacity = 255;
         this._dash.show();
     }
@@ -383,6 +410,7 @@ export class MultiMonitorsDock {
             return;
         const {parent, index, opacity, visible} = this._nativePlacement;
         this._nativePlacement = null;
+        this._restoreDockStyle();
         this._slide.remove_child(this._dash);
         parent.insert_child_at_index(this._dash, index);
         this._dash.opacity = opacity;
@@ -651,6 +679,7 @@ export class MultiMonitorsDock {
         else
             Main.layoutManager.removeChrome(this._bin);
 
+        this._restoreDockStyle();
         this._bin.destroy();
         this._bin = null;
         this._slide = null;
