@@ -159,6 +159,14 @@
         this to keep docks visible only in the Activities overview.</description>
     </key>
 
+    <key name="dock-magnification" type="b">
+      <default>false</default>
+      <summary>macOS-style dock magnification.</summary>
+      <description>Smoothly enlarge dock icons near the pointer, including neighboring
+        icons. Applies to desktop hover docks and extended-monitor overview docks.
+        Changes take effect immediately.</description>
+    </key>
+
     <key name="isolate-dock-monitors" type="b">
       <default>false</default>
       <summary>Isolate docks per monitor.</summary>

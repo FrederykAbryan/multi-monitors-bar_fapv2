@@ -28,6 +28,17 @@ class Signals {
 class Actor extends Signals {
     children = [];
     visible = true;
+    scale_x = 1;
+    scale_y = 1;
+    translation_x = 0;
+    pivot = [0, 0];
+    get_pivot_point() { return this.pivot; }
+    set_pivot_point(x, y) { this.pivot = [x, y]; }
+    get_transformed_position() {
+        return [this.x + this.translation_x - this.width * (this.scale_x - 1) * this.pivot[0], this.y];
+    }
+    get_transformed_size() { return [this.width * this.scale_x, this.height * this.scale_y]; }
+    remove_transition() { animations.delete(this); }
     constructor(properties = {}) {
         super();
         Object.assign(this, properties);
@@ -73,14 +84,14 @@ class Actor extends Signals {
 }
 
 class Dash extends Actor {
-    _background = {
+    _background = Object.assign(new Actor({width: 600}), {
         add_effect_with_name(name, effect) { this.effect = effect; },
         remove_effect(effect) { assert.equal(this.effect, effect); this.effect = null; },
-    };
+    });
     populated = false;
     _redisplay() { this.populated = true; }
     showAppsButton = new Actor({checked: false});
-    _box = new Actor();
+    _box = new Actor({clip_to_allocation: true});
     styleClasses = new Set();
     has_style_class_name(name) { return this.styleClasses.has(name); }
     add_style_class_name(name) { this.styleClasses.add(name); }
@@ -96,6 +107,13 @@ let focus = null;
 let nextSourceId = 1;
 const sources = new Map();
 const animations = new Map();
+const timelines = new Set();
+class Timeline extends Signals {
+    start() { timelines.add(this); }
+    stop() { timelines.delete(this); }
+    get_delta() { return this.delta; }
+}
+
 const GLib = {
     PRIORITY_DEFAULT: 0, PRIORITY_DEFAULT_IDLE: 1,
     SOURCE_REMOVE: false, SOURCE_CONTINUE: true,
@@ -110,12 +128,18 @@ const GLib = {
 };
 function advance(ms) {
     now += ms * 1000;
+    for (let elapsed = 0; elapsed < ms; elapsed += 16) {
+        for (const timeline of [...timelines]) {
+            timeline.delta = Math.min(16, ms - elapsed);
+            timeline.emit('new-frame');
+        }
+    }
     for (const [actor, animation] of [...animations]) {
         if (animation.at > now)
             continue;
         animations.delete(actor);
-        const {opacity, translation_y, onComplete} = animation.options;
-        Object.assign(actor, {opacity, translation_y});
+        const {duration, mode, onComplete, ...properties} = animation.options;
+        Object.assign(actor, properties);
         onComplete?.();
     }
     for (const [id, source] of [...sources]) {
@@ -135,6 +159,8 @@ const chromeOptions = new Map();
 const settings = new Signals();
 settings.enabled = true;
 settings.get_boolean = key => {
+    if (key === 'dock-magnification')
+        return settings.magnification ?? false;
     assert.equal(key, 'reveal-dock-on-hover');
     return settings.enabled;
 };
@@ -180,7 +206,7 @@ const context = vm.createContext({
         constructor(properties) { Object.assign(this, properties); }
     }},
     St: {Bin: Actor, Widget: Actor}, GLib, Main,
-    Clutter: {EventType: {MOTION: 1}, ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
+    Clutter: {Timeline, EventType: {MOTION: 1}, ActorAlign: {CENTER: 1, END: 2}, EVENT_PROPAGATE: false,
         AnimationMode: {EASE_OUT_CUBIC: 1, EASE_IN_OUT_CUBIC: 2}},
     DashModule: {Dash}, OverviewControls: {},
     // Per-monitor isolation has no hover side effects; only lifecycle matters.
@@ -231,6 +257,105 @@ function leave() {
     advance(300);
     advance(280);
 }
+
+// Exercise intermediate frames, spacing, crossing events and transform cleanup.
+reveal();
+const magnifyButtons = [0, 1, 2, 3, 4].map(index => new Actor({
+    x: dock._bin.x + 80 + index * 64, y: dock._bin.y,
+    width: 64, height: 64, icon: new Actor(),
+}));
+dock._dash._box.children = magnifyButtons.map(child => ({child}));
+pointer = [magnifyButtons[2].x + 32, dock._edge.y - 30];
+dock._bin.emit('motion-event', {get_coords: () => pointer});
+assert.equal(timelines.size, 0, 'Magnification is off by default');
+settings.magnification = true;
+settings.emit('changed::dock-magnification');
+assert.equal(dock._dash._box.clip_to_allocation, false,
+    'Inner row must let enlarged icons paint outside their original allocation');
+assert.equal(dock._bin.clip_to_allocation, true, 'Monitor boundary remains clipped');
+advance(16);
+assert.ok(magnifyButtons[2].scale_x > 1 && magnifyButtons[2].scale_x < 1.4,
+    'First frame smoothly approaches the peak');
+function assertNoOverlap() {
+    for (let i = 1; i < magnifyButtons.length; i++) {
+        const left = magnifyButtons[i - 1];
+        const right = magnifyButtons[i];
+        assert.ok(left.get_transformed_position()[0] + left.get_transformed_size()[0] <=
+            right.get_transformed_position()[0] + 0.001, 'Buttons never overlap');
+    }
+}
+for (let frame = 0; frame < 30; frame++) {
+    advance(16);
+    assertNoOverlap();
+}
+assert.equal(magnifyButtons[2].scale_x, 1.4);
+assert.ok(magnifyButtons[1].scale_x > 1 && magnifyButtons[1].scale_x < 1.4);
+assert.equal(magnifyButtons[0].scale_x, 1);
+assert.ok(dock._dash._background.scale_x > 1, 'Dock background expands with the row');
+assert.equal(timelines.size, 0, 'No animation clock while settled');
+assert.equal(dock._bin.height, 120, 'Reserve headroom inside the monitor clip');
+// Bubbling child crossings must not collapse the effect.
+dock._bin.emit('leave-event');
+advance(160);
+assert.equal(magnifyButtons[2].scale_x, 1.4);
+// Repeated motion at identical coordinates must not feed back animated bounds.
+for (let i = 0; i < 10; i++) {
+    dock._bin.emit('motion-event', {get_coords: () => pointer});
+    advance(16);
+}
+assert.equal(magnifyButtons[2].scale_x, 1.4);
+// A sweep retargets the same clock and preserves spacing on every frame.
+for (let frame = 0; frame < 30; frame++) {
+    pointer[0] = magnifyButtons[0].x + 32 + frame * 8;
+    dock._bin.emit('motion-event', {get_coords: () => pointer});
+    assert.equal(timelines.size, 1);
+    advance(16);
+    assertNoOverlap();
+}
+// Shell keeps Show Apps' icon on its wrapper, not on the toggle button.
+const showAppsButton = dock._dash.showAppsButton;
+Object.assign(showAppsButton, {x: magnifyButtons[4].x + 64, y: dock._bin.y,
+    width: 64, height: 64});
+assert.equal(showAppsButton.icon, undefined);
+pointer[0] = showAppsButton.x + 32;
+dock._bin.emit('motion-event', {get_coords: () => pointer});
+advance(480);
+assert.equal(showAppsButton.scale_x, 1.4, 'Show Apps participates in the wave');
+assert.ok(magnifyButtons[4].get_transformed_position()[0] +
+    magnifyButtons[4].get_transformed_size()[0] <=
+    showAppsButton.get_transformed_position()[0], 'Last app stays clear of Show Apps');
+const savedPointer = [...pointer];
+pointer = [0, 0];
+dock._bin.emit('leave-event');
+advance(320);
+for (const button of magnifyButtons) {
+    assert.equal(button.scale_x, 1);
+    assert.equal(button.translation_x, 0);
+}
+pointer = savedPointer;
+dock._bin.emit('motion-event', {get_coords: () => pointer});
+advance(150);
+settings.magnification = false;
+settings.emit('changed::dock-magnification');
+assert.equal(magnifyButtons[2].scale_x, 1, 'Disabling resets immediately');
+assert.deepEqual(magnifyButtons[2].pivot, [0, 0]);
+assert.equal(timelines.size, 0);
+assert.equal(dock._dash._background.scale_x, 1, 'Background restored when disabled');
+assert.deepEqual(dock._dash._background.pivot, [0, 0]);
+assert.equal(dock._bin.height, 80);
+assert.equal(dock._dash._box.clip_to_allocation, true, 'Disabling restores row clipping');
+settings.magnification = true;
+settings.emit('changed::dock-magnification');
+advance(150);
+dock._hideDesktopDock();
+assert.equal(magnifyButtons[2].scale_x, 1, 'Hide restores the buttons');
+assert.equal(dock._magnifiedIcons.size, 0);
+assert.equal(timelines.size, 0, 'Hide releases the animation clock');
+assert.equal(dock._dash._box.clip_to_allocation, true, 'Hide restores native clipping');
+settings.magnification = false;
+settings.emit('changed::dock-magnification');
+dock._dash._box.children = [];
+
 reveal();
 pointer[1] -= 40;
 advance(100);
@@ -496,12 +621,62 @@ for (let frame = 0; frame < 20; frame++) {
 }
 assert.equal(nativeMeasurements, 0, 'No hover layout work during native animation');
 Main.overview.animationInProgress = false;
+// The primary Overview dash is not a descendant of the desktop bin, and can
+// occupy a different stage position. Hover must use its own event/geometry.
+// Shell allocates the native dash across the monitor, centering the actual
+// icon row inside it. Empty allocation is available for magnification.
+Object.assign(nativeDash, {x: monitor.x, y: monitor.y + 600,
+    width: monitor.width, height: 80});
+const overviewIcon = new Actor({x: monitor.x + 760, y: nativeDash.y,
+    width: 64, height: 64, icon: new Actor()});
+nativeDash._box.children = [{child: overviewIcon}];
+settings.magnification = true;
+pointer = [overviewIcon.x + 32, overviewIcon.y + 32];
+assert.equal(primaryDock._containsPointer(...pointer), false);
+Main.overview.emit('shown');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1.4, 'Primary Overview magnifies on shown');
+assert.equal(primaryDock._bin.visible, false, 'Desktop wrapper remains hidden');
+assert.equal(nativeDash.parent, nativeParent, 'Overview keeps ownership of its dash');
+assert.equal(nativeMeasurements, 0, 'Magnification never measures native layout');
+nativeDash.emit('leave-event');
+advance(16);
+assert.equal(overviewIcon.scale_x, 1.4, 'Child crossings preserve Overview magnification');
+pointer = [0, 0];
+nativeDash.emit('leave-event');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1, 'Leaving the native dash resets magnification');
+pointer = [overviewIcon.x + 32, overviewIcon.y + 32];
+nativeDash.emit('motion-event');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1.4, 'Native motion events restart magnification');
+Main.overview.emit('hiding');
+assert.equal(overviewIcon.scale_x, 1, 'Overview exit restores native transforms');
+assert.equal(nativeDash._box.clip_to_allocation, true);
+assert.equal(timelines.size, 0);
+settings.magnification = false;
+nativeDash._box.children = [];
 Main.overview.visible = false;
 Main.overview.emit('hidden');
 assert.equal(nativeMeasurements, 1, 'Refresh the desktop trigger after Overview closes');
 
+settings.magnification = true;
+settings.emit('changed::dock-magnification');
+const primaryIcon = new Actor({width: 0, height: 64, icon: new Actor()});
+nativeDash._box.children = [{child: primaryIcon}];
 pointer = [primaryDock._edge.x + 100, primaryDock._edge.y];
 primaryDock._edge.emit('enter-event');
+// Reparenting allocates the native icons after the edge-enter event. There
+// must be no need for another motion event once those allocations are ready.
+Object.assign(primaryIcon, {x: pointer[0] - 32, y: primaryDock._bin.y, width: 64});
+advance(0);
+assert.equal(timelines.size, 1, 'Primary reveal starts magnification without mouse motion');
+advance(16);
+assert.ok(primaryIcon.scale_x > 1 && primaryIcon.scale_x < 1.4,
+    'Primary magnification responds on its first animation frame');
+settings.magnification = false;
+settings.emit('changed::dock-magnification');
+nativeDash._box.children = [];
 assert.equal(primaryDock._bin.visible, true);
 assert.equal(nativeDash.parent, primaryDock._slide);
 assert.equal(nativeDash.opacity, 255);
