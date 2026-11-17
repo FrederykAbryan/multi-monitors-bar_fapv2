@@ -31,6 +31,7 @@ class Actor extends Signals {
     scale_x = 1;
     scale_y = 1;
     translation_x = 0;
+    translation_y = 0;
     pivot = [0, 0];
     get_pivot_point() { return this.pivot; }
     set_pivot_point(x, y) { this.pivot = [x, y]; }
@@ -200,6 +201,7 @@ const context = vm.createContext({
     Gio: {Settings: class extends Signals {
         scheme = 'default';
         get_string() { return this.scheme; }
+        get_boolean() { return this.animationsEnabled ?? false; }
     }},
     Shell: {BlurMode: {BACKGROUND: 1}, BlurEffect: class {
         radius = 0;
@@ -293,7 +295,7 @@ assert.ok(magnifyButtons[1].scale_x > 1 && magnifyButtons[1].scale_x < 1.4);
 assert.equal(magnifyButtons[0].scale_x, 1);
 assert.ok(dock._dash._background.scale_x > 1, 'Dock background expands with the row');
 assert.equal(timelines.size, 0, 'No animation clock while settled');
-assert.equal(dock._bin.height, 120, 'Reserve headroom inside the monitor clip');
+assert.equal(dock._bin.height, 152, 'Reserve hover and bounce headroom inside the monitor clip');
 // Bubbling child crossings must not collapse the effect.
 dock._bin.emit('leave-event');
 advance(160);
@@ -304,6 +306,49 @@ for (let i = 0; i < 10; i++) {
     advance(16);
 }
 assert.equal(magnifyButtons[2].scale_x, 1.4);
+// A 1000 Hz mouse sends many events per frame: measure the row only once,
+// using the latest sample.
+{
+    let measurements = 0;
+    const measure = magnifyButtons[2].get_transformed_size;
+    magnifyButtons[2].get_transformed_size = function () {
+        measurements++;
+        return measure.call(this);
+    };
+    const resting = [...pointer];
+    for (let i = 0; i < 16; i++) {
+        pointer = [resting[0] + 400 - i * 25, resting[1]];
+        dock._bin.emit('motion-event', {get_coords: () => pointer});
+    }
+    assert.equal(measurements, 0, 'Motion events only record the pointer');
+    pointer = resting;
+    dock._bin.emit('motion-event', {get_coords: () => pointer});
+    advance(16);
+    assert.equal(measurements, 1, 'One row measurement per frame');
+    advance(16);
+    assert.equal(measurements, 1, 'Settled frames without motion do not re-measure');
+    magnifyButtons[2].get_transformed_size = measure;
+    assert.equal(magnifyButtons[2].scale_x, 1.4, 'Latest sample wins');
+}
+// Shell's hover label sits above the unscaled item; lift it with the icon.
+{
+    const label = new Actor();
+    magnifyButtons[2].parent = {label};
+    dock._resetMagnification();
+    dock._bin.emit('motion-event', {get_coords: () => pointer});
+    advance(480);
+    assert.equal(magnifyButtons[2].scale_x, 1.4);
+    assert.ok(Math.abs(label.translation_y + 64 * 0.4) < 0.01,
+        'Label rises by the magnified height so it does not cover the icon');
+    assert.equal(label.translation_x, magnifyButtons[2].translation_x,
+        'Label follows the sideways shift');
+    dock._resetMagnification();
+    assert.equal(label.translation_y, 0, 'Reset restores the label position');
+    assert.equal(label.translation_x, 0);
+    magnifyButtons[2].parent = null;
+    dock._bin.emit('motion-event', {get_coords: () => pointer});
+    advance(480);
+}
 // A sweep retargets the same clock and preserves spacing on every frame.
 for (let frame = 0; frame < 30; frame++) {
     pointer[0] = magnifyButtons[0].x + 32 + frame * 8;
@@ -331,7 +376,12 @@ advance(320);
 for (const button of magnifyButtons) {
     assert.equal(button.scale_x, 1);
     assert.equal(button.translation_x, 0);
+    assert.deepEqual(button.pivot, [0, 0], 'Settled leave restores original pivots');
 }
+assert.equal(dock._magnifiedIcons.size, 0, 'Settled leave drops stale baselines');
+assert.equal(dock._dash._box.clip_to_allocation, true, 'Settled leave restores row clipping');
+assert.equal(dock._magnificationBackground, null);
+assert.equal(timelines.size, 0);
 pointer = savedPointer;
 dock._bin.emit('motion-event', {get_coords: () => pointer});
 advance(150);
@@ -342,7 +392,7 @@ assert.deepEqual(magnifyButtons[2].pivot, [0, 0]);
 assert.equal(timelines.size, 0);
 assert.equal(dock._dash._background.scale_x, 1, 'Background restored when disabled');
 assert.deepEqual(dock._dash._background.pivot, [0, 0]);
-assert.equal(dock._bin.height, 80);
+assert.equal(dock._bin.height, 112);
 assert.equal(dock._dash._box.clip_to_allocation, true, 'Disabling restores row clipping');
 settings.magnification = true;
 settings.emit('changed::dock-magnification');
@@ -383,8 +433,38 @@ assert.equal(dock._bin.visible, false);
 
 // A click must dismiss even when the same app remains focused, and the
 // pointer stays on the newly uncovered trigger throughout the animation.
-const icon = new Actor({_delegate: {app: {}}});
+const icon = new Actor({_delegate: {app: {}}, height: 64});
 dock._dash._box.emit('child-added', {child: icon});
+reveal();
+dock._interfaceSettings.animationsEnabled = true;
+icon.emit('clicked');
+advance(220);
+assert.ok(icon.translation_y < -20, 'First bounce lifts the app icon');
+assert.equal(dock._hiding, false);
+display.focus_window = {};
+display.emit('notify::focus-window');
+assert.equal(dock._hiding, false, 'App focus cannot interrupt the launch bounce');
+advance(220);
+assert.ok(Math.abs(icon.translation_y) < 0.001, 'First bounce lands');
+advance(140);
+assert.ok(icon.translation_y < -8 && icon.translation_y > -10, 'Second bounce is smaller');
+advance(140);
+assert.equal(icon.translation_y, 0);
+assert.equal(dock._launchBounce, null);
+assert.equal(dock._hiding, true, 'Dismiss after both bounces');
+advance(280);
+leave();
+reveal();
+icon.emit('clicked');
+advance(100);
+icon.emit('clicked');
+assert.equal(timelines.size, 1, 'Repeated clicks replace the bounce');
+dock._hideDesktopDock();
+assert.equal(icon.translation_y, 0, 'Forced hiding restores the original position');
+assert.equal(timelines.size, 0, 'Forced hiding stops the bounce clock');
+assert.equal(dock._dash._box.clip_to_allocation, true);
+dock._interfaceSettings.animationsEnabled = false;
+display.focus_window = null;
 reveal();
 assert.equal(dock._slide.opacity, 255, 'Hover is visible immediately');
 assert.equal(dock._slide.translation_y, 0);
@@ -471,6 +551,11 @@ Main.overview.emit('showing');
 assert.equal(dock._bin.parent, Main.layoutManager.overviewGroup);
 assert.equal(dock._bin.visible, true);
 assert.equal(dock._edge.visible, false);
+assert.equal(dock._dash.styleClasses.size, 0, 'Extended Overview uses native styling like primary');
+assert.equal(dock._dash._background.effect, null, 'Extended Overview removes desktop blur');
+dock._interfaceSettings.scheme = 'prefer-dark';
+dock._interfaceSettings.emit('changed::color-scheme');
+assert.equal(dock._dash.styleClasses.size, 0, 'Theme changes preserve native Overview styling');
 advance(500);
 assert.equal(dock._bin.visible, true, 'Old timeout cannot hide overview dock');
 Main.overview.emit('hiding');
@@ -478,6 +563,9 @@ Main.overview.visible = false;
 Main.overview.emit('hidden');
 advance(0);
 assert.equal(dock._bin.parent, chrome);
+assert.ok(dock._dash.styleClasses.has('multimonitor-dock'), 'Extended desktop restores shared glass styling');
+assert.ok(!dock._dash.styleClasses.has('mm-dock-light'), 'Desktop uses the latest theme after Overview');
+assert.equal(dock._dash._background.effect.brightness, 0.8);
 assert.equal(dock._bin.visible, false);
 assert.equal(dock._edge.visible, true);
 
@@ -559,6 +647,8 @@ assert.equal(Main.layoutManager.handlers.size, 0);
 Main.overview.visible = true;
 const overviewDock = new Dock(monitor, settings);
 assert.equal(overviewDock._bin.parent, Main.layoutManager.overviewGroup);
+assert.equal(overviewDock._dash.styleClasses.size, 0, 'Starting in Overview also uses native styling');
+assert.equal(overviewDock._dash._background.effect, null);
 overviewDock.destroy();
 assert.equal(Main.layoutManager.overviewGroup.children.length, 0);
 assert.equal(tracked.size, 0);
@@ -633,23 +723,49 @@ nativeDash._box.children = [{child: overviewIcon}];
 settings.magnification = true;
 pointer = [overviewIcon.x + 32, overviewIcon.y + 32];
 assert.equal(primaryDock._containsPointer(...pointer), false);
+// Show Apps clicked on the desktop opens Overview under a still pointer that
+// Clutter never saw enter the dash. Magnifying here would get no leave-event
+// when the pointer jumps to another monitor, so wait for real motion.
 Main.overview.emit('shown');
 advance(480);
-assert.equal(overviewIcon.scale_x, 1.4, 'Primary Overview magnifies on shown');
+assert.equal(overviewIcon.scale_x, 1, 'Overview shown alone does not magnify a still pointer');
+nativeDash.emit('motion-event');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1.4, 'Primary Overview magnifies on real motion');
 assert.equal(primaryDock._bin.visible, false, 'Desktop wrapper remains hidden');
 assert.equal(nativeDash.parent, nativeParent, 'Overview keeps ownership of its dash');
 assert.equal(nativeMeasurements, 0, 'Magnification never measures native layout');
-nativeDash.emit('leave-event');
+const crossing = entered => ({get_related: () => entered});
+nativeDash.emit('leave-event', crossing(nativeDash));
 advance(16);
 assert.equal(overviewIcon.scale_x, 1.4, 'Child crossings preserve Overview magnification');
-pointer = [0, 0];
-nativeDash.emit('leave-event');
+// An enlarged icon paints above the dash. Leaving over its top puts the
+// pointer just outside the dash, where no further event will arrive.
+pointer = [overviewIcon.x + 32, nativeDash.y - 10];
+nativeDash.emit('leave-event', crossing(new Actor()));
 advance(480);
 assert.equal(overviewIcon.scale_x, 1, 'Leaving the native dash resets magnification');
+assert.equal(nativeDash._box.clip_to_allocation, true,
+    'Shell keeps its native row clipping while Overview stays open');
 pointer = [overviewIcon.x + 32, overviewIcon.y + 32];
 nativeDash.emit('motion-event');
 advance(480);
 assert.equal(overviewIcon.scale_x, 1.4, 'Native motion events restart magnification');
+// Clicking Show Apps starts an Overview transition. A pointer that leaves the
+// dash during it gets no later event, so the leave must still reset.
+Main.overview.animationInProgress = true;
+pointer = [0, 0];
+nativeDash.emit('leave-event', crossing(null));
+advance(480);
+assert.equal(overviewIcon.scale_x, 1, 'Leaving during an Overview transition resets magnification');
+pointer = [overviewIcon.x + 32, overviewIcon.y + 32];
+nativeDash.emit('motion-event');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1, 'No new magnification is measured mid-transition');
+Main.overview.animationInProgress = false;
+nativeDash.emit('motion-event');
+advance(480);
+assert.equal(overviewIcon.scale_x, 1.4);
 Main.overview.emit('hiding');
 assert.equal(overviewIcon.scale_x, 1, 'Overview exit restores native transforms');
 assert.equal(nativeDash._box.clip_to_allocation, true);
@@ -674,6 +790,28 @@ assert.equal(timelines.size, 1, 'Primary reveal starts magnification without mou
 advance(16);
 assert.ok(primaryIcon.scale_x > 1 && primaryIcon.scale_x < 1.4,
     'Primary magnification responds on its first animation frame');
+// During the Overview-to-desktop allocation, a button can have a local
+// width while its transformed width is still zero. Do not poison the wave.
+primaryDock._resetMagnification();
+const primarySize = primaryIcon.get_transformed_size.bind(primaryIcon);
+primaryIcon.get_transformed_size = () => [0, 0];
+primaryDock._bin.emit('motion-event', {get_coords: () => pointer});
+advance(16);
+assert.ok(Number.isFinite(primaryIcon.scale_x), 'Transient allocation must not produce NaN scales');
+primaryIcon.get_transformed_size = primarySize;
+// No further mouse motion or dash size change: retry after allocation settles.
+advance(100);
+advance(480);
+assert.equal(primaryIcon.scale_x, 1.4, 'Magnification recovers after delayed allocation');
+primaryDock._resetMagnification();
+const primaryWidth = nativeDash.get_preferred_width;
+nativeDash.get_preferred_width = () => [monitor.width, monitor.width];
+primaryDock._updatePosition();
+primaryDock._bin.emit('motion-event', {get_coords: () => pointer});
+advance(480);
+assert.equal(primaryIcon.scale_x, 1.4, 'Full-width preferred size after Overview cannot suppress desktop zoom');
+nativeDash.get_preferred_width = primaryWidth;
+primaryDock._updatePosition();
 settings.magnification = false;
 settings.emit('changed::dock-magnification');
 nativeDash._box.children = [];

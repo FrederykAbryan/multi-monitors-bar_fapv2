@@ -136,15 +136,27 @@ export class MultiMonitorsDock {
         if (this._borrowedDash) {
             // In Overview the native dash is outside our desktop bin. Listen
             // on the dash itself without reparenting or reallocating it.
-            for (const signal of ['enter-event', 'motion-event', 'leave-event']) {
+            for (const signal of ['enter-event', 'motion-event']) {
                 this._dash.connectObject(signal, () => {
                     if (this._inOverview)
                         this._updateMagnification(...global.get_pointer());
                     return Clutter.EVENT_PROPAGATE;
                 }, this._bin);
             }
-            Main.overview.connectObject('shown', () =>
-                this._updateMagnification(...global.get_pointer()), this._bin);
+            // Decide by the actor being entered, not by pointer geometry: an
+            // enlarged icon paints above the dash, so a pointer leaving over
+            // its top is still "near" the dash, and once it is outside no
+            // further event would arrive to shrink the icon again.
+            this._dash.connectObject('leave-event', (_actor, event) => {
+                const entered = event.get_related();
+                if (this._inOverview && !(entered && this._dash.contains(entered)))
+                    this._resetMagnification(true);
+                return Clutter.EVENT_PROPAGATE;
+            }, this._bin);
+            // Like the extended docks, magnify only on real pointer events.
+            // Sampling on Overview 'shown' could enlarge Show Apps under a
+            // still pointer that Clutter never saw enter, so no leave-event
+            // arrived when it moved straight to another monitor.
         }
 
         this._updatePosition();
@@ -233,6 +245,12 @@ export class MultiMonitorsDock {
             return;
         }
         this._hideDesktopDock();
+        // Match the primary dash in each mode: Shell's native theme in
+        // Overview, and the shared glass treatment for desktop hover.
+        if (inOverview)
+            this._restoreDockStyle();
+        else
+            this._applyDockStyle();
         if (this._inOverview !== inOverview) {
             if (this._inOverview)
                 Main.layoutManager.overviewGroup.remove_child(this._bin);
@@ -289,11 +307,13 @@ export class MultiMonitorsDock {
                 outsideSince ??= now;
 
             if (!this._canReveal() ||
-                (outsideSince !== null && now - outsideSince >= 300000)) {
+                (!this._launchBounce && outsideSince !== null && now - outsideSince >= 300000)) {
                 this._hideTimeoutId = 0;
                 this._hideDesktopDock(this._canReveal());
                 return GLib.SOURCE_REMOVE;
             }
+            if (this._magnificationNeedsRetry)
+                this._updateMagnification(x, y);
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -301,18 +321,70 @@ export class MultiMonitorsDock {
     _connectAppItem(item) {
         if (!item.child?._delegate?.app)
             return;
-        item.child.connectObject('clicked', () => this._dismissDock(), this._bin);
+        item.child.connectObject('clicked', () => this._bounceApp(item.child), this._bin);
+        item.child.connectObject('destroy', () => {
+            if (this._launchBounce?.button === item.child)
+                this._stopLaunchBounce();
+        }, this._bin);
+    }
+
+    _bounceApp(button) {
+        this._stopLaunchBounce();
+        if (!this._interfaceSettings.get_boolean('enable-animations') ||
+            (!this._inOverview && !this._bin.visible)) {
+            this._dismissDock();
+            return;
+        }
+        // Only translate vertically, leaving hover scale and spacing intact.
+        // Launching remains Shell's job and is never delayed by the animation.
+        const timeline = new Clutter.Timeline({actor: button, duration: 720});
+        const state = {button, timeline, translationY: button.translation_y, elapsed: 0};
+        this._launchBounce = state;
+        if (this._magnificationRowClip === undefined) {
+            this._magnificationRowClip = this._dash._box.clip_to_allocation;
+            this._dash._box.clip_to_allocation = false;
+        }
+        timeline.connect('new-frame', () => {
+            state.elapsed += timeline.get_delta();
+            const first = state.elapsed < 440;
+            const progress = Math.min(1, first ? state.elapsed / 440 : (state.elapsed - 440) / 280);
+            const height = button.height * (first ? 0.32 : 0.14);
+            button.translation_y = state.translationY - height * Math.sin(Math.PI * progress);
+            if (state.elapsed >= 720) {
+                this._stopLaunchBounce();
+                this._dismissDock();
+            }
+        });
+        timeline.connect('completed', () => {
+            if (this._launchBounce !== state)
+                return;
+            this._stopLaunchBounce();
+            this._dismissDock();
+        });
+        timeline.start();
+    }
+
+    _stopLaunchBounce() {
+        const state = this._launchBounce;
+        if (!state)
+            return;
+        this._launchBounce = null;
+        state.timeline.stop();
+        state.button.translation_y = state.translationY;
+        if (!this._magnifiedIcons.size && this._magnificationRowClip !== undefined) {
+            this._dash._box.clip_to_allocation = this._magnificationRowClip;
+            this._magnificationRowClip = undefined;
+        }
     }
 
     _updateMagnification(x, y) {
         const nativeOverview = this._borrowedDash && this._inOverview;
         if (!this._settings.get_boolean('dock-magnification') ||
             this._hiding || (nativeOverview
-                ? !this._dash.visible || Main.overview.animationInProgress
+                ? !this._dash.visible
                 : !this._bin.visible || this._nativeOverviewOwnsLayout()))
             return;
         let inside = this._containsPointer(x, y);
-        let room = Math.max(0, this._bin.width - (this._dockNaturalWidth ?? this._bin.width));
         if (nativeOverview) {
             const [dx, dy] = this._dash.get_transformed_position();
             const [dw, dh] = this._dash.get_transformed_size();
@@ -326,10 +398,12 @@ export class MultiMonitorsDock {
             this._resetMagnification(true);
             return;
         }
-
-        const buttons = this._dash._box.get_children().map(item => item.child);
-        const showAppsButton = this._getLocalShowAppsButton();
-        buttons.push(showAppsButton);
+        // Icons move during Overview transitions, so don't measure new
+        // targets then. The leave check above must still run: clicking Show
+        // Apps starts a transition, and a pointer leaving during it would
+        // otherwise keep the button enlarged with no later event to undo it.
+        if (nativeOverview && Main.overview.animationInProgress)
+            return;
         // Shell clips the app row for its normal overflow behavior. Enlarged
         // buttons need to paint above and beside that row; the outer bin still
         // clips everything at the monitor edge. Restore Shell's value on reset.
@@ -337,12 +411,35 @@ export class MultiMonitorsDock {
             this._magnificationRowClip = this._dash._box.clip_to_allocation;
             this._dash._box.clip_to_allocation = false;
         }
+        // High-rate mice deliver several motion events per frame. Keep only
+        // the latest sample and measure the row once, on the next frame.
+        this._magnificationPointer = [x, y];
+        this._startMagnificationAnimation();
+    }
+
+    _computeMagnificationTargets(x, y) {
+        const nativeOverview = this._borrowedDash && this._inOverview;
+        this._magnificationNeedsRetry = false;
+        let room = 0;
+        const buttons = this._dash._box.get_children().map(item => item.child);
+        const showAppsButton = this._getLocalShowAppsButton();
+        buttons.push(showAppsButton);
         const entries = [];
         for (const button of new Set(buttons)) {
             // Show Apps owns its BaseIcon on the wrapper, not on the button.
-            if (!button || (!button.icon && button !== showAppsButton) ||
-                !button.visible || !(button.width > 0))
+            if (!button || (!button.icon && button !== showAppsButton) || !button.visible)
                 continue;
+            const [bx] = button.get_transformed_position();
+            const [bw] = button.get_transformed_size();
+            // Reparenting after Overview can leave a locally allocated icon
+            // with zero stage size until its ancestors finish allocation.
+            // Never divide by that size or capture a zero baseline scale.
+            if (!(button.width > 0) || !Number.isFinite(bx) ||
+                !Number.isFinite(bw) || bw <= 0 ||
+                !(button.scale_x > 0) || !(button.scale_y > 0)) {
+                this._magnificationNeedsRetry = true;
+                continue;
+            }
             // Transform the whole button: highlights, running indicators and
             // click targets must travel with the icon.
             let state = this._magnifiedIcons.get(button);
@@ -358,28 +455,30 @@ export class MultiMonitorsDock {
                 }
                 button.set_pivot_point(0.5, 1);
             }
-            const [bx] = button.get_transformed_position();
-            const [bw] = button.get_transformed_size();
+            // Setting the pivot changes the transformed origin.
+            const [pivotBx] = button.get_transformed_position();
             const width = bw / state.scale;
             const unit = width / button.width;
             // Remove our current transform before measuring distance. Using
             // animated bounds here creates feedback and makes icons wobble.
-            const center = bx + bw / 2 - state.offset * unit;
+            const center = pivotBx + bw / 2 - state.offset * unit;
             const distance = Math.abs(x - center) / Math.max(1, width * 2);
             const wave = distance < 1 ? (1 + Math.cos(Math.PI * distance)) / 2 : 0;
+            state.unit = unit;
             entries.push({button, state, center, width, unit, growth: width * wave * 0.4});
         }
         entries.sort((a, b) => a.center - b.center);
-        if (nativeOverview && entries.length) {
-            // Overview allocates Dash the full available width and centers
-            // its icon row inside it. Measure unused space beside the actual
-            // buttons, otherwise a full-width allocation disables the wave.
+        if (entries.length) {
+            // Measure actual buttons in both modes: the borrowed dash can
+            // retain a full-width preferred size after leaving Overview.
             const first = entries[0];
             const last = entries[entries.length - 1];
             const left = first.center - first.width / 2;
             const right = last.center + last.width / 2;
-            room = 2 * Math.max(0, Math.min(left - this._monitor.x,
-                this._monitor.x + this._monitor.width - right));
+            const clipLeft = nativeOverview ? this._monitor.x : this._bin.x;
+            const clipWidth = nativeOverview ? this._monitor.width : this._bin.width;
+            room = 2 * Math.max(0, Math.min(left - clipLeft,
+                clipLeft + clipWidth - right));
         }
         let growth = entries.reduce((sum, entry) => sum + entry.growth, 0);
         // Reduce the effect on crowded docks rather than clipping outer icons.
@@ -399,9 +498,23 @@ export class MultiMonitorsDock {
                 scaleX: background.scale_x, pivotX, pivotY, scale: 1, targetScale: 1};
             background.set_pivot_point(0.5, 0.5);
         }
-        if (this._magnificationBackground)
+        if (this._magnificationBackground && background.width > 0)
             this._magnificationBackground.targetScale = 1 + growth / background.width;
-        this._startMagnificationAnimation();
+    }
+
+    _applyMagnifiedTransform(button, state) {
+        button.scale_x = state.scaleX * state.scale;
+        button.scale_y = state.scaleY * state.scale;
+        button.translation_x = state.translationX + state.offset;
+        // Shell places the hover label from the item's unscaled allocation.
+        // Follow the enlarged top edge (bottom pivot) and the sideways shift
+        // so the name never covers the magnified icon.
+        const label = button.get_parent?.()?.label;
+        if (label) {
+            const unit = state.unit ?? 1;
+            label.translation_x = state.offset * unit;
+            label.translation_y = -button.height * unit * (state.scale - 1);
+        }
     }
 
     _startMagnificationAnimation() {
@@ -413,6 +526,11 @@ export class MultiMonitorsDock {
         const timeline = new Clutter.Timeline({actor: this._dash, duration: 1000, repeat_count: -1});
         this._magnificationTimeline = timeline;
         timeline.connect('new-frame', () => {
+            const sample = this._magnificationPointer;
+            if (sample) {
+                this._magnificationPointer = null;
+                this._computeMagnificationTargets(...sample);
+            }
             const alpha = 1 - Math.exp(-Math.max(1, timeline.get_delta()) / 45);
             let moving = false;
             for (const [button, state] of this._magnifiedIcons) {
@@ -421,9 +539,7 @@ export class MultiMonitorsDock {
                 const unsettled = Math.abs(state.targetScale - state.scale) > 0.001 ||
                     Math.abs(state.targetOffset - state.offset) > 0.05;
                 moving ||= unsettled;
-                button.scale_x = state.scaleX * state.scale;
-                button.scale_y = state.scaleY * state.scale;
-                button.translation_x = state.translationX + state.offset;
+                this._applyMagnifiedTransform(button, state);
             }
             const bg = this._magnificationBackground;
             if (bg) {
@@ -440,18 +556,31 @@ export class MultiMonitorsDock {
                 for (const [button, state] of this._magnifiedIcons) {
                     state.scale = state.targetScale;
                     state.offset = state.targetOffset;
-                    button.scale_x = state.scaleX * state.scale;
-                    button.scale_y = state.scaleY * state.scale;
-                    button.translation_x = state.translationX + state.offset;
+                    this._applyMagnifiedTransform(button, state);
                 }
                 timeline.stop();
                 this._magnificationTimeline = null;
+                // Once an animated reset has settled, hand the (possibly
+                // native Shell) dash back untouched: original pivots, row
+                // clipping and a fresh baseline for the next hover.
+                const idle = [...this._magnifiedIcons.values()].every(state =>
+                    state.targetScale === 1 && state.targetOffset === 0) &&
+                    (!bg || bg.targetScale === 1);
+                if (idle) {
+                    // A pointer still waiting on a late allocation keeps
+                    // its pending retry; only the transforms are released.
+                    const retry = this._magnificationNeedsRetry;
+                    this._resetMagnification();
+                    this._magnificationNeedsRetry = retry;
+                }
             }
         });
         timeline.start();
     }
 
     _resetMagnification(animate = false) {
+        this._magnificationNeedsRetry = false;
+        this._magnificationPointer = null;
         for (const [button, state] of this._magnifiedIcons) {
             state.targetScale = 1;
             state.targetOffset = 0;
@@ -460,6 +589,11 @@ export class MultiMonitorsDock {
                 button.scale_y = state.scaleY;
                 button.translation_x = state.translationX;
                 button.set_pivot_point(state.pivotX, state.pivotY);
+                const label = button.get_parent?.()?.label;
+                if (label) {
+                    label.translation_x = 0;
+                    label.translation_y = 0;
+                }
             }
         }
         const bg = this._magnificationBackground;
@@ -477,7 +611,7 @@ export class MultiMonitorsDock {
             this._magnificationTimeline?.stop();
             this._magnificationTimeline = null;
             this._magnifiedIcons.clear();
-            if (this._magnificationRowClip !== undefined) {
+            if (!this._launchBounce && this._magnificationRowClip !== undefined) {
                 this._dash._box.clip_to_allocation = this._magnificationRowClip;
                 this._magnificationRowClip = undefined;
             }
@@ -485,7 +619,7 @@ export class MultiMonitorsDock {
     }
 
     _dismissDock() {
-        if (this._inOverview || !this._bin.visible || this._hiding)
+        if (this._launchBounce || this._inOverview || !this._bin.visible || this._hiding)
             return;
         this._hideDesktopDock(true);
         // Hiding uncovers the edge beneath the pointer. Do not interpret that
@@ -528,6 +662,7 @@ export class MultiMonitorsDock {
     }
 
     _hideDesktopDock(animate = false) {
+        this._stopLaunchBounce();
         this._resetMagnification();
         if (this._hideTimeoutId) {
             GLib.source_remove(this._hideTimeoutId);
@@ -810,12 +945,13 @@ export class MultiMonitorsDock {
         // Reserve room inside the monitor clip for enlarged icons. The slide
         // remains naturally sized and bottom-aligned, keeping hit targets stable.
         const extra = this._settings.get_boolean('dock-magnification') ? Math.ceil(natHeight * 0.5) : 0;
+        const headroom = extra + Math.ceil(natHeight * 0.4);
         const width = Math.min(this._monitor.width, Math.max(1, natWidth) + extra * 4);
         this._dockNaturalWidth = Math.max(1, natWidth);
-        this._bin.set_size(width, natHeight + extra);
+        this._bin.set_size(width, natHeight + headroom);
         this._bin.set_position(
             this._monitor.x + Math.floor((this._monitor.width - width) / 2),
-            this._monitor.y + this._monitor.height - natHeight - extra
+            this._monitor.y + this._monitor.height - natHeight - headroom
         );
         const edgeWidth = Math.min(this._monitor.width, Math.max(1, natWidth));
         this._edge.set_size(edgeWidth, 2);
