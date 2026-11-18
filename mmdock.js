@@ -174,6 +174,7 @@ export class MultiMonitorsDock {
             this._connectOverviewStateAdjustment();
         });
         this._overviewHidingId = Main.overview.connect('hiding', () => {
+            this._stopLaunchBounce();
             this._resetMagnification();
             this._setShowAppsChecked(false);
         });
@@ -330,8 +331,12 @@ export class MultiMonitorsDock {
 
     _bounceApp(button) {
         this._stopLaunchBounce();
+        // Activating from Overview closes it at once (Shell's own click
+        // handler runs first, so it may already be hiding). The dash then
+        // zooms out and is reparented mid-bounce, and the window appearing
+        // is the feedback, so only bounce from the desktop dock.
         if (!this._interfaceSettings.get_boolean('enable-animations') ||
-            (!this._inOverview && !this._bin.visible)) {
+            this._inOverview || Main.overview.visible || !this._bin.visible) {
             this._dismissDock();
             return;
         }

@@ -29,6 +29,28 @@ export function panelColor(settings, key) {
     return key === 'main' ? '' : settings.get_string(PANEL_COLOR_KEY);
 }
 
+/**
+ * Swap our color declaration inside an inline style, keeping whatever else
+ * is there (GNOME's overview writes `transition-duration` to the main bar).
+ *
+ * @param {string|null} style - the actor's current inline style
+ * @param {string|null} previous - the declaration we added last time
+ * @param {string|null} next - the declaration to add now, or null for none
+ * @returns {string|null} the style to set, or null when nothing is left
+ */
+export function mergePanelColorStyle(style, previous, next) {
+    let base = style ?? '';
+    if (previous)
+        base = base.split(previous).join('');
+    base = base.trim();
+    const merged = next ? `${base} ${next}`.trim() : base;
+    return merged || null;
+}
+
+export function panelColorDeclaration(color) {
+    return color ? `background-color: ${color} !important;` : null;
+}
+
 export function hasMonitorColor(settings, key) {
     const color = readPanelLayout(settings)[key]?.color;
     return typeof color === 'string' && color !== '';

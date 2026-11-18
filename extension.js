@@ -38,7 +38,9 @@ import * as MMOverview from './mmoverview.js';
 import * as MMPanel from './mmpanel.js';
 import * as ScreenshotPatch from './screenshotPatch.js';
 import { MonitorIndicatorsController } from './monitorIndicatorsDialog.js';
-import { PANEL_LAYOUT_KEY, panelColor } from './monitorPanelPolicy.js';
+import {
+	PANEL_LAYOUT_KEY, mergePanelColorStyle, panelColor, panelColorDeclaration,
+} from './monitorPanelPolicy.js';
 import {
 	clearMonitorConnectors, migrateMonitorSettings, refreshMonitorConnectors,
 } from './monitorIdentity.js';
@@ -154,20 +156,36 @@ export default class MultiMonitorsExtension extends Extension {
 		this._mainPanelClipState = null;
 	}
 
+	// GNOME's overview overwrites Main.panel's inline style (null when it
+	// finishes hiding, a transition-duration during gestures), so the color
+	// is re-added whenever the style changes instead of applied once.
 	_applyMainPanelColor() {
-		if (this._mainPanelStyle === undefined)
-			this._mainPanelStyle = Main.panel.get_style();
-		const color = panelColor(this._settings, 'main');
-		Main.panel.set_style(color
-			? `${this._mainPanelStyle ?? ''} background-color: ${color} !important;`
-			: this._mainPanelStyle);
+		const previous = this._mainPanelColorStyle ?? null;
+		this._mainPanelColorStyle = panelColorDeclaration(panelColor(this._settings, 'main'));
+		if (!this._mainPanelStyleWatched) {
+			this._mainPanelStyleWatched = true;
+			Main.panel.connectObject('notify::style',
+				() => this._syncMainPanelColor(this._mainPanelColorStyle), this);
+		}
+		this._syncMainPanelColor(previous);
+	}
+
+	_syncMainPanelColor(previous) {
+		const style = Main.panel.get_style();
+		const next = mergePanelColorStyle(style, previous, this._mainPanelColorStyle);
+		if (next !== style)
+			Main.panel.set_style(next);
 	}
 
 	_restoreMainPanelColor() {
-		if (this._mainPanelStyle === undefined)
-			return;
-		Main.panel.set_style(this._mainPanelStyle);
-		this._mainPanelStyle = undefined;
+		if (this._mainPanelStyleWatched) {
+			Main.panel.disconnectObject(this);
+			this._mainPanelStyleWatched = false;
+		}
+		const previous = this._mainPanelColorStyle;
+		this._mainPanelColorStyle = null;
+		if (previous)
+			this._syncMainPanelColor(previous);
 	}
 
 	_applyMainPanelLayout() {

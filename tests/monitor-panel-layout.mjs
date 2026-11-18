@@ -2,9 +2,22 @@ import assert from 'node:assert/strict';
 
 import {
     PANEL_COLOR_KEY, PANEL_LAYOUT_KEY, distributePanelSections, fitScale, hasMonitorColor,
-    isVerticalPosition, panelColor, panelGeometry, panelPosition, setPanelLayoutValue,
-    verticalClockText,
+    isVerticalPosition, mergePanelColorStyle, panelColor, panelColorDeclaration, panelGeometry,
+    panelPosition, setPanelLayoutValue, verticalClockText,
 } from '../monitorPanelPolicy.js';
+
+// Issue #66: GNOME's overview resets Main.panel's inline style on hide.
+const clear = panelColorDeclaration('rgba(0,0,0,0)');
+assert.equal(panelColorDeclaration(''), null, 'no color, no declaration');
+assert.equal(mergePanelColorStyle(null, clear, clear), clear, 'reapplied after the overview sets style = null');
+assert.equal(mergePanelColorStyle('transition-duration: 250ms;', clear, clear),
+    `transition-duration: 250ms; ${clear}`, 'kept alongside the gesture transition');
+assert.equal(mergePanelColorStyle(`transition-duration: 0ms; ${clear}`, clear, clear),
+    `transition-duration: 0ms; ${clear}`, 'already applied is a no-op (no notify loop)');
+const red = panelColorDeclaration('rgb(255,0,0)');
+assert.equal(mergePanelColorStyle(`color: red; ${clear}`, clear, red), `color: red; ${red}`, 'color change swaps ours');
+assert.equal(mergePanelColorStyle(`color: red; ${red}`, red, null), 'color: red;', 'restore keeps foreign style');
+assert.equal(mergePanelColorStyle(red, red, null), null, 'restore to nothing is null');
 
 class Settings {
     constructor(values = {}) {
