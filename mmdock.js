@@ -757,10 +757,17 @@ export class MultiMonitorsDock {
             index: parent.get_children().indexOf(this._dash),
             opacity: this._dash.opacity,
             visible: this._dash.visible,
+            yAlign: this._dash.y_align,
+            translationY: this._dash.translation_y,
         };
         parent.remove_child(this._dash);
         this._slide.set_child(this._dash);
         this._applyDockStyle();
+        // Overview lays the dash out with FILL alignment (its expanding
+        // container would stretch it across our headroom) and may leave an
+        // animation offset. Sit it on the monitor edge like extended docks.
+        this._dash.y_align = Clutter.ActorAlign.END;
+        this._dash.translation_y = 0;
         this._dash.opacity = 255;
         this._dash.show();
     }
@@ -768,11 +775,13 @@ export class MultiMonitorsDock {
     _returnNativeDash() {
         if (!this._nativePlacement)
             return;
-        const {parent, index, opacity, visible} = this._nativePlacement;
+        const {parent, index, opacity, visible, yAlign, translationY} = this._nativePlacement;
         this._nativePlacement = null;
         this._restoreDockStyle();
         this._slide.remove_child(this._dash);
         parent.insert_child_at_index(this._dash, index);
+        this._dash.y_align = yAlign;
+        this._dash.translation_y = translationY;
         this._dash.opacity = opacity;
         this._dash.visible = visible;
         parent.queue_relayout();
