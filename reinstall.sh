@@ -1,12 +1,15 @@
 #!/bin/bash
 # Reinstall script for Multi Monitor Bar extension
 
+# Stop at the first failed step instead of reporting a broken install as a success.
+set -euo pipefail
+
 EXT_UUID="multi-monitors-bar@frederykabryan"
 EXT_DIR="$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Disabling extension..."
-gnome-extensions disable "$EXT_UUID" 2>/dev/null
+gnome-extensions disable "$EXT_UUID" 2>/dev/null || true
 
 echo "Removing old installation..."
 rm -rf "$EXT_DIR"
@@ -19,7 +22,20 @@ echo "Copying files..."
 # added modules (e.g. mmPanelConstants.js, statusIndicatorsController.js,
 # mirroredIndicatorButton.js) are included automatically.
 # Exclude VCS metadata, zip files, and problematic workspace indicator file.
-rsync -a --exclude='.git' --exclude='.gitignore' --exclude='*.zip' --exclude='schemas/gschemas.compiled' --exclude='mmworkspaceindicator.js' --exclude='.claude' "$SOURCE_DIR/" "$EXT_DIR/"
+if command -v rsync >/dev/null; then
+    rsync -a --exclude='.git' --exclude='.gitignore' --exclude='*.zip' --exclude='schemas/gschemas.compiled' --exclude='mmworkspaceindicator.js' --exclude='.claude' "$SOURCE_DIR/" "$EXT_DIR/"
+else
+    # rsync is not installed by default on every distro (e.g. Debian).
+    cp -a "$SOURCE_DIR/." "$EXT_DIR/"
+    rm -rf "$EXT_DIR/.git" "$EXT_DIR/.gitignore" "$EXT_DIR/.claude" \
+        "$EXT_DIR/schemas/gschemas.compiled" "$EXT_DIR/mmworkspaceindicator.js"
+    rm -f "$EXT_DIR"/*.zip
+fi
+
+if [ ! -f "$EXT_DIR/metadata.json" ]; then
+    echo "❌ Copy failed: $EXT_DIR/metadata.json is missing." >&2
+    exit 1
+fi
 
 # GNOME Shell asks extensions.gnome.org about every per-user extension on login.
 # When the local version differs from the published one, EGO replies
