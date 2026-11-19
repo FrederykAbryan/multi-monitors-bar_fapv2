@@ -436,6 +436,20 @@ export default class MultiMonitorsExtension extends Extension {
 		this._primaryDock = null;
 	}
 
+	// The overview dash is not safe to wrap while the session is still
+	// starting: Dash to Dock has replaced it with a blank actor, and puts
+	// its own dash back from a startup-complete handler. connect_after
+	// runs once that swap has happened.
+	_ensureOverviewDashIsolation() {
+		if (this._overviewDashIsolation || Main.layoutManager._startingUp)
+			return;
+		const dash = Main.overview.dash;
+		if (!DashIsolation.isIsolatableDash(dash))
+			return;
+		this._overviewDashIsolation = new DashIsolation.DashMonitorIsolation(
+			dash, this._settings, () => Main.layoutManager.primaryIndex);
+	}
+
 	enable() {
 		this._mmMonitors = 0;
 		this._primaryIndex = -1;
@@ -489,6 +503,8 @@ export default class MultiMonitorsExtension extends Extension {
 		this._relayoutId = Main.layoutManager.connect('monitors-changed', this._relayout.bind(this));
 		this._dockStartupId = Main.layoutManager.connect('startup-complete',
 			() => this._relayout());
+		this._overviewDashStartupId = Main.layoutManager.connect_after('startup-complete',
+			() => this._ensureOverviewDashIsolation());
 		this._relayout();
 
 		// Proactively tear down extra panels before suspend so the lock
@@ -526,15 +542,17 @@ export default class MultiMonitorsExtension extends Extension {
 		// Patch screenshot UI to open on cursor's monitor (or all monitors based on setting)
 		ScreenshotPatch.patchScreenshotUI(this._settings);
 		this._monitorIndicators = new MonitorIndicatorsController(this._settings, () => mmPanel);
-		// GNOME's own overview dash lives on the primary monitor.
-		this._overviewDashIsolation = new DashIsolation.DashMonitorIsolation(
-			Main.overview.dash, this._settings, () => Main.layoutManager.primaryIndex);
+		this._ensureOverviewDashIsolation();
 	}
 
 	disable() {
 		if (this._dockStartupId) {
 			Main.layoutManager.disconnect(this._dockStartupId);
 			this._dockStartupId = null;
+		}
+		if (this._overviewDashStartupId) {
+			Main.layoutManager.disconnect(this._overviewDashStartupId);
+			this._overviewDashStartupId = null;
 		}
 		this._overviewDashIsolation?.destroy();
 		this._overviewDashIsolation = null;
