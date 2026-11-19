@@ -29,6 +29,17 @@ const DASH_ANIMATION_TIME = 200;
 export const ISOLATE_DOCK_MONITORS_ID = 'isolate-dock-monitors';
 export const ISOLATE_DOCK_WORKSPACES_ID = 'isolate-dock-workspaces';
 
+// DashMonitorIsolation calls Dash's private redisplay methods and patches
+// _box and _appSystem. A Shell Dash has that surface, and so does Dash to
+// Dock's DockDash. Dash to Dock's startup placeholder does not: it is a
+// blank Clutter.Actor standing in for Main.overview.dash until startup
+// finishes. Wrapping that actor throws in enable() and the extension never
+// becomes active.
+export function isIsolatableDash(dash) {
+    return Boolean(dash?._box && dash._appSystem &&
+        dash._queueRedisplay && dash._redisplay);
+}
+
 // Slow launchers (Electron, Flatpak cold starts) can take several seconds.
 const PLACEMENT_TIMEOUT_US = 15 * GLib.USEC_PER_SEC;
 // After the first window appears, also place a follow-up main window
